@@ -97,6 +97,33 @@ describe("personal storage lifecycle", () => {
     }
   });
 
+  it("defers full database integrity checks until explicit diagnosis", async () => {
+    const firstApp = await ProjectContextApp.create();
+    const project = await firstApp.openProject(projectRoot);
+    firstApp.close();
+
+    const Database = (await import("better-sqlite3")).default;
+    const databasePath = join(projectRoot, ".project-context", "project.db");
+    const damagedDb = new Database(databasePath);
+    damagedDb.pragma("foreign_keys = OFF");
+    damagedDb.prepare(`
+      INSERT INTO chunks (id, source_id, source_path, content, start_line, end_line)
+      VALUES ('orphan_chunk', 'missing_source', 'missing.ts', 'orphan', 1, 1)
+    `).run();
+    damagedDb.close();
+
+    const reopenedApp = await ProjectContextApp.create();
+    try {
+      expect(reopenedApp.projects.get(project.id)).toMatchObject({ id: project.id, rootPath: projectRoot });
+      await expect(reopenedApp.doctor(project.id)).resolves.toMatchObject({
+        ok: false,
+        issues: expect.arrayContaining([expect.stringContaining("foreign_key_check: 1 violation")]),
+      });
+    } finally {
+      reopenedApp.close();
+    }
+  });
+
   it("does not guess when multiple databases claim the same project identity", async () => {
     const app = await ProjectContextApp.create();
     try {

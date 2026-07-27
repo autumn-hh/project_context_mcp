@@ -25,6 +25,10 @@ export async function doctorProject(
   const repaired: string[] = [];
   const integrity = String(db.pragma("quick_check", { simple: true }));
   if (integrity !== "ok") issues.push(`SQLite quick_check: ${integrity}`);
+  const foreignKeyViolations = db.pragma("foreign_key_check") as unknown[];
+  if (foreignKeyViolations.length > 0) {
+    issues.push(`SQLite foreign_key_check: ${foreignKeyViolations.length} violation(s).`);
+  }
   let counts = projectCounts(db);
   if (counts.chunks !== counts.chunkFts) issues.push("Chunk FTS index is inconsistent.");
   if (counts.symbols !== counts.symbolFts) issues.push("Symbol FTS index is inconsistent.");

@@ -546,6 +546,16 @@ export class ProjectService {
 
   private ensureProjectIdentity(projectId: string, rootPath: string, overwrite = false): void {
     const databasePath = this.projectDatabasePathForRoot(rootPath);
+    if (!overwrite) {
+      const identity = readProjectIdentity(databasePath);
+      if (identity === projectId) return;
+      if (identity !== null) {
+        throw new ProjectContextError(
+          "PROJECT_DATABASE_IDENTITY_MISMATCH",
+          "Project database identity does not match its registry entry.",
+        );
+      }
+    }
     const db = openDatabase(databasePath);
     try {
       migrateProject(db);
@@ -639,9 +649,11 @@ async function scanDirectory(
 
 function readProjectIdentity(databasePath: string): string | null {
   try {
-    validateProjectDatabaseFile(databasePath);
     const db = new Database(databasePath, { readonly: true, fileMustExist: true });
     try {
+      const version = db.pragma("user_version", { simple: true }) as number;
+      if (version < 1 || version > PROJECT_SCHEMA_VERSION) return null;
+      if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get()) return null;
       const row = db.prepare("SELECT value FROM metadata WHERE key = ?")
         .get(PROJECT_ID_METADATA_KEY) as { value: string } | undefined;
       return row?.value ?? null;
