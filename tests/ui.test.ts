@@ -61,6 +61,12 @@ describe("localhost rule manager", () => {
       completed: [], next: [], changedFiles: [], verification: [], blockers: [],
       risks: ["Automatic indexing must never accept memory candidates."],
     });
+    await writeFile(
+      join(projectRoot, "README.md"),
+      "# UI test\n\nDecision: project memory review remains explicit.\n",
+      "utf8",
+    );
+    await app.index(project.id);
     const taskToComplete = app.startTask(project.id, "Finish project portrait cleanup");
     const taskToCancel = app.startTask(project.id, "Retire obsolete project portrait work");
     app.close();
@@ -128,6 +134,8 @@ describe("localhost rule manager", () => {
       ]));
     expect((portrait.body as { completedTasks: Array<{ id: string }> }).completedTasks)
       .toEqual(expect.arrayContaining([expect.objectContaining({ id: reviewTask.id })]));
+    expect((portrait.body as { pendingCandidates: Array<{ sourceRef: string | null }> }).pendingCandidates
+      .filter((candidate) => candidate.sourceRef === `task:${reviewTask.id}`)).toHaveLength(1);
 
     await writeFile(join(projectRoot, "src", "generated.ts"), "export const generated = true;\n", "utf8");
     const indexedGenerated = await api(origin, `/api/projects/${project.id}/index`, { method: "POST", cookie, body: {} });

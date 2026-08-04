@@ -349,7 +349,7 @@ project_context
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`
 - `task_start`、`task_checkpoint`、`task_list`、`task_complete`、`task_cancel`
 
-`project_index` 会返回符号与关系总数、过期记忆 ID、新生成的候选以及 Git 元数据。索引和 watcher 会跳过常见跨语言编译产物，包括 C/C++ 的 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、预编译头、Java/Python 字节码以及覆盖率和性能分析输出。存在 Git 时优先使用 Git 证据；没有 Git 的项目仍可以根据新增或修改的知识文档生成候选。完成任务时，可从任务摘要、风险和明确具有长期价值的已完成事项中生成有界候选。系统不会返回或保存完整 diff。候选记忆在调用 `memory_candidate_accept` 前始终只处于待审核状态。
+`project_index` 会返回符号与关系总数、过期记忆 ID、新生成的候选以及 Git 元数据。索引和 watcher 会跳过常见跨语言编译产物，包括 C/C++ 的 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、预编译头、Java/Python 字节码以及覆盖率和性能分析输出。存在 Git 时优先使用 Git 证据；没有 Git 的项目仍可以根据新增或修改的知识文档生成候选。每个已完成任务最多生成一条候选，依次优先使用任务摘要、第一条风险和第一条明确具有长期价值的已完成事项，避免把普通执行记录拆成多条待审记忆。系统不会返回或保存完整 diff。候选记忆在调用 `memory_candidate_accept` 前始终只处于待审核状态。
 
 打开 Schema v4 之前创建的数据库时，只会创建 n-gram 表并立即返回。现有内容会在下一次 `project_index` 中通过小批量提交重建，期间 MCP 取消和进度报告保持有效。中断的重建会继续标记为未完成，并在之后的索引运行中安全重试。`project_doctor` 会报告该状态，也可以显式修复。
 

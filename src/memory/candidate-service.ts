@@ -93,15 +93,23 @@ export function generateFileCandidates(
 }
 
 export function generateTaskCandidates(db: SqliteDatabase, task: TaskRecord): MemoryCandidate[] {
+  const sourceRef = `task:${task.id}`;
+  const existing = db.prepare("SELECT 1 FROM memory_candidates WHERE source_ref = ? LIMIT 1").get(sourceRef);
+  if (existing) return [];
+
   const inputs: Array<{ type: MemoryCandidate["type"]; content: string; field: string; confidence: number }> = [];
   if (task.checkpoint.summary?.trim()) {
     inputs.push({ type: "task-summary", content: task.checkpoint.summary, field: "summary", confidence: 0.75 });
   }
-  for (const risk of task.checkpoint.risks.slice(0, 3)) {
-    inputs.push({ type: "issue", content: risk, field: "risks", confidence: 0.7 });
+  const firstRisk = task.checkpoint.risks.find((risk) => risk.trim());
+  if (firstRisk) {
+    inputs.push({ type: "issue", content: firstRisk, field: "risks", confidence: 0.7 });
   }
-  for (const completed of task.checkpoint.completed.filter(isDurableKnowledgeLine).slice(0, 4)) {
-    inputs.push({ type: inferType(completed), content: completed, field: "completed", confidence: 0.7 });
+  const firstDurableCompleted = task.checkpoint.completed.find(isDurableKnowledgeLine);
+  if (firstDurableCompleted) {
+    inputs.push({
+      type: inferType(firstDurableCompleted), content: firstDurableCompleted, field: "completed", confidence: 0.7,
+    });
   }
 
   const created: MemoryCandidate[] = [];
@@ -119,14 +127,17 @@ export function generateTaskCandidates(db: SqliteDatabase, task: TaskRecord): Me
       confidence: input.confidence,
       scope: task.checkpoint.changedFiles.slice(0, 8),
       sourceKind: "tool",
-      sourceRef: `task:${task.id}`,
+      sourceRef,
       evidence: { taskId: task.id, goal: task.goal, checkpointField: input.field },
       fingerprint: sha256(`task:${task.id}:${input.type}:${normalizeCandidate(content)}`),
       status: "pending",
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-    if (insertCandidate(db, candidate)) created.push(candidate);
+    if (insertCandidate(db, candidate)) {
+      created.push(candidate);
+      break;
+    }
   }
   return created;
 }
@@ -157,7 +168,11 @@ export function acceptCandidate(db: SqliteDatabase, candidateId: string): Memory
 }
 
 export function rejectCandidate(db: SqliteDatabase, candidateId: string): MemoryCandidate {
-  getPendingCandidate(db, candidateId);
+  const row = db.prepare("SELECT * FROM memory_candidates WHERE id = ?").get(candidateId) as CandidateRow | undefined;
+  if (row?.status === "rejected") return mapCandidate(row);
+  if (!row || row.status !== "pending") {
+    throw new ProjectContextError("CANDIDATE_NOT_FOUND", `Unknown pending memory candidate: ${candidateId}`);
+  }
   db.prepare("UPDATE memory_candidates SET status = 'rejected', updated_at = ? WHERE id = ?")
     .run(nowIso(), candidateId);
   return mapCandidate(db.prepare("SELECT * FROM memory_candidates WHERE id = ?").get(candidateId) as CandidateRow);

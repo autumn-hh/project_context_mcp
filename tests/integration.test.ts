@@ -264,7 +264,7 @@ describe("Project Context core", () => {
     }
   });
 
-  it("generates bounded task candidates on completion without auto-accepting them", async () => {
+  it("generates at most one task candidate on completion without auto-accepting it", async () => {
     const app = await ProjectContextApp.create();
     try {
       const project = await app.openProject(projectRoot);
@@ -281,17 +281,56 @@ describe("Project Context core", () => {
 
       app.completeTask(project.id, task.id);
       const taskCandidates = app.candidates(project.id).filter((candidate) => candidate.sourceRef === `task:${task.id}`);
-      expect(taskCandidates).toHaveLength(3);
-      expect(taskCandidates.map((candidate) => candidate.type)).toEqual(expect.arrayContaining([
-        "task-summary", "decision", "issue",
-      ]));
+      expect(taskCandidates).toHaveLength(1);
+      expect(taskCandidates[0]).toMatchObject({
+        type: "task-summary",
+        content: "The refresh-token policy now rotates tokens after every use.",
+        evidence: { checkpointField: "summary" },
+      });
       expect(taskCandidates.every((candidate) => candidate.title.includes("Adopt a durable token policy"))).toBe(true);
       expect(taskCandidates.every((candidate) => candidate.sourceKind === "tool")).toBe(true);
       expect(taskCandidates.every((candidate) => candidate.scope.includes("src/auth.ts"))).toBe(true);
       expect(app.memories(project.id)).toEqual([]);
 
       app.completeTask(project.id, task.id);
-      expect(app.candidates(project.id).filter((candidate) => candidate.sourceRef === `task:${task.id}`)).toHaveLength(3);
+      expect(app.candidates(project.id).filter((candidate) => candidate.sourceRef === `task:${task.id}`)).toHaveLength(1);
+
+      const firstRejection = app.rejectCandidate(project.id, taskCandidates[0]!.id);
+      const repeatedRejection = app.rejectCandidate(project.id, taskCandidates[0]!.id);
+      expect(repeatedRejection).toEqual(firstRejection);
+    } finally {
+      app.close();
+    }
+  });
+
+  it("falls back from task summary to one risk or one durable completed item", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const riskTask = app.startTask(project.id, "Record a task risk");
+      app.completeTask(project.id, riskTask.id, {
+        completed: ["Decision: keep project memory local by default."], next: [], changedFiles: [], verification: [],
+        blockers: [], risks: ["Legacy clients may not support token rotation.", "A second risk must not become a candidate."],
+      });
+      const riskCandidates = app.candidates(project.id).filter((candidate) => candidate.sourceRef === `task:${riskTask.id}`);
+      expect(riskCandidates).toHaveLength(1);
+      expect(riskCandidates[0]).toMatchObject({
+        type: "issue", content: "Legacy clients may not support token rotation.",
+        evidence: { checkpointField: "risks" },
+      });
+
+      const completedTask = app.startTask(project.id, "Record a durable completed item");
+      app.completeTask(project.id, completedTask.id, {
+        completed: ["Added routine implementation details.", "Decision: keep project memory local by default."],
+        next: [], changedFiles: [], verification: [], blockers: [], risks: [],
+      });
+      const completedCandidates = app.candidates(project.id)
+        .filter((candidate) => candidate.sourceRef === `task:${completedTask.id}`);
+      expect(completedCandidates).toHaveLength(1);
+      expect(completedCandidates[0]).toMatchObject({
+        type: "decision", content: "Decision: keep project memory local by default.",
+        evidence: { checkpointField: "completed" },
+      });
     } finally {
       app.close();
     }
