@@ -308,7 +308,7 @@ task.command("cancel")
 program.command("context")
   .argument("<project-id>")
   .argument("<task>")
-  .option("--budget <tokens>", "approximate token budget", numberOption, 8_000)
+  .option("--budget <tokens>", "approximate token budget", numberOption, 3_000)
   .action(withApp((app, projectId: string, taskText: string, options: { budget: number }) => {
     print(app.context(projectId, taskText, options.budget));
   }));

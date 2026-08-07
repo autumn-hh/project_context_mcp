@@ -39,7 +39,11 @@ import {
   type TaskCheckpoint,
   type TaskRecord,
 } from "../tasks/task-service.js";
-import { buildProjectContext, type ProjectContext } from "../context/context-service.js";
+import {
+  buildProjectContext,
+  DEFAULT_CONTEXT_BUDGET_TOKENS,
+  type ProjectContext,
+} from "../context/context-service.js";
 import type { z } from "zod/v4";
 import { ProjectContextError } from "../shared/errors.js";
 import { readFile, rename, rm, writeFile } from "node:fs/promises";
@@ -405,7 +409,7 @@ export class ProjectContextApp {
     });
   }
 
-  context(projectId: string, task: string, budgetTokens = 8_000): ProjectContext {
+  context(projectId: string, task: string, budgetTokens = DEFAULT_CONTEXT_BUDGET_TOKENS): ProjectContext {
     const project = this.projects.get(projectId);
     const userMemories = this.userMemoryService.applicable(project, task);
     return this.withDb(projectId, (db) => buildProjectContext(db, project, task, budgetTokens, userMemories));

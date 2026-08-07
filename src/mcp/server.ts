@@ -9,6 +9,7 @@ import { ProjectContextError, errorMessage } from "../shared/errors.js";
 import { memoryStatusSchema, memoryTypeSchema } from "../memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/user-memory-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
+import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -24,6 +25,7 @@ const checkpointSchema = {
   risks: z.array(z.string()).default([]),
 };
 const outputSchema = { result: z.unknown() };
+const MAX_TEXT_CONTENT_CHARS = 2_000;
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({ name: "project-context-mcp", version: "0.8.0" });
@@ -224,7 +226,7 @@ export function createMcpServer(): McpServer {
     inputSchema: {
       projectId: z.string().min(1),
       task: z.string().min(1),
-      budgetTokens: z.number().int().min(500).max(100_000).default(8_000),
+      budgetTokens: z.number().int().min(500).max(100_000).default(DEFAULT_CONTEXT_BUDGET_TOKENS),
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
   }, ({ projectId, task, budgetTokens }) => withApp(async (app) => {
@@ -506,7 +508,7 @@ function registerPrompts(server: McpServer): void {
   }, async ({ projectId, task }) => ({
     description: `Resume work on ${task}`,
     messages: [{ role: "user", content: { type: "text", text: JSON.stringify(
-      await withAppValue((app) => app.context(projectId, task)), null, 2,
+      await withAppValue((app) => app.context(projectId, task, DEFAULT_CONTEXT_BUDGET_TOKENS)), null, 2,
     ) } }],
   }));
   server.registerPrompt("review-memory-candidates", {
@@ -533,10 +535,23 @@ async function withApp(callback: (app: ProjectContextApp) => unknown | Promise<u
 }
 
 function response(value: unknown) {
+  const serialized = JSON.stringify(value, null, 2) ?? String(value);
+  const text = serialized.length <= MAX_TEXT_CONTENT_CHARS
+    ? serialized
+    : JSON.stringify({
+      notice: "Large result omitted from text content to avoid duplicating structured data in the client context.",
+      structuredContentAvailable: true,
+      sizeChars: serialized.length,
+      fields: isRecord(value) ? Object.keys(value) : [],
+    }, null, 2);
   return {
     structuredContent: { result: value },
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
+    content: [{ type: "text" as const, text }],
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 async function withAppValue<T>(callback: (app: ProjectContextApp) => T | Promise<T>): Promise<T> {

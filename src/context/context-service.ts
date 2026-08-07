@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
-import { listMemories, type MemoryRecord } from "../memory/memory-service.js";
+import { getMemory, listMemories, type MemoryRecord } from "../memory/memory-service.js";
 import { listTasks, type TaskRecord } from "../tasks/task-service.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import type { UserMemoryRecord } from "../memory/user-memory-service.js";
@@ -25,16 +25,29 @@ export interface ProjectContext {
   budget: { requestedTokens: number; usedTokens: number; truncated: boolean };
 }
 
+// Keep implicit MCP/prompt calls bounded while leaving room for task-relevant evidence.
+// Callers can still request a larger budget explicitly when they need a full snapshot.
+export const DEFAULT_CONTEXT_BUDGET_TOKENS = 3_000;
+
+const MEMORY_CANDIDATE_LIMIT = 64;
+const SEARCH_HIT_CANDIDATE_LIMIT = 24;
+const TASK_CANDIDATE_LIMIT = 20;
+const TASK_CONTEXT_LIMIT = 10;
+const CODE_RELATION_SYMBOL_LIMIT = 12;
+const CODE_RELATION_LIMIT = 40;
+
 export function buildProjectContext(
   db: SqliteDatabase,
   project: ProjectRecord,
   task: string,
-  budgetTokens = 8_000,
+  budgetTokens = DEFAULT_CONTEXT_BUDGET_TOKENS,
   userMemories: UserMemoryRecord[] = [],
 ): ProjectContext {
-  const memories = listMemories(db, "active", 200);
-  const relevant = searchProject(db, task, 30);
+  // Search first so older but task-relevant memories are not hidden by a recent,
+  // unrelated history page. The bounded recent list only fills project-wide gaps.
+  const relevant = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT);
   const relevantMemoryIds = new Set(relevant.filter((hit) => hit.kind === "memory").map((hit) => hit.id));
+  const memories = memoryCandidates(db, relevantMemoryIds);
   const taskTokens = tokens(task);
   const rankMemory = (memory: MemoryRecord): number =>
     (relevantMemoryIds.has(memory.id) ? 100 : 0)
@@ -57,7 +70,7 @@ export function buildProjectContext(
       (memory) => (memory.type === "lesson" || memory.type === "issue") && rankMemory(memory) > 0,
     ).slice(0, 10),
     userMemories: rankUserMemories(userMemories, task).slice(0, 50),
-    activeTasks: listTasks(db, "in_progress", 10),
+    activeTasks: rankTasks(listTasks(db, "in_progress", TASK_CANDIDATE_LIMIT), taskTokens).slice(0, TASK_CONTEXT_LIMIT),
     relevant,
     codeRelations: relatedCode(db, relevant),
     warnings,
@@ -140,13 +153,13 @@ function longestTruncatableString(context: ProjectContext): {
 }
 
 function relatedCode(db: SqliteDatabase, hits: SearchHit[]): ProjectContext["codeRelations"] {
-  const symbolIds = hits.filter((hit) => hit.kind === "symbol").map((hit) => hit.id).slice(0, 20);
+  const symbolIds = hits.filter((hit) => hit.kind === "symbol").map((hit) => hit.id).slice(0, CODE_RELATION_SYMBOL_LIMIT);
   if (symbolIds.length === 0) return [];
   const placeholders = symbolIds.map(() => "?").join(", ");
   return db.prepare(`
     SELECT from_name, to_name, relation_type, source_path, start_line
     FROM relations WHERE from_symbol_id IN (${placeholders})
-    ORDER BY source_path, start_line LIMIT 100
+    ORDER BY source_path, start_line LIMIT ${CODE_RELATION_LIMIT}
   `).all(...symbolIds).map((row) => {
     const item = row as {
       from_name: string; to_name: string; relation_type: string; source_path: string; start_line: number;
@@ -156,6 +169,31 @@ function relatedCode(db: SqliteDatabase, hits: SearchHit[]): ProjectContext["cod
       source: item.source_path, line: item.start_line,
     };
   });
+}
+
+function memoryCandidates(db: SqliteDatabase, relevantMemoryIds: Set<string>): MemoryRecord[] {
+  const candidates = new Map<string, MemoryRecord>();
+  for (const memoryId of relevantMemoryIds) {
+    try {
+      const memory = getMemory(db, memoryId);
+      if (memory.status === "active") candidates.set(memoryId, memory);
+    } catch {
+      // A concurrent status update can remove a search hit before it is read.
+    }
+  }
+  for (const memory of listMemories(db, "active", MEMORY_CANDIDATE_LIMIT)) {
+    if (candidates.size >= MEMORY_CANDIDATE_LIMIT) break;
+    candidates.set(memory.id, memory);
+  }
+  return [...candidates.values()];
+}
+
+function rankTasks(tasks: TaskRecord[], taskTokens: string[]): TaskRecord[] {
+  const score = (task: TaskRecord): number => {
+    const text = JSON.stringify(task).toLowerCase();
+    return taskTokens.filter((token) => text.includes(token)).length;
+  };
+  return tasks.sort((a, b) => score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
 function tokens(value: string): string[] {

@@ -2,6 +2,27 @@
 
 每次向 GitHub 推送代码前，都必须在此文件中补充本次推送的用户可见修复、行为变化、重要实现和验证结果。
 
+## 2026-08-07 - project_context 上下文预算与检索限额
+
+### 修复内容
+
+- `project_context`、`resume-project-task`、App 和 CLI 的隐式默认预算统一为 3,000 tokens；恢复任务提示显式传入该预算。
+- 上下文组装先按任务检索最多 24 个 search hits，再读取命中的 active memories，并以最多 64 条最近记忆补充候选，不再预加载最多 200 条历史后统一截断。
+- `in_progress` task 候选限制为 20 条并按任务相关性选择最多 10 条；代码关系限制为最多 12 个符号、40 条关系。
+- 超过约 2,000 字符的 MCP `TextContent` 不再重复嵌入完整结构化结果，完整数据保留在 `structuredContent.result`。
+- 新增大规模 active memories、默认预算、resume prompt 预算和大结果文本压缩回归测试。
+
+### 验证结果
+
+- `npm run typecheck`：通过。
+- `npm test`：8 个测试文件、56 个测试全部通过。
+- `npm run build`：通过。
+- `git diff --check`：通过。
+
+### 行为说明
+
+需要更完整项目快照的调用仍可显式传入更高的 `budgetTokens`；候选限制只缩小默认检索范围，不改变数据库中的长期记忆和任务记录。
+
 ## 2026-08-04 - 任务记忆候选降噪
 
 ### 修复内容

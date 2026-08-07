@@ -656,4 +656,35 @@ describe("Project Context core", () => {
       app.close();
     }
   });
+
+  it("retrieves relevant memories before bounded assembly under large active history", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const relevant = app.remember(project.id, {
+        type: "decision",
+        title: "Database backup retention",
+        content: "Database backups retain seven daily snapshots.",
+        sourceKind: "user",
+      });
+      for (let index = 0; index < 140; index += 1) {
+        app.remember(project.id, {
+          type: "decision",
+          title: `Unrelated history ${index}`,
+          content: `Frontend typography preference ${index} is unrelated to navigation.`,
+          sourceKind: "user",
+        });
+      }
+
+      const context = app.context(project.id, "database backup retention");
+      const serialized = JSON.stringify(context);
+      expect(context.budget.requestedTokens).toBe(3_000);
+      expect(context.budget.usedTokens).toBeLessThanOrEqual(3_000);
+      expect(context.decisions.map((memory) => memory.id)).toContain(relevant.id);
+      expect(serialized).toContain("Database backup retention");
+      expect(serialized).not.toContain("Unrelated history");
+    } finally {
+      app.close();
+    }
+  });
 });

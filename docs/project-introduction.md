@@ -316,20 +316,21 @@ task         当前任务的自然语言描述
 budgetTokens 本次最多返回多少近似 token
 ```
 
+MCP `project_context` 和 `resume-project-task` 提示在省略预算时默认使用 3,000 tokens。上下文组装会先按任务相关性检索并限制记忆、任务、命中片段和代码关系的候选数量，再进入最终预算裁剪；这样大量无关历史不会先被整体加载。需要更完整资料时可以显式传入更高的 `budgetTokens`；上下文结果超过约 2,000 个字符时，MCP 的 JSON `TextContent` 只保留简短提示，完整数据仍位于经过校验的 `structuredContent.result`。
+
 当前实现按以下顺序组装：
 
 1. 选择适用于当前项目和任务的 `active` 个人记忆；
-2. 读取最近更新的最多 200 条项目 `active` 长期记忆；
-3. 使用 `task` 对文件片段、代码符号和 `active` 项目记忆执行混合检索，获取前 30 个相关结果；
-4. 如果一条项目记忆出现在检索结果中，为它增加较高的相关性权重；
-5. 将任务文本拆成关键词，并对个人记忆和项目记忆分别排序；
-6. 选择最多 20 条项目级或任务相关的约束；
-7. 选择最多 15 条与任务相关的决策；
-8. 选择最多 10 条与任务相关的经验或已知问题；
-9. 加入最多 10 个 `in_progress` 任务及其 checkpoint；
-10. 根据命中的代码符号补充 import、call、extends 和 implements 关系；
-11. 如果存在 `stale`/`conflicted` 记忆或失败的索引运行，在结果中加入警告；
-12. 将所有内容放入同一个 token budget，并裁剪到 `budgetTokens` 以内。
+2. 使用 `task` 对文件片段、代码符号和 `active` 项目记忆执行混合检索，最多保留 24 个相关结果；
+3. 先读取检索命中的项目记忆，再用最多 64 条最近 `active` 记忆补足项目级约束候选，不再预加载 200 条历史后统一截断；
+4. 将任务文本拆成关键词，按任务相关性对项目记忆和个人记忆排序；
+5. 选择最多 20 条项目级或任务相关的约束；
+6. 选择最多 15 条与任务相关的决策；
+7. 选择最多 10 条与任务相关的经验或已知问题；
+8. 从最多 20 个 `in_progress` 任务候选中按相关性选择 10 个及其 checkpoint；
+9. 根据前 12 个命中的代码符号补充最多 40 条 import、call、extends 和 implements 关系；
+10. 如果存在 `stale`/`conflicted` 记忆或失败的索引运行，在结果中加入警告；
+11. 将所有内容放入同一个 token budget，并裁剪到 `budgetTokens` 以内。
 
 组装结果的主要结构是：
 
@@ -712,7 +713,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 ## Session Workflow
 1. At the beginning of the first user turn in a repository, call `storage_status`.
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
-3. Before substantial implementation work, call `project_context` with the current task.
+3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
 5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
 

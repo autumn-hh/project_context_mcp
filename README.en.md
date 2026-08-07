@@ -314,7 +314,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 ## Session Workflow
 1. At the beginning of the first user turn in a repository, call `storage_status`.
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
-3. Before substantial implementation work, call `project_context` with the current task.
+3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
 5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
 
@@ -396,7 +396,7 @@ When the registered project root itself is named `.codex`, runtime-only director
 `.tmp`, `plugins/cache`, logs, attachments, SQLite state, and secret stores are excluded automatically.
 Directories with the same names remain indexable in ordinary application repositories.
 
-All tools return both backward-compatible JSON TextContent and validated `structuredContent`.
+Successful tools return validated `structuredContent` and retain JSON `TextContent` for older clients. To avoid placing the same large result into a model context twice, `TextContent` above roughly 2,000 characters is replaced with a short notice; the complete result remains in `structuredContent.result`. The implicit `project_context` budget for MCP calls and resume prompts is 3,000 tokens; pass a larger `budgetTokens` explicitly when needed.
 
 ## MCP Resources And Prompts
 

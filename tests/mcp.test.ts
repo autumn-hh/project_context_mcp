@@ -160,6 +160,10 @@ describe("Project Context MCP", () => {
       ]));
       const prompt = await client.getPrompt({ name: "resume-project-task", arguments: { projectId, task: "continue" } });
       expect(prompt.messages).toHaveLength(1);
+      const promptContext = JSON.parse(prompt.messages[0].content.text) as {
+        budget: { requestedTokens: number };
+      };
+      expect(promptContext.budget.requestedTokens).toBe(3_000);
 
       const invalid = await client.callTool({ name: "project_health", arguments: { projectId: "missing" } });
       expect(invalid.isError).toBe(true);
@@ -194,6 +198,44 @@ describe("Project Context MCP", () => {
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {
       await client.close();
+    }
+  });
+
+  it("bounds implicit context results and avoids duplicating large text payloads", async () => {
+    const server = createMcpServer();
+    const client = new Client({ name: "context-size-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const opened = await call(client, "project_open", { root: projectRoot });
+      const projectId = object(opened).id as string;
+      await call(client, "memory_remember", {
+        projectId,
+        type: "decision",
+        title: "Large context fixture",
+        content: "上下文大小回归测试。".repeat(1_000),
+        sourceKind: "user",
+      });
+
+      const result = await client.callTool({
+        name: "project_context",
+        arguments: { projectId, task: "检查上下文大小" },
+      });
+      expect(result.isError).not.toBe(true);
+      const context = object(object(result.structuredContent).result);
+      expect(object(context.budget)).toMatchObject({ requestedTokens: 3_000 });
+
+      const largeResult = await client.callTool({
+        name: "project_context",
+        arguments: { projectId, task: "检查上下文大小", budgetTokens: 8_000 },
+      });
+      expect(largeResult.isError).not.toBe(true);
+      const largeText = largeResult.content?.[0]?.type === "text" ? largeResult.content[0].text : "";
+      expect(largeText).toContain("structuredContentAvailable");
+      expect(largeText.length).toBeLessThanOrEqual(500);
+    } finally {
+      await client.close();
+      await server.close();
     }
   });
 

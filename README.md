@@ -295,7 +295,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 ## Session Workflow
 1. At the beginning of the first user turn in a repository, call `storage_status`.
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
-3. Before substantial implementation work, call `project_context` with the current task.
+3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
 5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
 
@@ -363,7 +363,7 @@ MCP 的 `project_open` 会完成索引并自动启动受控 watcher；显式的 
 
 当注册的项目根目录本身名为 `.codex` 时，系统会自动排除 `sessions`、`.tmp`、`plugins/cache`、日志、附件、SQLite 状态和密钥存储等运行时目录。普通应用仓库中的同名目录仍可被索引。
 
-所有工具都会同时返回向后兼容的 JSON `TextContent` 和经过校验的 `structuredContent`。
+所有成功工具都会返回经过校验的 `structuredContent`，并保留 JSON `TextContent` 兼容旧客户端。为避免把同一份大结果重复放进模型上下文，超过约 2,000 个字符的 `TextContent` 会改为简短提示；完整结果仍在 `structuredContent.result` 中。MCP 和恢复任务提示的隐式 `project_context` 预算为 3,000 tokens，需要更多信息时请显式传入更高的 `budgetTokens`。
 
 ## MCP 资源与提示词
 
