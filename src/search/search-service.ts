@@ -1,5 +1,7 @@
+import { posix as posixPath } from "node:path";
 import type { SqliteDatabase } from "../storage/database.js";
 import { matchingNgramItems, type SearchItemKind } from "./ngram-index.js";
+import { rrfMerge, type FusedItem } from "./rank-fusion.js";
 
 export interface SearchHit {
   kind: "chunk" | "memory" | "symbol";
@@ -12,16 +14,35 @@ export interface SearchHit {
   status: string | null;
 }
 
+interface ScoredHit {
+  hit: SearchHit;
+  score: number;
+}
+
+const SYMBOL_FUSION_WEIGHT = 1.25;
+const GRAPH_MAX_HOP = 2;
+const GRAPH_DECAY = 0.65;
+const GRAPH_MIN_SCORE = 0.12;
+const GRAPH_MAX_NODES = 200;
+const MAX_RELATED_RESULTS = 4;
+const GRAPH_RELATION_WEIGHTS: Record<string, number> = {
+  CALLS: 1,
+  IMPORTS: 0.85,
+  EXTENDS: 0.75,
+  IMPLEMENTS: 0.75,
+};
+
 export function searchProject(db: SqliteDatabase, query: string, limit = 20): SearchHit[] {
+  if (!Number.isFinite(limit) || limit <= 0) return [];
   const ftsQuery = toFtsQuery(query);
   if (!ftsQuery) return [];
-  const perKind = Math.max(limit, 5);
+  const perKind = Math.max(limit * 3, 20);
   const chunks = db.prepare(`
     SELECT c.id, c.source_path, c.content, c.start_line, bm25(chunks_fts, 0, 2, 1) AS rank
     FROM chunks_fts
     JOIN chunks c ON c.id = chunks_fts.chunk_id
     WHERE chunks_fts MATCH ?
-    ORDER BY rank LIMIT ?
+    ORDER BY rank, c.id LIMIT ?
   `).all(ftsQuery, perKind) as Array<{
     id: string; source_path: string; content: string; start_line: number; rank: number;
   }>;
@@ -30,7 +51,7 @@ export function searchProject(db: SqliteDatabase, query: string, limit = 20): Se
     FROM memories_fts
     JOIN memories m ON m.id = memories_fts.memory_id
     WHERE memories_fts MATCH ? AND m.status = 'active'
-    ORDER BY rank LIMIT ?
+    ORDER BY rank, m.id LIMIT ?
   `).all(ftsQuery, perKind) as Array<{
     id: string; title: string; content: string; source_ref: string | null; status: string; rank: number;
   }>;
@@ -40,7 +61,7 @@ export function searchProject(db: SqliteDatabase, query: string, limit = 20): Se
     FROM symbols_fts
     JOIN symbols s ON s.id = symbols_fts.symbol_id
     WHERE symbols_fts MATCH ?
-    ORDER BY rank LIMIT ?
+    ORDER BY rank, s.id LIMIT ?
   `).all(ftsQuery, perKind) as Array<{
     id: string; name: string; qualified_name: string; kind: string; signature: string | null;
     source_path: string; start_line: number; rank: number;
@@ -64,39 +85,171 @@ export function searchProject(db: SqliteDatabase, query: string, limit = 20): Se
   const fuzzy = matchingNgramItems(db, query, Math.max(limit * 4, 20))
     .map((item) => ngramHit(db, item.kind, item.id, item.coverage, query))
     .filter((hit): hit is SearchHit => hit !== null);
-  const lexicalById = new Map(exact.map((hit) => [hit.id, hit]));
-  for (const hit of fuzzy) {
-    const existing = lexicalById.get(hit.id);
-    if (!existing || hit.score > existing.score) lexicalById.set(hit.id, hit);
-  }
-  const lexical = [...lexicalById.values()];
-  const lexicalIds = new Set(lexical.map((hit) => hit.id));
-  const related = graphRelatedHits(db, lexical)
-    .filter((hit) => !lexicalIds.has(hit.id));
-  return [...lexical, ...related].sort((a, b) => b.score - a.score).slice(0, limit);
+  const symbolExact = exact.filter((hit) => isExactSymbolMatch(hit, query));
+  const fused = rrfMerge(
+    [
+      { items: exact },
+      { items: fuzzy },
+      { items: symbolExact, weight: SYMBOL_FUSION_WEIGHT },
+    ],
+    (hit) => hit.id,
+  );
+  const direct = normalizeFusionScores(fused);
+  const directIds = new Set(direct.map(({ hit }) => hit.id));
+  const related = graphRelatedHits(db, direct.slice(0, 20))
+    .filter(({ hit }) => !directIds.has(hit.id));
+  const relatedLimit = Math.min(MAX_RELATED_RESULTS, Math.floor(limit / 4));
+  const selectedRelated = related.slice(0, relatedLimit);
+  const directLimit = Math.max(0, limit - selectedRelated.length);
+  return [
+    ...direct.slice(0, directLimit).map(({ hit }) => hit),
+    ...selectedRelated.map(({ hit, score }) => ({ ...hit, score })),
+  ];
 }
 
-function graphRelatedHits(db: SqliteDatabase, hits: SearchHit[]): SearchHit[] {
-  const symbolIds = hits.filter((hit) => hit.kind === "symbol").map((hit) => hit.id).slice(0, 20);
+function normalizeFusionScores(fused: Array<FusedItem<SearchHit>>): ScoredHit[] {
+  const maximum = fused[0]?.score ?? 1;
+  return fused.map(({ item, score }) => ({
+    hit: { ...item, score: score / maximum },
+    score: score / maximum,
+  }));
+}
+
+function graphRelatedHits(db: SqliteDatabase, seeds: ScoredHit[]): ScoredHit[] {
+  const symbolSeeds = seeds
+    .filter(({ hit }) => hit.kind === "symbol")
+    .map(({ hit, score }) => ({ id: hit.id, score }))
+    .slice(0, 20);
+  if (symbolSeeds.length === 0) return [];
+
+  const seedIds = new Set(symbolSeeds.map((seed) => seed.id));
+  const best = new Map<string, { score: number; hop: number }>();
+  for (const seed of symbolSeeds) best.set(seed.id, { score: seed.score, hop: 0 });
+
+  let frontier = symbolSeeds;
+  for (let hop = 1; hop <= GRAPH_MAX_HOP && frontier.length > 0; hop += 1) {
+    const rows = graphNeighbors(db, frontier.map((item) => item.id));
+    const frontierScores = new Map(frontier.map((item) => [item.id, item.score]));
+    const next: Array<{ id: string; score: number }> = [];
+    for (const row of rows) {
+      if (seedIds.has(row.id)) continue;
+      const weight = GRAPH_RELATION_WEIGHTS[row.relationType] ?? 0.5;
+      const parentScore = Math.max(frontierScores.get(row.fromId) ?? 0, frontierScores.get(row.toId) ?? 0);
+      if (parentScore === 0) continue;
+      const score = parentScore * GRAPH_DECAY * weight;
+      if (score < GRAPH_MIN_SCORE) continue;
+      const previous = best.get(row.id);
+      if (previous && previous.score >= score) continue;
+      if (!previous && best.size >= GRAPH_MAX_NODES) break;
+      best.set(row.id, { score, hop });
+      if (best.size < GRAPH_MAX_NODES) next.push({ id: row.id, score });
+    }
+    frontier = next;
+    if (best.size >= GRAPH_MAX_NODES) break;
+  }
+
+  return [...best.entries()]
+    .filter(([id]) => !seedIds.has(id))
+    .map(([id, info]) => ({ hit: ngramHit(db, "symbol", id, 0, ""), score: info.score }))
+    .filter((item): item is { hit: SearchHit; score: number } => item.hit !== null)
+    .map(({ hit, score }) => ({ hit: { ...hit, score }, score }))
+    .sort((a, b) => b.score - a.score || a.hit.id.localeCompare(b.hit.id));
+}
+
+interface GraphNeighbor {
+  id: string;
+  relationType: string;
+  fromId: string;
+  toId: string;
+}
+
+function graphNeighbors(db: SqliteDatabase, symbolIds: string[]): GraphNeighbor[] {
   if (symbolIds.length === 0) return [];
   const placeholders = symbolIds.map(() => "?").join(", ");
-  const rows = db.prepare(`
-    SELECT DISTINCT target.id
+  const direct = db.prepare(`
+    SELECT target.id AS id, relation.relation_type AS relationType,
+           source.id AS fromId, target.id AS toId
     FROM relations relation
     JOIN symbols source ON source.id = relation.from_symbol_id
     JOIN symbols target ON target.name = relation.to_name
-    WHERE source.id IN (${placeholders})
-    UNION
-    SELECT DISTINCT source.id
+    WHERE relation.relation_type <> 'IMPORTS'
+      AND source.id IN (${placeholders})
+      AND (
+        target.source_path = source.source_path
+        OR NOT EXISTS (
+          SELECT 1 FROM symbols duplicate
+          WHERE duplicate.name = target.name AND duplicate.id <> target.id
+        )
+      )
+    UNION ALL
+    SELECT source.id AS id, relation.relation_type AS relationType,
+           source.id AS fromId, target.id AS toId
     FROM relations relation
     JOIN symbols source ON source.id = relation.from_symbol_id
     JOIN symbols target ON target.name = relation.to_name
-    WHERE target.id IN (${placeholders})
-    LIMIT 40
-  `).all(...symbolIds, ...symbolIds) as Array<{ id: string }>;
-  return rows.map((row) => ngramHit(db, "symbol", row.id, 0, ""))
-    .filter((hit): hit is SearchHit => hit !== null)
-    .map((hit) => ({ ...hit, score: 0.3 }));
+    WHERE relation.relation_type <> 'IMPORTS'
+      AND target.id IN (${placeholders})
+      AND (
+        target.source_path = source.source_path
+        OR NOT EXISTS (
+          SELECT 1 FROM symbols duplicate
+          WHERE duplicate.name = target.name AND duplicate.id <> target.id
+        )
+      )
+    ORDER BY id, relationType, fromId, toId
+  `).all(...symbolIds, ...symbolIds) as GraphNeighbor[];
+
+  const symbolRows = db.prepare("SELECT id, source_path AS sourcePath FROM symbols")
+    .all() as Array<{ id: string; sourcePath: string }>;
+  const symbolsBySource = new Map<string, string[]>();
+  for (const row of symbolRows) {
+    const ids = symbolsBySource.get(row.sourcePath) ?? [];
+    ids.push(row.id);
+    symbolsBySource.set(row.sourcePath, ids);
+  }
+  const sourcePaths = new Set(symbolsBySource.keys());
+  const imports = db.prepare(`
+    SELECT relation.source_path AS sourcePath, relation.to_name AS targetName,
+           relation.from_symbol_id AS fromId
+    FROM relations relation
+    WHERE relation.relation_type = 'IMPORTS'
+  `).all() as Array<{ sourcePath: string; targetName: string; fromId: string | null }>;
+  const seeds = new Set(symbolIds);
+  const resolvedImports: GraphNeighbor[] = [];
+  for (const relation of imports) {
+    const targetPath = resolveImportPath(relation.sourcePath, relation.targetName, sourcePaths);
+    if (!targetPath) continue;
+    const targetIds = symbolsBySource.get(targetPath) ?? [];
+    const importerIds = relation.fromId
+      ? [relation.fromId]
+      : (symbolsBySource.get(relation.sourcePath) ?? []);
+    for (const fromId of importerIds) {
+      for (const toId of targetIds) {
+        if (seeds.has(fromId)) {
+          resolvedImports.push({ id: toId, relationType: "IMPORTS", fromId, toId });
+        }
+        if (seeds.has(toId)) {
+          resolvedImports.push({ id: fromId, relationType: "IMPORTS", fromId, toId });
+        }
+      }
+    }
+  }
+  return [...direct, ...resolvedImports]
+    .sort((a, b) => a.id.localeCompare(b.id)
+      || a.relationType.localeCompare(b.relationType)
+      || a.fromId.localeCompare(b.fromId)
+      || a.toId.localeCompare(b.toId));
+}
+
+function resolveImportPath(sourcePath: string, targetName: string, sourcePaths: Set<string>): string | null {
+  if (!targetName.startsWith(".")) return null;
+  const base = posixPath.normalize(posixPath.join(posixPath.dirname(sourcePath), targetName));
+  const candidates = [
+    base,
+    `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`,
+    `${base}/index.ts`, `${base}/index.tsx`, `${base}/index.js`, `${base}/index.jsx`,
+  ];
+  return candidates.find((candidate) => sourcePaths.has(candidate)) ?? null;
 }
 
 function ngramHit(
@@ -142,6 +295,17 @@ function ngramHit(
 
 function normalizedIdentifier(value: string): string {
   return value.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}_]/gu, "");
+}
+
+function isExactSymbolMatch(hit: SearchHit, query: string): boolean {
+  if (hit.kind !== "symbol") return false;
+  const symbolName = normalizedIdentifier(hit.title.split("#").at(-1) ?? "");
+  if (!symbolName) return false;
+  return query
+    .trim()
+    .split(/\s+/)
+    .map(normalizedIdentifier)
+    .some((token) => token === symbolName);
 }
 
 function toFtsQuery(query: string): string {

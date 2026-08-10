@@ -39,9 +39,17 @@ export function matchingNgramItems(
     SELECT item_kind AS kind, item_id AS id, COUNT(*) AS matches
     FROM search_ngrams
     WHERE term IN (${placeholders})
+      AND (
+        item_kind <> 'memory'
+        OR EXISTS (
+          SELECT 1 FROM memories
+          WHERE memories.id = search_ngrams.item_id
+            AND memories.status = 'active'
+        )
+      )
     GROUP BY item_kind, item_id
     HAVING COUNT(*) >= ?
-    ORDER BY matches DESC
+    ORDER BY matches DESC, item_kind ASC, item_id ASC
     LIMIT ?
   `).all(...terms, minimumMatches, limit) as Array<{ kind: SearchItemKind; id: string; matches: number }>;
   return matches.map((item) => ({ ...item, coverage: item.matches / terms.length }));

@@ -2,6 +2,27 @@
 
 每次向 GitHub 推送代码前，都必须在此文件中补充本次推送的用户可见修复、行为变化、重要实现和验证结果。
 
+## 2026-08-10 - 检索与召回第二阶段优化
+
+### 修复内容
+
+- n-gram 召回在候选 `LIMIT` 前排除非 `active` 项目记忆，避免过期、冲突或已替代记忆挤掉活跃记忆。
+- 代码图召回支持同文件同名 symbol 优先解析，并按相对模块路径扩展跨文件 `IMPORTS` 关系。
+- 项目上下文按任务文本、scope 关键词和相关 source 路径过滤带 scope 的项目记忆，减少跨模块误召回。
+- 检索评估集扩展到 9 个用例，新增中文任务查询、图 seed/related、同名 symbol、跨文件关系和错误 scope 回归；保留 RRF、多 hop 衰减和 related 配额策略。
+
+### 验证结果
+
+- `npm run typecheck`：通过。
+- `npm test`：9 个测试文件、64 个测试全部通过。
+- `npm run build`：通过。
+- `npm run eval`：9 个搜索用例，Recall@5 `1.000`，MRR `0.870`，上下文必需记忆召回和 precision 均为 `1.000`。
+- `git diff --check`：通过。
+
+### 已知边界
+
+- import 关系目前按目标模块扩展，尚未保存具体 imported binding；alias/member call 和大规模 user memory 的召回仍是后续工作。
+
 ## 2026-08-07 - project_context 上下文预算与检索限额
 
 ### 修复内容

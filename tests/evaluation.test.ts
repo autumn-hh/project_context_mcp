@@ -5,8 +5,9 @@ describe("quality evaluation", () => {
   it("evaluates deterministic retrieval, context, candidate, and performance scenarios", async () => {
     const report = await runEvaluation(5);
     expect(report.schemaVersion).toBe(1);
-    expect(report.quality.search.cases).toBeGreaterThanOrEqual(5);
+    expect(report.quality.search.cases).toBeGreaterThanOrEqual(9);
     expect(report.quality.search.recallAt5).toBe(1);
+    expect(report.quality.search.mrr).toBeGreaterThanOrEqual(0.8);
     expect(report.quality.context.requiredRecall).toBe(1);
     expect(report.quality.context.budgetRespected).toBe(true);
     expect(report.quality.candidates.expected).toBe(2);

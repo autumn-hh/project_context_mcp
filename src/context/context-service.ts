@@ -49,9 +49,11 @@ export function buildProjectContext(
   const relevantMemoryIds = new Set(relevant.filter((hit) => hit.kind === "memory").map((hit) => hit.id));
   const memories = memoryCandidates(db, relevantMemoryIds);
   const taskTokens = tokens(task);
-  const rankMemory = (memory: MemoryRecord): number =>
-    (relevantMemoryIds.has(memory.id) ? 100 : 0)
-    + taskTokens.filter((token) => `${memory.title} ${memory.content} ${memory.scope.join(" ")}`.toLowerCase().includes(token)).length;
+  const rankMemory = (memory: MemoryRecord): number => {
+    if (!scopeMatches(memory, task, relevant)) return Number.NEGATIVE_INFINITY;
+    return (relevantMemoryIds.has(memory.id) ? 100 : 0)
+      + taskTokens.filter((token) => `${memory.title} ${memory.content} ${memory.scope.join(" ")}`.toLowerCase().includes(token)).length;
+  };
   const ranked = [...memories].sort((a, b) => rankMemory(b) - rankMemory(a));
   const staleCount = count(db, "SELECT COUNT(*) AS count FROM memories WHERE status IN ('stale', 'conflicted')");
   const failedIndexCount = count(db, "SELECT COUNT(*) AS count FROM index_runs WHERE status = 'failed'");
@@ -187,6 +189,41 @@ function memoryCandidates(db: SqliteDatabase, relevantMemoryIds: Set<string>): M
   }
   return [...candidates.values()];
 }
+
+function scopeMatches(memory: MemoryRecord, task: string, relevant: SearchHit[]): boolean {
+  if (memory.scope.length === 0) return true;
+  const normalizedTask = normalizeScopeText(task);
+  const taskTokens = tokens(task);
+  return memory.scope.some((scope) => {
+    const normalizedScope = normalizeScopeText(scope);
+    if (!normalizedScope) return false;
+    if (normalizedTask.includes(normalizedScope)) return true;
+    const scopeTokens = normalizedScope.split(/[\\/._-]+/u).filter((token) => (
+      token.length >= 3 && !SCOPE_STOP_WORDS.has(token)
+    ));
+    if (scopeTokens.some((scopeToken) => taskTokens.some((taskToken) => (
+      taskToken === scopeToken
+      || taskToken.startsWith(scopeToken)
+      || scopeToken.startsWith(taskToken)
+    )))) return true;
+    return relevant.some((hit) => {
+      if (!hit.source) return false;
+      const source = normalizeScopeText(hit.source);
+      return source === normalizedScope
+        || source.endsWith(`/${normalizedScope}`)
+        || normalizedScope.endsWith(`/${source}`);
+    });
+  });
+}
+
+function normalizeScopeText(value: string): string {
+  return value.normalize("NFKC").replaceAll("\\", "/").toLowerCase().trim();
+}
+
+const SCOPE_STOP_WORDS = new Set([
+  "src", "lib", "app", "test", "tests", "docs", "dist", "build",
+  "ts", "tsx", "js", "jsx", "mjs", "cjs",
+]);
 
 function rankTasks(tasks: TaskRecord[], taskTokens: string[]): TaskRecord[] {
   const score = (task: TaskRecord): number => {

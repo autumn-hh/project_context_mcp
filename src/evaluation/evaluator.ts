@@ -63,7 +63,7 @@ export interface EvaluationThresholds {
 
 export const DEFAULT_THRESHOLDS: EvaluationThresholds = {
   searchRecallAt5: 1,
-  searchMrr: 0.75,
+  searchMrr: 0.8,
   contextRequiredRecall: 1,
   contextMemoryPrecision: 1,
   candidatePrecision: 1,
@@ -149,6 +149,13 @@ async function evaluateQuality(
   });
   app.remember(project.id, {
     type: "constraint",
+    title: "Authentication audit scope check",
+    content: "Authentication audit records must remain on the local machine.",
+    scope: ["src/images.ts"],
+    sourceKind: "user",
+  });
+  app.remember(project.id, {
+    type: "constraint",
     title: "Image cache limit",
     content: "Image cache entries must be evicted after one hour.",
     scope: ["src/images.ts"],
@@ -158,6 +165,12 @@ async function evaluateQuality(
   const cases: SearchCase[] = [
     { id: "document-en", query: "refresh token rotation", matches: (hit) => hit.source === "README.md" },
     { id: "document-cjk", query: "刷新令牌重用检测", matches: (hit) => hit.source === "docs/authentication.md" },
+    { id: "document-cjk-substring", query: "令牌家族撤销", matches: (hit) => hit.source === "docs/authentication.md" },
+    {
+      id: "document-cjk-task",
+      query: "刷新令牌重用检测后撤销令牌家族",
+      matches: (hit) => hit.source === "docs/authentication.md",
+    },
     {
       id: "function-symbol",
       query: "refreshToken",
@@ -169,6 +182,16 @@ async function evaluateQuality(
       matches: (hit) => hit.kind === "symbol" && hit.source === "src/session.ts" && hit.title.includes("SessionStore"),
     },
     { id: "active-memory", query: "audit records local", matches: (hit) => hit.id === auditConstraint.id },
+    {
+      id: "graph-seed-symbol",
+      query: "entryPoint",
+      matches: (hit) => hit.kind === "symbol" && hit.title.includes("#entryPoint"),
+    },
+    {
+      id: "graph-related-symbol",
+      query: "entryPoint",
+      matches: (hit) => hit.kind === "symbol" && hit.title.includes("#helper"),
+    },
   ];
   const caseHits = cases.map((item) => app.search(project.id, item.query, 10));
   const ranks = cases.map((item, caseIndex) => {
@@ -177,7 +200,11 @@ async function evaluateQuality(
     return index === -1 ? Number.POSITIVE_INFINITY : index + 1;
   });
 
-  const context = app.context(project.id, "refresh token rotation and local authentication audit records", 2_000);
+  const context = app.context(
+    project.id,
+    "refresh token rotation and local authentication audit records in src/auth.ts",
+    2_000,
+  );
   const selectedIds = new Set([
     ...context.constraints.map((memory) => memory.id),
     ...context.decisions.map((memory) => memory.id),
@@ -277,6 +304,9 @@ async function createQualityFixture(root: string): Promise<number> {
     "src/token.ts": "export function rotateToken(value: string) { return `${value}:rotated`; }\n",
     "src/auth.ts": "import { rotateToken } from './token';\nexport function refreshToken(value: string) { return rotateToken(value); }\n",
     "src/session.ts": "export interface SessionStore { find(id: string): string | undefined; }\nexport class LocalSessionStore implements SessionStore { find(id: string) { return id; } }\n",
+    "src/entry.ts": "import { helper } from './helper';\nexport function entryPoint() { return helper(); }\n",
+    "src/helper.ts": "import { leaf } from './leaf';\nexport function helper() { return leaf(); }\n",
+    "src/leaf.ts": "export function leaf() { return 'leaf'; }\n",
     "src/images.ts": "export function cacheThumbnail(id: string) { return `thumbnail:${id}`; }\n",
   };
   for (let index = 0; index < 40; index += 1) {
