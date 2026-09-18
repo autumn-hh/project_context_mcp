@@ -57,7 +57,7 @@ describe("Project Context MCP", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(35);
+      expect(tools.tools).toHaveLength(38);
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
       await call(client, "storage_status", {});
@@ -81,6 +81,15 @@ describe("Project Context MCP", () => {
       await call(client, "project_watch_start", { projectId, initialIndex: false, debounceMs: 100 });
       expect(array(await call(client, "project_watch_list", {}))).toHaveLength(1);
       await call(client, "project_watch_stop", { projectId });
+      const usage = object(await call(client, "project_storage", { projectId }));
+      expect(usage.databaseBytes).toBeGreaterThan(0);
+      expect(object(usage.policy).enabled).toBe(false);
+      expect(object(await call(client, "project_cleanup", { projectId })).dryRun).toBe(true);
+      const unconfirmed = await client.callTool({ name: "project_cleanup", arguments: { projectId, dryRun: false } });
+      expect(unconfirmed.isError).toBe(true);
+      expect(object(await call(client, "project_cleanup", { projectId, dryRun: false, confirmProjectId: projectId })).vacuumCompleted).toBe(true);
+      expect(object(await call(client, "project_maintenance_configure", { projectId, enabled: true })).enabled).toBe(true);
+      await call(client, "project_maintenance_configure", { projectId, enabled: false });
       const indexed = await call(client, "project_index", { projectId });
       expect(object(indexed).errors).toHaveLength(0);
       await call(client, "project_search", { projectId, query: "memory local" });
@@ -193,7 +202,7 @@ describe("Project Context MCP", () => {
     const client = new Client({ name: "stdio-test", version: "1.0.0" });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(35);
+      expect((await client.listTools()).tools).toHaveLength(38);
       const status = await client.callTool({ name: "storage_status", arguments: {} });
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {

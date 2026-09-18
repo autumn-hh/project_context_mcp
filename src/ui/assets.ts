@@ -50,6 +50,29 @@ export const UI_HTML = String.raw`<!doctype html>
           <button class="portrait-mode" data-portrait-mode="graph" type="button">关系图</button>
         </nav>
         <div id="portrait-overview" class="portrait-grid">
+          <section class="portrait-section portrait-span-2 maintenance-section">
+            <header><div><span class="panel-label">DATABASE</span><h2>数据库维护</h2></div><button id="refresh-storage" class="secondary-button" type="button">刷新占用</button></header>
+            <div id="storage-usage" class="storage-metrics"></div>
+            <details class="storage-inspect"><summary>数据库位置与数据量</summary><p id="storage-path" class="maintenance-note"></p><dl id="storage-counts" class="storage-counts"></dl></details>
+            <p class="maintenance-note maintenance-scope">清理对象是数据库内的索引运行日志，不会删除项目文件。记忆、任务、候选及有效索引均保留；日志始终保留最新 10 条。可回收空间为当前空闲页估算。</p>
+            <div class="maintenance-columns">
+              <section class="maintenance-card" aria-labelledby="manual-cleanup-title"><header><span class="panel-label">ON DEMAND</span><h3 id="manual-cleanup-title">手动清理</h3><p class="maintenance-note">先核对日志明细，再确认本次清理。</p></header>
+                <div class="maintenance-controls"><div class="field"><label for="cleanup-retention">本次保留天数</label><input id="cleanup-retention" type="number" min="1" max="3650" step="1" value="30"></div><button id="preview-cleanup" class="primary-button" type="button" disabled>预览清理</button></div>
+                <p id="cleanup-result" class="ignore-impact" role="status">请先预览，再确认执行。空间回收期间数据库写入可能短暂等待。</p>
+                <div class="maintenance-card-actions"><button id="execute-cleanup" class="danger-button" type="button" disabled>确认执行清理并回收空间</button></div>
+              </section>
+              <section class="maintenance-card" aria-labelledby="auto-maintenance-title"><header><span class="panel-label">SCHEDULE</span><h3 id="auto-maintenance-title">自动维护</h3><p class="maintenance-note">由你开启，在索引完成后按间隔检查。</p></header>
+                <label class="maintenance-toggle"><input id="maintenance-auto" type="checkbox">启用自动维护（默认关闭）</label>
+                <div class="maintenance-controls"><div class="field"><label for="maintenance-retention">自动保留天数</label><input id="maintenance-retention" type="number" min="1" max="3650" step="1" value="30"></div><div class="field"><label for="maintenance-interval">执行间隔（小时）</label><input id="maintenance-interval" type="number" min="1" max="8760" step="1" value="24"></div></div>
+                <p id="maintenance-result" class="maintenance-note" role="status"></p>
+                <p class="maintenance-note">空闲空间至少 16 MiB 且占数据库 20% 时才自动压缩。应用关闭期间不会运行。</p>
+                <div class="maintenance-card-actions"><button id="save-maintenance" class="secondary-button" type="button" disabled>保存自动维护设置</button></div>
+              </section>
+            </div>
+            <section id="cleanup-details" class="cleanup-details" aria-labelledby="cleanup-details-title" hidden><h3 id="cleanup-details-title">清理明细</h3><p id="cleanup-details-note" class="maintenance-note"></p><div id="cleanup-details-table"></div></section>
+            <details class="storage-inspect"><summary>最近索引日志 <span id="recent-index-count"></span></summary><p class="maintenance-note">直接展开记录即可查看已有内容，无需重新索引。索引完成后保留当前阅读位置，可按需刷新列表。</p><div class="maintenance-controls log-pagination"><div class="field"><label for="index-log-limit">每页条数</label><select id="index-log-limit"><option value="10">10 条</option><option value="20" selected>20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></div><div class="field"><label for="index-log-status">运行状态</label><select id="index-log-status"><option value="all">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="running">运行中</option></select></div><button id="index-log-prev" class="secondary-button" type="button" disabled>上一页</button><button id="index-log-next" class="secondary-button" type="button" disabled>下一页</button><button id="refresh-index-logs" class="secondary-button" type="button">刷新日志</button></div><p id="index-log-page" class="maintenance-note" role="status"></p><div id="recent-index-list"></div></details>
+            <details class="storage-inspect cleanup-history"><summary>最近清理记录 <span id="cleanup-history-count"></span></summary><p class="maintenance-note">保留最近 20 次手动或自动清理记录。旧版本未记录的清理明细无法恢复。</p><div class="maintenance-controls"><div class="field"><label for="cleanup-history-limit">显示记录数</label><select id="cleanup-history-limit"><option value="5" selected>最近 5 次</option><option value="10">最近 10 次</option><option value="20">最近 20 次</option></select></div></div><div id="cleanup-history-list"></div></details>
+          </section>
           <section class="portrait-section portrait-span-2"><header><div><span class="panel-label">CODEBASE</span><h2>代码构成</h2></div></header><div id="portrait-file-types" class="file-types"></div></section>
           <section class="portrait-section portrait-span-2 ignore-section">
             <header><div><span class="panel-label">INDEX FILTER</span><h2>索引过滤</h2></div><span id="ignore-status" class="subtle-status"></span></header>
@@ -514,6 +537,56 @@ h1, h2, p { margin: 0; }
 .portrait-section > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .portrait-section h2 { font-size: 15px; }
 .ignore-section { min-height: 0; }
+.maintenance-section { min-height: 0; min-width: 0; }
+.storage-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.storage-metric { min-width: 0; padding: 16px; border: 1px solid var(--line); background: var(--surface-muted); }
+.storage-metric:first-child { border-color: #b7d6c7; background: var(--accent-soft); }
+.storage-metric span { display: block; color: var(--muted); font-size: 12px; }
+.storage-metric strong { display: block; margin-top: 8px; font-size: clamp(16px, 2vw, 25px); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.storage-inspect { min-width: 0; margin-top: 16px; border-top: 1px solid var(--line); }
+.storage-inspect > summary { padding: 13px 0; cursor: pointer; color: #35413b; font-size: 12px; font-weight: 700; }
+.storage-inspect > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.storage-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 22px; margin: 0 0 14px; }
+.storage-count { display: flex; justify-content: space-between; gap: 12px; min-width: 0; font-size: 12px; }
+.storage-count dt { color: var(--muted); }
+.storage-count dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.maintenance-scope { padding: 12px 14px; background: var(--surface-muted); border-left: 3px solid var(--accent); }
+.maintenance-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
+.maintenance-card { min-width: 0; display: flex; flex-direction: column; padding: 20px; border: 1px solid var(--line); border-radius: 6px; }
+.maintenance-card h3, .cleanup-details h3 { margin: 5px 0 0; font-size: 15px; }
+.maintenance-card .ignore-impact { margin: 0 0 12px; line-height: 1.7; overflow-wrap: anywhere; }
+.maintenance-card-actions { margin-top: auto; padding-top: 10px; }
+.cleanup-details { margin-top: 22px; }
+.cleanup-table-wrap { max-width: 100%; overflow: auto; border: 1px solid var(--line); border-radius: 4px; }
+.cleanup-table { width: 100%; min-width: 640px; border-collapse: collapse; table-layout: fixed; font-size: 11px; text-align: left; }
+.cleanup-table th { background: var(--surface-muted); color: var(--muted); font-weight: 700; }
+.cleanup-table th, .cleanup-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.cleanup-table tr:last-child td { border-bottom: 0; }
+.cleanup-table th:first-child { width: 25%; }
+.cleanup-table th:nth-child(2), .cleanup-table th:nth-child(3) { width: 18%; }
+.cleanup-table th:nth-child(4) { width: 10%; }
+.cleanup-table caption { text-align: left; padding: 10px; color: var(--muted); }
+.cleanup-log > summary { cursor: pointer; color: var(--accent-strong); font-weight: 700; }
+.cleanup-log-content { width: 100%; max-width: calc(100vw - 120px); margin: 10px 0 0; padding: 12px; background: var(--surface-muted); }
+.cleanup-log-content p { margin: 0 0 8px; line-height: 1.7; overflow-wrap: anywhere; }
+.cleanup-log-error { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 10px; }
+.cleanup-log-error code, .cleanup-log-error pre { display: block; margin: 4px 0 0; font-family: Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.process-log { margin: 10px 0; padding: 0; list-style: none; }
+.process-log li { padding: 8px 0; border-top: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.process-log-meta { display: block; color: var(--muted); font-size: 10px; }
+.process-log-path { display: block; font-family: Consolas, monospace; }
+.cleanup-history-item { margin-bottom: 10px; padding: 0 14px 12px; border: 1px solid var(--line); border-radius: 4px; }
+.cleanup-history-item > summary { display: list-item; padding: 12px 0; cursor: pointer; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.cleanup-history-item > summary span { display: inline-block; margin-right: 14px; }
+.cleanup-history-item > summary strong { color: var(--accent-strong); }
+.maintenance-note { margin: 10px 0; color: var(--muted); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.maintenance-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 14px 0; }
+.maintenance-controls .field { flex: 1 1 110px; min-width: 0; max-width: 190px; }
+.maintenance-controls input { width: 100%; min-width: 0; }
+.maintenance-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.maintenance-toggle input { width: auto; }
+@media (max-width: 900px) { .maintenance-columns { grid-template-columns: minmax(0, 1fr); } .storage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .storage-metrics { gap: 8px; } .storage-metric { padding: 12px; } .storage-counts { grid-template-columns: minmax(0, 1fr); } .maintenance-card { padding: 15px; } .maintenance-card-actions button { max-width: 100%; white-space: normal; } }
 .ignore-form { display: grid; gap: 10px; }
 .ignore-builder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .8fr); gap: 12px; align-items: center; }
 .ignore-presets { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
@@ -749,6 +822,8 @@ export const UI_JS = String.raw`(function () {
   var types = [["constraint", "约束"], ["preference", "偏好"], ["decision", "决策"], ["fact", "事实"], ["lesson", "经验"], ["issue", "问题"], ["assumption", "假设"], ["task-summary", "任务总结"]];
   var els = {};
   var TASK_PROJECT_STORAGE_KEY = "project-context-mcp:task-project-id";
+  var maintenanceSequence = 0, maintenanceProjectId = null, cleanupPreview = null, maintenanceBusy = false;
+  var indexLogSequence = 0, indexLogOffset = 0, indexLogTotal = 0, indexLogLoading = false, cachedCleanupHistory = [];
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -777,6 +852,9 @@ export const UI_JS = String.raw`(function () {
       "editor-panel", "editor-close",
       "context-project", "context-task", "context-budget", "preview-context", "context-results",
       "context-summary", "empty-context",
+      "storage-path", "storage-usage", "storage-counts", "refresh-storage", "cleanup-retention", "preview-cleanup", "execute-cleanup", "cleanup-result", "maintenance-auto", "maintenance-retention", "maintenance-interval", "save-maintenance", "maintenance-result",
+      "cleanup-details", "cleanup-details-title", "cleanup-details-note", "cleanup-details-table", "cleanup-history-count", "cleanup-history-list",
+      "recent-index-count", "recent-index-list", "index-log-limit", "index-log-status", "index-log-prev", "index-log-next", "index-log-page", "cleanup-history-limit", "refresh-index-logs",
       "task-project", "task-project-search", "task-project-results", "refresh-tasks", "task-loading", "task-empty", "task-workspace", "task-count", "task-list", "task-detail",
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
       "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics",
@@ -830,7 +908,17 @@ export const UI_JS = String.raw`(function () {
       if (!event.target.closest(".task-project-picker")) closeTaskProjectResults();
     });
     els["refresh-tasks"].addEventListener("click", function () { loadTaskView(true, false); });
-    els["portrait-project"].addEventListener("change", function () { resetGraph(); state.ignoreProjectId = null; loadPortrait(true); });
+    els["portrait-project"].addEventListener("change", function () { resetGraph(); state.ignoreProjectId = null; resetMaintenance(); loadPortrait(true); });
+    els["refresh-storage"].addEventListener("click", function () { loadMaintenance(els["portrait-project"].value); });
+    els["preview-cleanup"].addEventListener("click", function () { runCleanup(false); });
+    els["execute-cleanup"].addEventListener("click", function () { runCleanup(true); });
+    els["cleanup-retention"].addEventListener("input", invalidateCleanupPreview);
+    els["save-maintenance"].addEventListener("click", saveMaintenance);
+    ["index-log-limit", "index-log-status"].forEach(function (id) { els[id].addEventListener("change", function () { loadIndexLogs(true); }); });
+    els["index-log-prev"].addEventListener("click", function () { if (!indexLogLoading) { indexLogOffset = Math.max(0, indexLogOffset - Number(els["index-log-limit"].value)); loadIndexLogs(false); } });
+    els["index-log-next"].addEventListener("click", function () { if (!indexLogLoading) { indexLogOffset += Number(els["index-log-limit"].value); loadIndexLogs(false); } });
+    els["refresh-index-logs"].addEventListener("click", function () { loadIndexLogs(false); });
+    els["cleanup-history-limit"].addEventListener("change", function () { renderCleanupHistory(cachedCleanupHistory); });
     els["edit-project"].addEventListener("click", openProjectEditor);
     els["project-form"].addEventListener("submit", saveProject);
     els["cancel-project"].addEventListener("click", function () { els["project-dialog"].close(); });
@@ -1193,6 +1281,277 @@ export const UI_JS = String.raw`(function () {
     els["context-results"].append(section);
   }
 
+  function invalidateCleanupPreview() {
+    cleanupPreview = null;
+    els["execute-cleanup"].disabled = true;
+    els["cleanup-details"].hidden = true;
+    els["cleanup-details-table"].replaceChildren();
+    els["cleanup-result"].textContent = "请先预览，再确认执行。空间回收期间数据库写入可能短暂等待。";
+  }
+
+  function resetMaintenance() {
+    maintenanceSequence++;
+    indexLogSequence++; indexLogOffset = 0; indexLogTotal = 0; indexLogLoading = false; cachedCleanupHistory = [];
+    els["index-log-page"].textContent = "";
+    els["index-log-status"].value = "all";
+    updateIndexLogButtons();
+    maintenanceProjectId = null;
+    maintenanceBusy = false;
+    invalidateCleanupPreview();
+    els["storage-usage"].replaceChildren();
+    els["storage-counts"].replaceChildren();
+    els["cleanup-history-list"].replaceChildren();
+    els["cleanup-history-count"].textContent = "";
+    document.getElementById("recent-index-count").textContent = "";
+    document.getElementById("recent-index-list").replaceChildren();
+    els["storage-path"].textContent = "正在读取数据库占用";
+    els["maintenance-result"].textContent = "";
+    els["maintenance-auto"].checked = false;
+    els["cleanup-retention"].value = "30";
+    els["maintenance-retention"].value = "30";
+    els["maintenance-interval"].value = "24";
+    setMaintenanceBusy(true);
+  }
+
+  function setMaintenanceBusy(busy) {
+    maintenanceBusy = busy;
+    ["refresh-storage", "preview-cleanup", "save-maintenance", "cleanup-retention", "maintenance-auto", "maintenance-retention", "maintenance-interval"].forEach(function (id) { els[id].disabled = busy; });
+    els["execute-cleanup"].disabled = busy || !cleanupPreview;
+  }
+
+  function maintenancePath(projectId, action) { return "/api/projects/" + encodeURIComponent(projectId) + "/" + action; }
+  function maintenanceCurrent(projectId, sequence) { return sequence === maintenanceSequence && els["portrait-project"].value === projectId; }
+  function storageBytes(value) { return (Number(value || 0) / 1048576).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " MiB"; }
+  function storageMetricBytes(value) {
+    var amount = Number(value || 0) / 1048576, units = ["MiB", "GiB", "TiB", "PiB"], unit = 0;
+    while (amount >= 1024 && unit < units.length - 1) { amount /= 1024; unit++; }
+    return amount.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " " + units[unit];
+  }
+  function renderStorage(usage) {
+    els["storage-path"].textContent = usage.databasePath;
+    els["storage-usage"].replaceChildren();
+    [["总占用", usage.totalBytes], ["数据库文件", usage.databaseBytes], ["WAL 日志", usage.walBytes], ["可回收空间（估算）", usage.reclaimableBytes]].forEach(function (item) {
+      var metric = element("div", "storage-metric"); metric.append(element("span", "", item[0]), element("strong", "", storageMetricBytes(item[1]))); els["storage-usage"].append(metric);
+    });
+    els["storage-counts"].replaceChildren();
+    var sharedMemory = element("div", "storage-count"); sharedMemory.append(element("dt", "", "SHM 共享内存"), element("dd", "", storageBytes(usage.shmBytes))); els["storage-counts"].append(sharedMemory);
+    var countLabels = { sources: "索引文件", chunks: "内容片段", symbols: "代码符号", relations: "代码关系", memories: "记忆", tasks: "任务", memory_candidates: "记忆候选", index_runs: "索引运行日志" };
+    Object.keys(usage.counts || {}).forEach(function (name) {
+      var count = element("div", "storage-count"); count.append(element("dt", "", countLabels[name] || name), element("dd", "", formatNumber(usage.counts[name]) + " 条")); els["storage-counts"].append(count);
+    });
+    if (usage.cleanupHistory) renderCleanupHistory(usage.cleanupHistory);
+  }
+
+  function updateIndexLogButtons() {
+    els["refresh-index-logs"].disabled = indexLogLoading;
+    els["index-log-prev"].disabled = indexLogLoading || indexLogOffset <= 0;
+    els["index-log-next"].disabled = indexLogLoading || indexLogOffset + Number(els["index-log-limit"].value) >= indexLogTotal;
+  }
+
+  async function loadIndexLogs(resetPage) {
+    var projectId = els["portrait-project"].value;
+    if (!projectId) return;
+    if (resetPage) indexLogOffset = 0;
+    var sequence = ++indexLogSequence, limit = Number(els["index-log-limit"].value), status = els["index-log-status"].value, offset = indexLogOffset;
+    indexLogLoading = true; updateIndexLogButtons();
+    els["index-log-page"].textContent = "正在读取索引日志…";
+    els["recent-index-list"].setAttribute("aria-busy", "true");
+    try {
+      var result = await fetchJson(maintenancePath(projectId, "index-logs") + "?limit=" + limit + "&offset=" + offset + "&status=" + encodeURIComponent(status));
+      if (sequence !== indexLogSequence || els["portrait-project"].value !== projectId) return;
+      indexLogTotal = result.total;
+      if (result.total > 0 && offset >= result.total) { indexLogOffset = Math.floor((result.total - 1) / limit) * limit; await loadIndexLogs(false); return; }
+      if (!result.total) indexLogOffset = 0;
+      els["recent-index-count"].textContent = "（共 " + formatNumber(result.total) + " 条）";
+      els["index-log-page"].textContent = result.total ? "第 " + (Math.floor(indexLogOffset / limit) + 1) + " / " + Math.ceil(result.total / limit) + " 页 · 显示 " + (indexLogOffset + 1) + "–" + (indexLogOffset + result.items.length) + " 条，共 " + formatNumber(result.total) + " 条" : "当前条件下没有索引运行日志";
+      replaceLogContent(els["recent-index-list"], cleanupDetailTable(result.items, "索引运行日志"));
+    } catch (error) {
+      if (sequence !== indexLogSequence || els["portrait-project"].value !== projectId) return;
+      indexLogTotal = 0; els["recent-index-count"].textContent = "";
+      els["index-log-page"].textContent = (error.message || "无法读取索引日志") + "，当前保留上次显示的记录，可点击刷新日志重试。";
+    } finally {
+      if (sequence === indexLogSequence && els["portrait-project"].value === projectId) { indexLogLoading = false; els["recent-index-list"].removeAttribute("aria-busy"); updateIndexLogButtons(); }
+    }
+  }
+
+  function replaceLogContent(container, content) {
+    var openKeys = new Set(Array.from(container.querySelectorAll("details[data-view-key][open]")).map(function (item) { return item.dataset.viewKey; }));
+    var active = document.activeElement, focusKey = active && container.contains(active) && active.closest("details[data-view-key]");
+    var scrolls = Array.from(container.querySelectorAll(".cleanup-table-wrap")).map(function (item) { var parent = item.closest("details[data-view-key]"); return { key: parent ? parent.dataset.viewKey : "root", left: item.scrollLeft }; });
+    var left = window.scrollX, top = window.scrollY;
+    container.style.minHeight = container.getBoundingClientRect().height + "px";
+    container.replaceChildren(content);
+    container.querySelectorAll("details[data-view-key]").forEach(function (item) {
+      item.open = openKeys.has(item.dataset.viewKey);
+      if (focusKey && item.dataset.viewKey === focusKey.dataset.viewKey) item.querySelector("summary").focus({ preventScroll: true });
+    });
+    container.querySelectorAll(".cleanup-table-wrap").forEach(function (item) {
+      var parent = item.closest("details[data-view-key]"), key = parent ? parent.dataset.viewKey : "root";
+      var saved = scrolls.find(function (entry) { return entry.key === key; });
+      if (saved) item.scrollLeft = saved.left;
+    });
+    container.style.minHeight = "";
+    window.scrollTo({ left: left, top: top, behavior: "instant" });
+  }
+
+  function cleanupDetailTable(details, label) {
+    if (!details || !details.length) return element("p", "maintenance-note", "没有可展示的索引运行日志明细。");
+    var wrap = element("div", "cleanup-table-wrap"); wrap.tabIndex = 0; wrap.setAttribute("role", "region"); wrap.setAttribute("aria-label", label + "，窄屏可横向滚动");
+    var table = element("table", "cleanup-table"), head = element("thead"), row = element("tr"), body = element("tbody");
+    table.append(element("caption", "", "扫描 / 索引 / 跳过 / 移除：该次索引运行的文件统计，不是本次删除的项目文件。"));
+    ["运行 ID", "开始时间", "完成时间", "状态", "扫描 / 索引 / 跳过 / 移除"].forEach(function (label) { var th = element("th", "", label); th.scope = "col"; row.append(th); });
+    head.append(row);
+    details.forEach(function (detail) {
+      var tr = element("tr");
+      tr.dataset.cleanupRun = detail.id;
+      [detail.id, formatDate(detail.startedAt), detail.completedAt ? formatDate(detail.completedAt) : "未结束", detail.status === "completed" ? "已完成" : detail.status === "failed" ? "失败" : "运行中",
+        [detail.scanned, detail.indexed, detail.skipped, detail.removed].map(function (n) { return formatNumber(n || 0); }).join(" / ")].forEach(function (value) { tr.append(element("td", "", value)); });
+      var logRow = element("tr"), logCell = element("td"), log = element("details", "cleanup-log"), content = element("div", "cleanup-log-content");
+      log.dataset.viewKey = "log:" + detail.id;
+      logCell.colSpan = 5;
+      log.append(element("summary", "", "查看日志内容"));
+      content.append(element("p", "", "运行 " + detail.id + "：" + (detail.status === "completed" ? "已完成" : detail.status === "failed" ? "失败" : "运行中") + "；扫描 " + formatNumber(detail.scanned || 0) + "、索引 " + formatNumber(detail.indexed || 0) + "、跳过 " + formatNumber(detail.skipped || 0) + "、移除 " + formatNumber(detail.removed || 0) + "。"));
+      if (detail.processLog && Array.isArray(detail.processLog.entries)) {
+        content.append(element("p", "", "运行过程 · 共 " + formatNumber(detail.processLog.totalEvents) + " 条事件" + (detail.processLog.truncated ? "，仅保存部分事件（已截断）" : "")));
+        var processList = element("ol", "process-log");
+        detail.processLog.entries.forEach(function (event) {
+          var item = element("li"), level = event.level === "error" ? "错误" : event.level === "warn" ? "警告" : "信息";
+          item.append(element("span", "process-log-meta", formatDate(event.timestamp) + " · " + level), element("span", "", event.message));
+          if (event.path) item.append(element("code", "process-log-path", event.path));
+          processList.append(item);
+        });
+        if (!detail.processLog.entries.length) content.append(element("p", "", "此运行尚无已保存的过程事件。"));
+        content.append(processList);
+      } else {
+        content.append(element("p", "", "本次运行只保存了摘要和错误记录，没有逐文件过程明细。"));
+      }
+      if (!Array.isArray(detail.errors)) {
+        content.append(element("p", "", "此记录未保存错误详情。"));
+      } else if (!detail.errors.length && detail.logNote) {
+        content.append(element("p", "", "此运行的错误内容无法完整读取；请查看下方记录说明。未保存完整终端输出。"));
+      } else if (!detail.errors.length) {
+        content.append(element("p", "", "本次运行未记录错误。"));
+      } else {
+        content.append(element("p", "", "已记录 " + formatNumber(detail.errorCount || detail.errors.length) + " 条错误；以下为数据库保存的错误信息，未保存完整终端输出。"));
+        detail.errors.forEach(function (error) {
+          var errorBlock = element("div", "cleanup-log-error");
+          errorBlock.append(element("code", "", error.path || "未记录路径"), element("pre", "", error.message || "未记录错误信息")); content.append(errorBlock);
+        });
+      }
+      if (detail.errorsTruncated) content.append(element("p", "", "错误内容已截断：最多展示 5 条，每条路径最多 200 字符、消息最多 500 字符；原始错误共 " + formatNumber(detail.errorCount || 0) + " 条。"));
+      if (detail.logNote) content.append(element("p", "", detail.logNote));
+      log.append(content); logCell.append(log); logRow.append(logCell); body.append(tr, logRow);
+    });
+    table.append(head, body); wrap.append(table); return wrap;
+  }
+
+  function renderCleanupDetails(result, execute) {
+    els["cleanup-details"].hidden = false;
+    els["cleanup-details-title"].textContent = execute ? "本次已清理的索引运行日志" : "待清理的索引运行日志";
+    var total = execute ? result.deletedIndexRuns : result.eligibleIndexRuns;
+    els["cleanup-details-note"].textContent = "共 " + formatNumber(total) + " 条" + (result.detailsTruncated ? "，仅展示前 " + (result.details || []).length + " 条明细（完整数量如上）" : "") + "。仅删除数据库中的运行日志记录。";
+    els["cleanup-details-table"].replaceChildren(cleanupDetailTable(result.details, execute ? "已清理日志" : "待清理日志"));
+  }
+
+  function renderCleanupHistory(history) {
+    cachedCleanupHistory = history;
+    els["cleanup-history-count"].textContent = "（" + history.length + " 次）";
+    var content = document.createDocumentFragment();
+    if (!history.length) { replaceLogContent(els["cleanup-history-list"], element("p", "maintenance-note", "暂无已记录的清理。完成清理后可在这里回看；旧版本的历史明细无法恢复。")); return; }
+    history.slice(0, Number(els["cleanup-history-limit"].value)).forEach(function (item) {
+      var entry = element("details", "cleanup-history-item"), summary = element("summary");
+      entry.dataset.viewKey = "history:" + item.id;
+      summary.append(element("span", "", formatDate(item.createdAt)), element("span", "", item.trigger === "automatic" ? "自动维护" : "手动清理"), element("strong", "", "清理 " + formatNumber(item.deletedIndexRuns) + " 条日志"));
+      entry.append(summary);
+      entry.append(element("p", "maintenance-note", "保留 " + item.retentionDays + " 天 · 截止 " + formatDate(item.cutoff) + " · " + (item.phase === "cleanup_committed" ? "日志删除已提交，空间回收结果尚未记录" : "本次回收 " + storageBytes(item.reclaimedBytes) + "，占用 " + storageBytes(item.beforeBytes) + " → " + storageBytes(item.afterBytes))));
+      entry.append(element("p", "maintenance-note", "记录 ID：" + item.id + " · " + (item.vacuumRequested ? (item.vacuumCompleted && !item.checkpointBusy ? "空间回收完成" : "空间回收未完全完成") : "本次未执行空间回收")));
+      if (item.warnings && item.warnings.length) entry.append(element("p", "maintenance-note", item.warnings.join("；")));
+      if (item.detailsTruncated) entry.append(element("p", "maintenance-note", "仅保留前 " + (item.details || []).length + " 条明细，完整清理数量为 " + formatNumber(item.deletedIndexRuns) + " 条。"));
+      entry.append(cleanupDetailTable(item.details, "历史清理日志")); content.append(entry);
+    });
+    replaceLogContent(els["cleanup-history-list"], content);
+  }
+
+  function renderMaintenanceSettings(settings) {
+    els["maintenance-auto"].checked = settings.enabled;
+    els["maintenance-retention"].value = String(settings.retentionDays);
+    els["maintenance-interval"].value = String(settings.intervalHours);
+    var result = settings.lastRun;
+    els["maintenance-result"].textContent = "自动维护：" + (settings.enabled ? "已开启" : "未开启") + (result ? " · 最近尝试 " + formatDate(result.attemptedAt) : " · 尚未运行") +
+      (result ? " · " + (result.error || result.message || ("清理 " + (result.deletedIndexRuns || 0) + " 条日志")) + (result.warnings && result.warnings.length ? " · " + result.warnings.join("；") : "") : "");
+  }
+
+  async function loadMaintenance(projectId) {
+    if (!projectId) return;
+    var firstLoad = maintenanceProjectId !== projectId;
+    var sequence = ++maintenanceSequence;
+    if (firstLoad) invalidateCleanupPreview();
+    setMaintenanceBusy(true);
+    try {
+      var results = await Promise.all([fetchJson(maintenancePath(projectId, "storage")), fetchJson(maintenancePath(projectId, "maintenance"))]);
+      if (!maintenanceCurrent(projectId, sequence)) return;
+      renderStorage(results[0]); renderMaintenanceSettings(results[1]); maintenanceProjectId = projectId;
+      await loadIndexLogs(firstLoad);
+    } catch (error) {
+      if (maintenanceCurrent(projectId, sequence)) els["cleanup-result"].textContent = error.message || "无法读取数据库信息，请刷新重试";
+    } finally {
+      if (maintenanceCurrent(projectId, sequence)) setMaintenanceBusy(false);
+    }
+  }
+
+  function cleanupRetention() {
+    var value = Number(els["cleanup-retention"].value);
+    if (!Number.isInteger(value) || value < 1 || value > 3650) throw new Error("保留天数必须是 1 至 3650 的整数");
+    return value;
+  }
+
+  async function runCleanup(execute) {
+    if (maintenanceBusy) return;
+    var projectId = els["portrait-project"].value, sequence = maintenanceSequence;
+    if (!projectId) return;
+    try {
+      var retentionDays = cleanupRetention();
+      if (execute && (!cleanupPreview || cleanupPreview.projectId !== projectId || cleanupPreview.retentionDays !== retentionDays)) return;
+      setMaintenanceBusy(true);
+      els["cleanup-result"].textContent = execute ? "正在清理并回收空间…" : "正在计算清理范围…";
+      var result = await fetchJson(maintenancePath(projectId, "cleanup"), { method: "POST", body: { dryRun: !execute, retentionDays: retentionDays, vacuum: true, ...(execute ? { confirmProjectId: projectId } : {}) } });
+      if (!maintenanceCurrent(projectId, sequence)) return;
+      cleanupPreview = execute ? null : { projectId: projectId, retentionDays: retentionDays };
+      renderStorage(Object.assign({}, result.after || result.before, result.recentIndexRuns ? { recentIndexRuns: result.recentIndexRuns } : {}));
+      renderCleanupDetails(result, execute);
+      if (result.history) renderCleanupHistory(result.history);
+      if (execute) loadIndexLogs(true);
+      els["cleanup-result"].textContent = (execute
+        ? "已清理 " + result.deletedIndexRuns + " 条日志；空间回收" + (result.vacuumCompleted && !result.checkpointBusy ? "完成" : "未完全完成") + "，本次回收 " + storageBytes(result.reclaimedBytes) + "。当前总占用 " + storageBytes((result.after || result.before).totalBytes) + "。"
+        : "预计清理 " + result.eligibleIndexRuns + " 条日志（早于 " + formatDate(result.cutoff) + "），当前空闲空间 " + storageBytes(result.before.reclaimableBytes) + "。确认后按最新数据重新计算并执行。") + (result.warnings.length ? " " + result.warnings.join("；") : "");
+    } catch (error) {
+      if (maintenanceCurrent(projectId, sequence)) { invalidateCleanupPreview(); els["cleanup-result"].textContent = error.message || "清理失败，请刷新后重试"; }
+    } finally {
+      if (maintenanceCurrent(projectId, sequence)) setMaintenanceBusy(false);
+    }
+  }
+
+  async function saveMaintenance() {
+    if (maintenanceBusy) return;
+    var projectId = els["portrait-project"].value, sequence = maintenanceSequence;
+    if (!projectId) return;
+    try {
+      var intervalHours = Number(els["maintenance-interval"].value);
+      if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 8760) throw new Error("执行间隔必须是 1 至 8760 的整数");
+      var retentionDays = Number(els["maintenance-retention"].value);
+      if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) throw new Error("自动保留天数必须是 1 至 3650 的整数");
+      var input = { enabled: els["maintenance-auto"].checked, retentionDays: retentionDays, intervalHours: intervalHours };
+      setMaintenanceBusy(true);
+      var settings = await fetchJson(maintenancePath(projectId, "maintenance"), { method: "PUT", body: input });
+      if (!maintenanceCurrent(projectId, sequence)) return;
+      renderMaintenanceSettings(settings); toast("自动维护设置已保存");
+    } catch (error) {
+      if (maintenanceCurrent(projectId, sequence)) els["maintenance-result"].textContent = error.message || "保存失败";
+    } finally {
+      if (maintenanceCurrent(projectId, sequence)) setMaintenanceBusy(false);
+    }
+  }
+
   async function loadPortrait(force, silent) {
     var projectId = els["portrait-project"].value;
     if (!projectId) {
@@ -1203,20 +1562,24 @@ export const UI_JS = String.raw`(function () {
     }
     if (!force && state.portraitProjectId === projectId) return;
     if (state.portraitLoading) return;
+    var sameProject = state.portrait && state.portrait.project.id === projectId;
     state.portraitLoading = true;
-    if (!silent) {
+    if (!silent && !sameProject) {
       els["portrait-loading"].replaceChildren(element("strong", "", "正在读取项目画像"));
       els["portrait-loading"].hidden = false;
       els["portrait-empty"].hidden = true;
       els["portrait-content"].hidden = true;
       els["refresh-portrait"].disabled = true;
     }
+    if (!silent) els["refresh-portrait"].disabled = true;
     try {
       var portrait = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/portrait");
+      if (els["portrait-project"].value !== projectId) return;
       renderPortrait(portrait);
       state.portrait = portrait;
       state.portraitProjectId = projectId;
       if (state.ignoreProjectId !== projectId) await loadIgnoreRules(projectId, silent);
+      if (maintenanceProjectId !== projectId || (!silent && force)) await loadMaintenance(projectId);
     } catch (error) {
       if (!silent) {
         els["portrait-loading"].replaceChildren(errorState(error.message || "无法读取项目画像"));
@@ -1225,6 +1588,7 @@ export const UI_JS = String.raw`(function () {
     } finally {
       state.portraitLoading = false;
       if (!silent) els["refresh-portrait"].disabled = false;
+      if (els["portrait-project"].value !== projectId) loadPortrait(true);
     }
   }
 
@@ -1785,7 +2149,7 @@ export const UI_JS = String.raw`(function () {
     if (control) control.disabled = true;
     try {
       await fetchJson(path, options);
-      await loadPortrait(true);
+      await loadPortrait(true, true);
       toast(success);
     } catch (error) {
       toast(error.message || String(error), true);

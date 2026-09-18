@@ -120,7 +120,7 @@ describe("localhost rule manager", () => {
     expect(portrait.response.status).toBe(200);
     expect(portrait.body).toMatchObject({
       project: { id: project.id, name: "project" },
-      health: { sources: 3, schemaVersion: 6 },
+      health: { sources: 3, schemaVersion: 7 },
       statuses: {
         memories: { active: 1, stale: 1 }, candidates: { pending: 2 },
         tasks: { completed: 1, in_progress: 2 },
@@ -306,6 +306,72 @@ describe("localhost rule manager", () => {
       expect.objectContaining({ id: createdMemory.id, status: "superseded" }),
       expect.objectContaining({ id: newMemory.id, status: "deleted" }),
     ]));
+  });
+
+  it("previews database cleanup, requires project confirmation and saves opt-in maintenance settings", async () => {
+    const app = await ProjectContextApp.create();
+    const project = await app.openProject(projectRoot);
+    await app.index(project.id);
+    const cleanupDb = app.projects.projectDatabase(project.id);
+    for (let i = 0; i < 14; i++) cleanupDb.prepare("INSERT INTO index_runs (id, started_at, completed_at, status, scanned, indexed) VALUES (?, ?, ?, 'completed', 8, 3)")
+      .run(`preview-log-${i}`, "2020-01-01T00:00:00.000Z", "2020-01-01T00:01:00.000Z");
+    cleanupDb.close();
+    app.close();
+    ui = await startUiServer({ openBrowser: false });
+    const base = `/api/projects/${project.id}`;
+    const denied = await api(ui.url, `${base}/cleanup`, { method: "POST", body: {} });
+    expect(denied.response.status).toBe(401);
+    const token = new URLSearchParams(new URL(ui.launchUrl).hash.slice(1)).get("token");
+    const session = await api(ui.url, "/api/session", { method: "POST", body: { token } });
+    const cookie = session.response.headers.get("set-cookie")?.split(";")[0];
+    const usage = await api(ui.url, `${base}/storage`, { cookie });
+    expect(usage.response.status).toBe(200);
+    expect(usage.body).toMatchObject({ databaseBytes: expect.any(Number), totalBytes: expect.any(Number), reclaimableBytes: expect.any(Number), counts: expect.any(Object) });
+    const firstLogs = await api(ui.url, `${base}/index-logs?limit=10&status=completed`, { cookie });
+    expect(firstLogs.body).toMatchObject({ total: 15, limit: 10, offset: 0, hasMore: true });
+    expect((firstLogs.body as { items: unknown[] }).items).toHaveLength(10);
+    const secondLogs = await api(ui.url, `${base}/index-logs?limit=10&offset=10&status=completed`, { cookie });
+    expect(secondLogs.body).toMatchObject({ total: 15, hasMore: false });
+    expect((secondLogs.body as { items: unknown[] }).items).toHaveLength(5);
+    expect((await api(ui.url, `${base}/index-logs?status=failed`, { cookie })).body).toMatchObject({ total: 0, items: [] });
+    expect((await api(ui.url, `${base}/index-logs`)).response.status).toBe(401);
+    for (const query of ["limit=101", "offset=-1", "status=invalid", "limit=1.2"]) {
+      expect((await api(ui.url, `${base}/index-logs?${query}`, { cookie })).response.status).toBe(400);
+    }
+    const settings = await api(ui.url, `${base}/maintenance`, { cookie });
+    expect(settings.body).toMatchObject({ enabled: false, retentionDays: 30, lastRun: null });
+    const preview = await api(ui.url, `${base}/cleanup`, { method: "POST", cookie, body: {} });
+    expect(preview.response.status).toBe(200);
+    expect(preview.body).toMatchObject({ dryRun: true, retentionDays: 30, deletedIndexRuns: 0, vacuumCompleted: false });
+    expect(preview.body).toMatchObject({ eligibleIndexRuns: 5, details: expect.arrayContaining([expect.objectContaining({ scanned: 8, indexed: 3 })]) });
+    expect((await api(ui.url, `${base}/storage`, { cookie })).body).toMatchObject({ cleanupHistory: [] });
+    expect((preview.body as { before: unknown; after: unknown }).after).toEqual((preview.body as { before: unknown }).before);
+    for (const confirmProjectId of [undefined, "another-project"]) {
+      const blocked = await api(ui.url, `${base}/cleanup`, { method: "POST", cookie, body: { dryRun: false, confirmProjectId } });
+      expect(blocked.response.status).toBe(400);
+      expect(blocked.body).toMatchObject({ code: "CLEANUP_CONFIRMATION_REQUIRED" });
+    }
+    for (const retentionDays of [0, 3651, 1.5, "30"]) {
+      const invalid = await api(ui.url, `${base}/cleanup`, { method: "POST", cookie, body: { retentionDays } });
+      expect(invalid.response.status).toBe(400);
+      const invalidSettings = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: true, retentionDays } });
+      expect(invalidSettings.response.status).toBe(400);
+    }
+    const executed = await api(ui.url, `${base}/cleanup`, { method: "POST", cookie, body: { dryRun: false, confirmProjectId: project.id } });
+    expect(executed.response.status).toBe(200);
+    expect(executed.body).toMatchObject({ dryRun: false, deletedIndexRuns: 5, vacuumCompleted: true, after: expect.any(Object), history: [expect.objectContaining({ deletedIndexRuns: 5, trigger: "manual", phase: "finished" })] });
+    expect((executed.body as { details: unknown }).details).toEqual((preview.body as { details: unknown }).details);
+    expect((await api(ui.url, `${base}/storage`, { cookie })).body).toMatchObject({ cleanupHistory: (executed.body as { history: unknown }).history });
+    const badInterval = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: true, retentionDays: 60, intervalHours: 0 } });
+    expect(badInterval.response.status).toBe(400);
+    const enabled = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: true, retentionDays: 60, intervalHours: 48 } });
+    expect(enabled.body).toMatchObject({ enabled: true, retentionDays: 60, intervalHours: 48 });
+    const reloaded = await api(ui.url, `${base}/maintenance`, { cookie });
+    expect(reloaded.body).toMatchObject({ enabled: true, retentionDays: 60, intervalHours: 48 });
+    const disabled = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: false, retentionDays: 30 } });
+    expect(disabled.body).toMatchObject({ enabled: false, retentionDays: 30 });
+    const unknown = await api(ui.url, "/api/projects/missing/storage", { cookie });
+    expect(unknown.response.status).toBe(404);
   });
 
   it("automatically finds a renamed project directory and rebinds its active watcher", async () => {

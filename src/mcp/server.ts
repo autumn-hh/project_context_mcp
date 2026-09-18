@@ -10,6 +10,7 @@ import { memoryStatusSchema, memoryTypeSchema } from "../memory/memory-service.j
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/user-memory-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
+import { maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -28,7 +29,7 @@ const outputSchema = { result: z.unknown() };
 const MAX_TEXT_CONTENT_CHARS = 2_000;
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "project-context-mcp", version: "0.8.0" });
+  const server = new McpServer({ name: "project-context-mcp", version: "0.9.3" });
 
   server.registerTool("storage_status", {
     description: "Check whether persistent Project Context storage has been configured.",
@@ -427,6 +428,33 @@ export function createMcpServer(): McpServer {
     inputSchema: { projectId: z.string().min(1), repair: z.boolean().default(false) },
     annotations: { idempotentHint: true },
   }, ({ projectId, repair }) => withApp((app) => app.doctor(projectId, repair)));
+
+  server.registerTool("project_storage", {
+    description: "Inspect project database, WAL, free-page space, row counts, and opt-in maintenance settings.",
+    outputSchema,
+    inputSchema: { projectId: z.string() },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId }) => withApp((app) => app.storageUsage(projectId)));
+
+  server.registerTool("project_cleanup", {
+    description: "Preview by default; explicitly confirm to prune old index logs and compact SQLite. Preserves all memories, tasks, candidates and current indexes. May take time on large databases.",
+    outputSchema,
+    inputSchema: {
+      projectId: z.string(), dryRun: z.boolean().default(true),
+      retentionDays: retentionDaysSchema.default(30), vacuum: z.boolean().default(true),
+      confirmProjectId: z.string().optional(),
+    },
+    annotations: { destructiveHint: true },
+  }, ({ projectId, confirmProjectId, ...options }) => withApp((app) => app.cleanupProject(projectId, {
+    ...options, ...(confirmProjectId ? { confirmProjectId } : {}),
+  })));
+
+  server.registerTool("project_maintenance_configure", {
+    description: "Enable or disable per-project automatic database cleanup after indexing. Disabled by default; preserves memories, tasks, candidates and current indexes.",
+    outputSchema,
+    inputSchema: { projectId: z.string(), ...maintenancePolicySchema.shape },
+    annotations: { idempotentHint: true },
+  }, ({ projectId, ...policy }) => withApp((app) => app.setMaintenanceSettings(projectId, policy)));
 
   server.registerTool("project_backup", {
     description: "Create a consistent online SQLite backup at a new absolute destination path.",

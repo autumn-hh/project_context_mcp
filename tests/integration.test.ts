@@ -369,7 +369,7 @@ describe("Project Context core", () => {
       const manifest = JSON.parse(await readFile(join(exportPath, "manifest.json"), "utf8")) as {
         schemaVersion: number;
       };
-      expect(manifest.schemaVersion).toBe(6);
+      expect(manifest.schemaVersion).toBe(7);
       const doctor = await app.doctor(project.id);
       expect(doctor.integrity).toBe("ok");
       expect(doctor.counts.symbols).toBeGreaterThan(0);
@@ -604,6 +604,8 @@ describe("Project Context core", () => {
       await expect(app.index("missing-project")).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
       const firstRun = app.index(project.id);
       await expect(app.index(project.id)).rejects.toMatchObject({ code: "INDEX_ALREADY_RUNNING" });
+      expect(() => app.cleanupProject(project.id, { dryRun: false, confirmProjectId: project.id }))
+        .toThrow("Wait for the active index run");
       await firstRun;
       await writeFile(join(projectRoot, "README.md"), "# Example\n\nDecision: use local storage.\n", "utf8");
       const firstCandidateRun = await app.index(project.id);
@@ -623,6 +625,59 @@ describe("Project Context core", () => {
     } finally {
       app.close();
     }
+  });
+
+  it("runs opt-in maintenance after indexing and preserves all indexed knowledge", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      const task = app.startTask(project.id, "Preserve task evidence");
+      app.completeTask(project.id, task.id, {
+        summary: "Decision: indexed knowledge must remain available after database maintenance.",
+        completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
+      });
+      const candidate = app.candidates(project.id).find((row) => row.sourceRef === `task:${task.id}`)!;
+      expect(candidate).toBeDefined();
+      app.acceptCandidate(project.id, candidate.id);
+      const db = app.projects.projectDatabase(project.id);
+      const tables = ["sources", "chunks", "chunks_fts", "symbols", "symbols_fts", "relations", "memories", "memories_fts", "memory_sources", "tasks", "memory_candidates", "search_ngrams"];
+      const snapshots = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
+      for (let i = 0; i < 25; i++) db.prepare("INSERT INTO index_runs (id, started_at, completed_at, status) VALUES (?, ?, ?, 'completed')")
+        .run(`old-${i}`, "2000-01-01T00:00:00.000Z", "2000-01-01T00:01:00.000Z");
+      db.close();
+      await app.index(project.id);
+      expect(app.maintenanceSettings(project.id).lastRun).toBeNull();
+      expect(app.storageUsage(project.id).counts.index_runs).toBe(27);
+      app.setMaintenanceSettings(project.id, { enabled: true });
+      await app.index(project.id);
+      expect(app.maintenanceSettings(project.id).lastRun).toMatchObject({ deletedIndexRuns: 18, warnings: [] });
+      const verified = app.projects.projectDatabase(project.id);
+      try {
+        for (let i = 0; i < tables.length; i++) expect(verified.prepare(`SELECT * FROM ${tables[i]}`).all()).toEqual(snapshots[i]);
+      } finally { verified.close(); }
+    } finally { app.close(); }
+  });
+
+  it("records actual index actions without copying file contents into logs", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const first = await app.index(project.id);
+      const firstLog = app.indexLogs(project.id).items.find((item) => item.id === first.runId)!.processLog!;
+      expect(firstLog.entries.some((entry) => entry.message === "已更新文件索引。" && entry.path === "README.md")).toBe(true);
+      expect(firstLog.entries.at(-1)?.message).toContain("索引完成");
+      const second = await app.index(project.id);
+      const secondLog = app.indexLogs(project.id).items.find((item) => item.id === second.runId)!.processLog!;
+      expect(secondLog.entries.some((entry) => entry.message.includes("内容未变化"))).toBe(true);
+      await writeFile(join(projectRoot, "trace-only.txt"), "uniquely-private-source-content", "utf8");
+      const third = await app.index(project.id);
+      expect(JSON.stringify(app.indexLogs(project.id).items.find((item) => item.id === third.runId)!.processLog)).not.toContain("uniquely-private-source-content");
+      await rm(join(projectRoot, "trace-only.txt"));
+      const fourth = await app.index(project.id);
+      expect(app.indexLogs(project.id).items.find((item) => item.id === fourth.runId)!.processLog!.entries)
+        .toEqual(expect.arrayContaining([expect.objectContaining({ path: "trace-only.txt", message: "已移除失效的索引来源；未删除项目文件。" })]));
+    } finally { app.close(); }
   });
 
   it("ranks exact symbol names and filters unrelated scoped constraints", async () => {

@@ -15,7 +15,7 @@ import { DEFAULT_WATCH_DEBOUNCE_MS } from "./indexing/watch-service.js";
 const program = new Command()
   .name("project-context")
   .description("Cross-session project intelligence and memory")
-  .version("0.8.0")
+  .version("0.9.3")
   .showHelpAfterError();
 
 program.command("init")
@@ -323,6 +323,40 @@ program.command("doctor")
 program.command("health")
   .argument("<project-id>")
   .action(withApp((app, projectId: string) => print(app.health(projectId))));
+
+program.command("storage")
+  .argument("<project-id>")
+  .description("show database size, reclaimable space, and maintenance settings")
+  .action(withApp((app, projectId: string) => print(app.storageUsage(projectId))));
+
+program.command("cleanup")
+  .argument("<project-id>")
+  .description("preview old index-log cleanup; use --apply --confirm to execute")
+  .option("--retention-days <days>", "keep logs for this many days (1-3650)", numberOption, 30)
+  .option("--apply", "execute cleanup instead of preview", false)
+  .option("--confirm <project-id>", "exact project ID required when applying")
+  .option("--no-vacuum", "only prune history; skip database compaction")
+  .action(withApp((app, projectId: string, options: { retentionDays: number; apply: boolean; confirm?: string; vacuum: boolean }) => {
+    print(app.cleanupProject(projectId, {
+      dryRun: !options.apply, retentionDays: options.retentionDays, vacuum: options.vacuum,
+      ...(options.confirm ? { confirmProjectId: options.confirm } : {}),
+    }));
+  }));
+
+program.command("maintenance")
+  .argument("<project-id>")
+  .description("configure opt-in automatic cleanup after indexing")
+  .requiredOption("--enabled <true|false>", "enable or disable automatic cleanup")
+  .option("--retention-days <days>", "keep index logs for this many days", numberOption, 30)
+  .option("--interval-hours <hours>", "minimum hours between maintenance runs", numberOption, 24)
+  .action(withApp((app, projectId: string, options: { enabled: string; retentionDays: number; intervalHours: number }) => {
+    if (options.enabled !== "true" && options.enabled !== "false") {
+      throw new ProjectContextError("INVALID_MAINTENANCE_POLICY", "--enabled must be true or false.");
+    }
+    print(app.setMaintenanceSettings(projectId, {
+      enabled: options.enabled === "true", retentionDays: options.retentionDays, intervalHours: options.intervalHours,
+    }));
+  }));
 
 program.command("backup")
   .argument("<project-id>")

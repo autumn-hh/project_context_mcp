@@ -16,6 +16,7 @@ import {
 import { analyzeCode, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
 import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
+import { createRunLogger } from "./run-log.js";
 
 const MAX_FILE_SIZE = 1_000_000;
 const CHUNK_CHAR_LIMIT = 4_000;
@@ -64,6 +65,8 @@ export async function indexProject(
   const startedAt = nowIso();
   db.prepare("INSERT INTO index_runs (id, started_at, status) VALUES (?, ?, 'running')")
     .run(runId, startedAt);
+  const log = createRunLogger(db, runId);
+  log.record("开始索引项目，读取忽略规则并扫描文件。");
 
   const result: IndexResult = {
     runId, scanned: 0, indexed: 0, skipped: 0, removed: 0, errors: [], visited: 0, prunedDirectories: 0,
@@ -93,29 +96,34 @@ export async function indexProject(
         if (info.size > MAX_FILE_SIZE) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
+          log.record("文件超过大小限制，跳过。", relativePath);
           continue;
         }
         const buffer = await readFile(absolutePath);
         if (buffer.includes(0)) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
+          log.record("检测到二进制内容，跳过。", relativePath);
           continue;
         }
         const content = buffer.toString("utf8");
         if (isGeneratedTextArtifact(relativePath, content)) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
+          log.record("检测到生成文件，跳过。", relativePath);
           continue;
         }
         if (containsLikelySecret(content)) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
+          log.record("检测到疑似敏感内容，跳过；未保存文件内容。", relativePath, "warn");
           continue;
         }
         const contentHash = sha256(buffer);
         const existing = existingByPath.get(relativePath);
         if (existing?.content_hash === contentHash) {
           result.skipped += 1;
+          log.record("内容未变化，复用已有索引。", relativePath);
           continue;
         }
         replaceSource(db, {
@@ -128,18 +136,23 @@ export async function indexProject(
           analysis: analyzeCode(relativePath, content),
         });
         result.indexed += 1;
+        log.record("已更新文件索引。", relativePath);
         await reportProgress(options, result, "indexing", relativePath);
       } catch (error) {
         result.errors.push({ path: relativePath, message: error instanceof Error ? error.message : String(error) });
+        log.record("文件处理失败，详情见错误记录。", relativePath, "error");
       }
     }
 
     await reportProgress(options, result, "finalizing");
+    log.record("文件扫描结束，开始清理失效索引并更新搜索索引。");
+    log.flush();
     const missingRows = existingRows.filter((row) => !seen.has(row.path));
     const removeBatch = db.transaction((rows: SourceRow[]) => deleteSources(db, rows.map((row) => row.id), false));
     for (let offset = 0; offset < missingRows.length; offset += SOURCE_REMOVAL_BATCH_SIZE) {
       const batch = missingRows.slice(offset, offset + SOURCE_REMOVAL_BATCH_SIZE);
       removeBatch(batch);
+      for (const row of batch) log.record("已移除失效的索引来源；未删除项目文件。", row.path);
       result.removed += batch.length;
       await yieldToEventLoop();
       throwIfCancelled(options.signal);
@@ -155,10 +168,12 @@ export async function indexProject(
     });
 
     finishRun(db, result, "completed");
+    log.record(`索引完成：扫描 ${result.scanned}，更新 ${result.indexed}，跳过 ${result.skipped}，移除索引 ${result.removed}，错误 ${result.errors.length}。`, undefined, result.errors.length ? "warn" : "info", true);
     return result;
   } catch (error) {
     result.errors.push({ path: "<index>", message: error instanceof Error ? error.message : String(error) });
     finishRun(db, result, "failed");
+    log.record(error instanceof Error && error.name === "AbortError" ? "索引已取消，已保存当前进度和错误记录。" : "索引失败，详情见错误记录。", undefined, "error", true);
     if (error instanceof Error && error.name === "AbortError") {
       throw new ProjectContextError("INDEX_CANCELLED", error.message);
     }

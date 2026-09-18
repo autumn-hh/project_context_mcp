@@ -30,6 +30,10 @@ import {
 } from "../vcs/vcs-service.js";
 import { backupProjectDatabase, doctorProject, exportProject } from "../maintenance/maintenance-service.js";
 import {
+  cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, indexLogQuerySchema, databaseUsage, maintenanceSettings, setMaintenancePolicy, runAutomaticMaintenance,
+  type CleanupOptions, maintenancePolicySchema,
+} from "../maintenance/storage-maintenance.js";
+import {
   checkpointTask,
   cancelTask,
   completeTask,
@@ -250,6 +254,9 @@ export class ProjectContextApp {
           diffHash: vcs.kind === "git" ? vcs.diffHash : null,
           capturedAt: vcs.capturedAt,
         };
+        // Maintenance failure must not turn an otherwise successful index into a failure.
+        try { runAutomaticMaintenance(db); }
+        catch (error) { console.error("Automatic database maintenance:", error instanceof Error ? error.message : String(error)); }
         return {
           ...result,
           symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
@@ -509,6 +516,36 @@ export class ProjectContextApp {
   async doctor(projectId: string, repair = false) {
     const project = this.projects.get(projectId);
     return this.withDbAsync(projectId, (db) => doctorProject(db, project, repair));
+  }
+
+  storageUsage(projectId: string) {
+    return this.withDb(projectId, (db) => ({
+      ...databaseUsage(db), policy: maintenanceSettings(db),
+      cleanupHistory: cleanupHistory(db), recentIndexRuns: recentIndexRuns(db),
+    }));
+  }
+
+  indexLogs(projectId: string, options: z.input<typeof indexLogQuerySchema> = {}) {
+    return this.withDb(projectId, (db) => listIndexRuns(db, options));
+  }
+
+  cleanupProject(projectId: string, options: CleanupOptions & { confirmProjectId?: string | undefined } = {}) {
+    this.projects.get(projectId);
+    if (options.dryRun === false && options.confirmProjectId !== projectId) {
+      throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Pass the exact project ID to confirm database cleanup.");
+    }
+    if (options.dryRun === false && activeIndexes.has(projectId)) {
+      throw new ProjectContextError("INDEX_ALREADY_RUNNING", "Wait for the active index run to finish before database cleanup.");
+    }
+    return this.withDb(projectId, (db) => cleanupDatabase(db, options));
+  }
+
+  maintenanceSettings(projectId: string) {
+    return this.withDb(projectId, (db) => maintenanceSettings(db));
+  }
+
+  setMaintenanceSettings(projectId: string, policy: z.input<typeof maintenancePolicySchema>) {
+    return this.withDb(projectId, (db) => setMaintenancePolicy(db, policy));
   }
 
   async backup(projectId: string, destination: string) {

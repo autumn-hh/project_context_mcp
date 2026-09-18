@@ -13,6 +13,17 @@ import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
+const retentionDaysSchema = z.number().int().min(1).max(3650);
+const cleanupInputSchema = z.object({
+  dryRun: z.boolean().default(true),
+  retentionDays: retentionDaysSchema.default(30),
+  vacuum: z.boolean().default(true),
+  confirmProjectId: z.string().min(1).optional(),
+}).strict();
+const maintenanceInputSchema = z.object({
+  enabled: z.boolean(), retentionDays: retentionDaysSchema,
+  intervalHours: z.number().int().min(1).max(8760).default(24),
+}).strict();
 const SESSION_COOKIE = "project_context_ui";
 const require = createRequire(import.meta.url);
 const CYTOSCAPE_PATH = require.resolve("cytoscape/dist/cytoscape.min.js");
@@ -151,6 +162,43 @@ async function routeRequest(
       const projectId = decodeURIComponent(portraitMatch[1]!);
       await withApp(response, (app) => app.portrait(projectId));
       return;
+    }
+    const indexLogsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/index-logs$/);
+    if (request.method === "GET" && indexLogsMatch) {
+      const projectId = decodeSegment(indexLogsMatch[1]!);
+      const options = {
+        limit: z.coerce.number().int().min(1).max(100).parse(url.searchParams.get("limit") ?? "20"),
+        offset: z.coerce.number().int().min(0).max(1_000_000).parse(url.searchParams.get("offset") ?? "0"),
+        status: z.enum(["all", "completed", "failed", "running"]).parse(url.searchParams.get("status") ?? "all"),
+      };
+      await withApp(response, (app) => app.indexLogs(projectId, options));
+      return;
+    }
+    const storageMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/(storage|cleanup|maintenance)$/);
+    if (storageMatch) {
+      const projectId = decodeSegment(storageMatch[1]!);
+      const action = storageMatch[2]!;
+      if (request.method === "GET" && action === "storage") {
+        await withApp(response, (app) => app.storageUsage(projectId));
+        return;
+      }
+      if (request.method === "POST" && action === "cleanup") {
+        const input = cleanupInputSchema.parse(await readJsonBody(request));
+        if (!input.dryRun && input.confirmProjectId !== projectId) {
+          throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before executing cleanup.");
+        }
+        await withApp(response, (app) => app.cleanupProject(projectId, input));
+        return;
+      }
+      if (request.method === "GET" && action === "maintenance") {
+        await withApp(response, (app) => app.maintenanceSettings(projectId));
+        return;
+      }
+      if (request.method === "PUT" && action === "maintenance") {
+        const input = maintenanceInputSchema.parse(await readJsonBody(request));
+        await withApp(response, (app) => app.setMaintenanceSettings(projectId, input));
+        return;
+      }
     }
     const projectIgnoreMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/ignore$/);
     if (projectIgnoreMatch) {

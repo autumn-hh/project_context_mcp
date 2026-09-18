@@ -36,7 +36,7 @@ describe("Phase 2 foundations", () => {
     expect(analysis?.symbols.map((symbol) => symbol.name)).toContain("largeSource");
   });
 
-  it("upgrades a legacy v1 project database to v6 without dropping v1 data", async () => {
+  it("upgrades a legacy v1 project database to v7 without dropping v1 data", async () => {
     const root = await mkdtemp(join(tmpdir(), "project-context-migration-"));
     temporaryDirectories.push(root);
     const db = openDatabase(join(root, "legacy.db"));
@@ -45,8 +45,9 @@ describe("Phase 2 foundations", () => {
       db.prepare("INSERT INTO metadata (key, value) VALUES ('legacy', 'preserved')").run();
       db.exec("DROP TABLE symbols_fts; DROP TABLE relations; DROP TABLE symbols; DROP TABLE git_state; DROP TABLE memory_sources; DROP TABLE memory_candidates;");
       db.pragma("user_version = 1");
+      db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
       expect(db.prepare("SELECT value FROM metadata WHERE key = 'legacy'").pluck().get()).toBe("preserved");
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'symbols'").get()).toBeTruthy();
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'chunks_source_id_idx'").get())
@@ -65,8 +66,9 @@ describe("Phase 2 foundations", () => {
       db.exec("DROP TABLE symbols_fts");
       db.exec("ALTER TABLE memory_sources DROP COLUMN source_excerpt_hash; ALTER TABLE memory_sources DROP COLUMN source_excerpt;");
       db.pragma("user_version = 2");
+      db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'symbols_fts'").get()).toBeTruthy();
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'search_ngrams'").get()).toBeTruthy();
     } finally {
@@ -83,13 +85,30 @@ describe("Phase 2 foundations", () => {
       db.exec("DROP INDEX chunks_source_id_idx");
       db.exec("ALTER TABLE memory_sources DROP COLUMN source_excerpt_hash; ALTER TABLE memory_sources DROP COLUMN source_excerpt;");
       db.pragma("user_version = 4");
+      db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
-      expect(db.pragma("user_version", { simple: true })).toBe(6);
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'chunks_source_id_idx'").get())
         .toBeTruthy();
     } finally {
       db.close();
     }
+  });
+
+  it("upgrades v6 index logs without inventing historical process content", async () => {
+    const root = await mkdtemp(join(tmpdir(), "project-context-v6-"));
+    temporaryDirectories.push(root);
+    const db = openDatabase(join(root, "project.db"));
+    try {
+      migrateProject(db);
+      db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
+      db.pragma("user_version = 6");
+      db.prepare("INSERT INTO index_runs (id, started_at, status, scanned) VALUES ('legacy-run', '2025-01-01', 'completed', 42)").run();
+      migrateProject(db);
+      expect(db.prepare("SELECT id, scanned, log_json FROM index_runs").get()).toEqual({ id: "legacy-run", scanned: 42, log_json: null });
+      expect(db.pragma("user_version", { simple: true })).toBe(7);
+      expect(db.pragma("quick_check", { simple: true })).toBe("ok");
+    } finally { db.close(); }
   });
 
   it("upgrades a v1 registry with archived projects and user memories", async () => {

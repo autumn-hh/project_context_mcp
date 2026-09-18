@@ -95,6 +95,38 @@ node dist/cli.js init --storage D:\ProjectMemory --allow-project-root D:\project
 
 ## CLI 工作流
 
+### 数据库清理与自动维护
+
+本地工作台（`node dist/cli.js ui`）的 **项目画像 → 数据库维护** 提供可见入口：查看数据库、WAL、SHM 和空闲页占用，先预览，再确认清理。默认仅删除 30 天前已经结束的索引运行日志，并始终保留最近 10 条已结束记录；所有记忆（含过期记忆）、任务、候选以及当前文件/搜索索引都会保留。
+
+占用指标、手动清理和自动维护分区展示，桌面采用两栏，窄屏自动上下排列。预览和执行结果可查看日志编号、开始/结束时间、状态以及扫描/索引数量。手动清理的保留天数与自动维护设置独立，调整本次预览不会修改自动策略。
+
+“索引运行日志”可选择每页 10/20/50/100 条，按全部、已完成、失败、运行中筛选，使用上一页/下一页查看其余记录。无需预览或执行清理即可展开日志。清理历史可选择显示最近 5/10/20 次。
+
+展开日志直接显示已有内容，不触发索引。点击“立即索引”后只更新项目状态，保留正在阅读的日志、筛选和页码；需要更新列表时点击“刷新日志”。刷新同一列表会尽量保留仍在当前页的记录展开状态、键盘焦点和滚动位置。旧记录只展示当时保存的摘要/错误信息，不要求重新索引来查看。
+
+Schema v7 为运行记录增加过程日志：升级后的新索引会记录开始、更新文件索引、未变化或不可索引文件跳过、失效索引移除和最终结果；不会复制源文件内容。每次运行最多保存 100 条事件、约 32 KiB，保留最终结果，超限明确标注。清理后历史中每条运行过程保留最多 10 条事件，避免清理历史再次膨胀。旧记录保持不变，界面会说明当时未保存过程内容；需使用更新后的服务执行下一次索引才能产生新内容。
+
+“最近清理记录”保存最近 20 次手动/自动清理，每次最多 100 条明细，并显示实际删除总数和截断提示。执行时在删除事务内保存真实删除明细；空间回收未完成或进程中断时，记录会保留相应阶段。每条记录可展开“查看日志内容”，查看运行统计和已保存的错误路径/消息；每条最多保留 5 项错误，路径/消息分别最多 200/500 字符，超出时明确标注，并遮蔽识别到的敏感内容。这不是完整终端输出，旧版本未保存的内容无法恢复。此功能清理的是数据库中的运行日志，不是项目文件。
+
+手动清理默认执行 SQLite `VACUUM` 并尝试截断 WAL，返回实际占用变化；预览中的空闲页大小不是保证可释放的字节数。大库压缩可能耗时并需要额外磁盘空间，建议在空闲时操作。其他客户端占用数据库时，会明确提示“记录已清理、空间回收未完成”，可以稍后重试；不会直接删除 WAL/SHM 文件。
+
+**自动清理默认关闭，按项目单独开启。** 可在同一区域设置保留天数并保存。开启后，每次成功索引结束会检查维护周期（默认至少间隔 24 小时），清理过期索引日志；只有空闲页达到 16 MiB 且占逻辑数据库至少 20% 时才自动压缩，其余情况仅做不阻塞读取的 WAL checkpoint。服务未运行、项目未索引时不会启动定时任务。工作台会显示最近自动维护结果，关闭开关即可停止后续自动清理。
+
+```powershell
+# 查看占用与配置；预览不会删除记录或执行压缩
+node dist/cli.js storage <project-id>
+node dist/cli.js cleanup <project-id> --retention-days 30
+
+# 明确执行；仅删日志、跳过压缩可加 --no-vacuum
+node dist/cli.js cleanup <project-id> --apply --confirm <project-id>
+
+# 自动维护按项目启用，也可将 true 改为 false 关闭
+node dist/cli.js maintenance <project-id> --enabled true --retention-days 30 --interval-hours 24
+```
+
+对应 MCP 工具为 `project_storage`、`project_cleanup`（默认 `dryRun: true`，执行时须传入匹配的 `confirmProjectId`）和 `project_maintenance_configure`。有效索引本身占用的空间不会被清理；如数据库主要由有效索引构成，可通过工作台的忽略规则缩小索引范围，然后再回收空闲空间。
+
 ```powershell
 # 注册项目并保存返回的项目 ID
 node dist/cli.js project open D:\project\my-app
@@ -345,6 +377,7 @@ project_context
 - `project_index`、`project_search`、`project_context`、`project_health`
 - `project_watch_start`、`project_watch_stop`、`project_watch_list`
 - `project_doctor`、`project_backup`、`project_backup_encrypted`、`project_export`
+- `project_storage`、`project_cleanup`、`project_maintenance_configure`
 - `memory_remember`、`memory_list`、`memory_update_status`
 - `memory_candidates`、`memory_candidate_accept`、`memory_candidate_reject`
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`

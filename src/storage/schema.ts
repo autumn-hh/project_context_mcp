@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "./database.js";
 
 export const REGISTRY_SCHEMA_VERSION = 3;
-export const PROJECT_SCHEMA_VERSION = 6;
+export const PROJECT_SCHEMA_VERSION = 7;
 
 export function migrateRegistry(db: SqliteDatabase): void {
   migrate(db, "projects", [{ version: 1, sql: `
@@ -220,6 +220,11 @@ export function migrateProject(db: SqliteDatabase): void {
     { version: 6, sql: `
     ALTER TABLE memory_sources ADD COLUMN source_excerpt TEXT;
     ALTER TABLE memory_sources ADD COLUMN source_excerpt_hash TEXT;
+    ` },
+    { version: 7, sql: `
+    ALTER TABLE index_runs ADD COLUMN log_json TEXT;
+    CREATE INDEX IF NOT EXISTS index_runs_started_idx ON index_runs(started_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS index_runs_status_started_idx ON index_runs(status, started_at DESC, id DESC);
     ` },
   ]);
 }

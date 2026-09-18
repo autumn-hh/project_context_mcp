@@ -361,6 +361,7 @@ For client-specific configuration, see the official Codex documentation for [MCP
 - `project_index`, `project_search`, `project_context`, `project_health`
 - `project_watch_start`, `project_watch_stop`, `project_watch_list`
 - `project_doctor`, `project_backup`, `project_backup_encrypted`, `project_export`
+- `project_storage`, `project_cleanup`, `project_maintenance_configure`
 - `memory_remember`, `memory_list`, `memory_update_status`
 - `memory_candidates`, `memory_candidate_accept`, `memory_candidate_reject`
 - `user_memory_remember`, `user_memory_list`, `user_memory_update_status`
@@ -404,6 +405,31 @@ Successful tools return validated `structuredContent` and retain JSON `TextConte
 - Templates for project health, individual memories, tasks, and indexed sources
 - `resume-project-task` prompt for task-focused context and checkpoints
 - `review-memory-candidates` prompt for explicit candidate review
+
+## Database Cleanup and Automatic Maintenance
+
+Open `node dist/cli.js ui`, then **Project portrait → Database maintenance** to inspect database/WAL/SHM sizes and free pages, preview cleanup, and explicitly apply it. Cleanup removes only completed/failed index-run logs older than 30 days by default, retaining the 10 most recent finished runs. Memories (including stale ones), tasks, candidates, and current source/search indexes are preserved.
+
+The panel separates storage metrics, manual cleanup, and automatic settings into a responsive layout. Preview/execution details show run IDs, timestamps, completion status, and scan/index counts. Manual retention is independent of the saved automatic policy. Recent history retains at most 20 manual/automatic cleanups with up to 100 detail rows each, explicit truncation, and exact deleted totals. Actual deleted-row details are saved in the deletion transaction; unfinished compaction retains its phase. Expand a row to read its saved error paths/messages: up to 5 errors per run, 200 characters per path and 500 per message, with truncation notices and detected secrets masked. These are saved index records, not full terminal output. Past cleanups without recorded details cannot be reconstructed; cleanup removes database logs, not project files.
+
+Index logs support 10/20/50/100 rows per page, all/completed/failed/running filters, and previous/next navigation. Cleanup history can display 5/10/20 recent operations. Neither browsing nor expanding logs requires cleanup.
+
+Expanding a log reads existing content without triggering indexing. Manual indexing updates project status while keeping the current log view, filters, and page intact. Use Refresh logs to request updated rows; records still on the current page retain their expanded state, focus, and scroll position where possible. Older records show their saved summary/errors without requiring another index run.
+
+Schema v7 adds bounded process logs for new index runs: start, indexed files, skip reasons, removed index sources, and final outcome, without copying source contents. Each run stores at most 100 events and about 32 KiB, retaining the final outcome and marking truncation. Cleanup history retains up to 10 process events per run. Existing records are preserved with no invented process content; run indexing with the updated service to generate new logs.
+
+Manual cleanup runs `VACUUM` and attempts WAL truncation by default. It reports actual space changes and distinguishes committed history deletion from incomplete compaction. Free-page estimates do not guarantee savings. Large databases may take time and require additional disk space; run compaction when idle. WAL/SHM files are never manually deleted.
+
+Automatic cleanup is **disabled by default and configured per project** in the same panel. Once enabled, successful indexing checks whether the maintenance interval (24 hours by default) has elapsed. It prunes old index logs and compacts only when free pages reach both 16 MiB and 20% of logical database size; otherwise it uses a passive WAL checkpoint. This is an indexing-triggered check, not a background scheduler while the service is stopped. The panel shows the latest automatic result and lets users disable future runs.
+
+```powershell
+node dist/cli.js storage <project-id>
+node dist/cli.js cleanup <project-id> --retention-days 30
+node dist/cli.js cleanup <project-id> --apply --confirm <project-id>
+node dist/cli.js maintenance <project-id> --enabled true --retention-days 30 --interval-hours 24
+```
+
+Use `--no-vacuum` to prune logs without compaction, or `--enabled false` to disable automation. MCP equivalents are `project_storage`, `project_cleanup` (defaults to `dryRun: true`; execution requires matching `confirmProjectId`), and `project_maintenance_configure`. Current indexes can legitimately dominate database size; reduce indexed scope with ignore rules before reclaiming space if needed.
 
 ## Storage Layout
 
