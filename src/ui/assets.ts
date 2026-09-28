@@ -246,6 +246,20 @@ export const UI_HTML = String.raw`<!doctype html>
     </section>
   </main>
 
+  <dialog id="migration-dialog" aria-labelledby="migration-title">
+    <div class="migration-body"><h2 id="migration-title">升级索引：先选择搜索范围</h2>
+      <p id="migration-project"></p>
+      <p>可勾选不需要搜索的目录，保存为项目忽略规则。默认全部保留，源文件不会删除。随后自动备份、更新分级索引并回收空间。</p>
+      <p id="migration-note" role="status"></p>
+      <div class="dialog-actions"><button id="migration-recommend" class="secondary-button" type="button" disabled>勾选推荐目录</button></div>
+      <p id="migration-recommendation" role="status">推荐会结合项目语言、构建文件和目录证据；学习、示例和业务目录由你判断。</p>
+      <div id="migration-directories"></div>
+      <div class="migration-pagination"><span id="migration-page-status"></span><button id="migration-page-prev" class="secondary-button" type="button" disabled>上一页</button><button id="migration-page-next" class="secondary-button" type="button" disabled>下一页</button></div>
+      <pre id="migration-result" role="status" hidden></pre>
+      <div class="dialog-actions"><button id="migration-close" class="secondary-button" type="button">关闭</button><button id="migration-run" class="primary-button" type="button" disabled>备份并执行升级</button></div>
+    </div>
+  </dialog>
+  <dialog id="migration-confirm-dialog" aria-labelledby="migration-confirm-title"><div class="migration-body"><h2 id="migration-confirm-title">确认升级索引？</h2><p id="migration-confirm-message"></p><div class="dialog-actions"><button id="migration-confirm-cancel" class="secondary-button" type="button">返回修改</button><button id="migration-confirm-ok" class="primary-button" type="button">确认并开始</button></div></div></dialog>
   <dialog id="confirm-dialog">
     <form method="dialog"><h2>停用这条规则？</h2><p>规则会转为 deleted 状态并保留审计记录，不会物理删除。</p><div class="dialog-actions"><button value="cancel" class="secondary-button">取消</button><button value="confirm" class="danger-button">停用</button></div></form>
   </dialog>
@@ -697,6 +711,21 @@ dialog p { color: var(--muted); line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .project-dialog-fields { display: grid; gap: 14px; margin-top: 18px; }
 #project-dialog { width: min(560px, calc(100vw - 32px)); }
+#migration-dialog { width: min(800px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; }
+.migration-body { padding: 20px; min-width: 0; }
+.migration-body p, #migration-result { overflow-wrap: anywhere; }
+#migration-directories { max-height: 40dvh; overflow: auto; display: grid; gap: 8px; }
+.migration-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.migration-pagination span { margin-right: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.migration-directory { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid var(--line); }
+.migration-directory input { width: 16px; height: 16px; margin-top: 3px; }
+.migration-directory:hover { border-color: var(--accent); }
+.migration-directory:has(input:checked) { background: var(--accent-soft); border-color: var(--accent); }
+.migration-directory input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.migration-directory strong, .migration-directory small { display: block; overflow-wrap: anywhere; }
+.migration-directory small { color: var(--muted); margin-top: 4px; line-height: 1.5; }
+#migration-result { white-space: pre-wrap; padding: 12px; background: var(--surface-muted); font: inherit; line-height: 1.65; }
+#migration-dialog .dialog-actions { flex-wrap: wrap; }
 #project-root { font-family: Consolas, monospace; }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: min(420px, calc(100vw - 44px)); padding: 11px 14px; border-radius: 5px; background: #202824; color: #fff; box-shadow: var(--shadow); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }
 .toast.show { opacity: 1; transform: translateY(0); }
@@ -2152,18 +2181,103 @@ export const UI_JS = String.raw`(function () {
     await mutatePortrait("/api/projects/" + encodeURIComponent(projectId) + "/index", { method: "POST", body: {} }, "项目索引已更新", els["index-project"]);
   }
 
+  var migrationPreviewSequence = 0;
+  function migrationBytes(value) { return Number(value || 0).toLocaleString() + " 字节（" + storageBytes(value) + "）"; }
   async function optimizeSelectedProject() {
     var projectId = els["portrait-project"].value;
     if (!projectId || maintenanceBusy) return;
-    if (!window.confirm("将先备份数据库，再按当前分级规则重建索引并执行压缩。大型项目可能需要较长时间，是否继续？")) return;
+    var sequence = ++migrationPreviewSequence;
+    var dialog = document.getElementById("migration-dialog");
+    var list = document.getElementById("migration-directories");
+    var note = document.getElementById("migration-note");
+    var resultBox = document.getElementById("migration-result");
+    var run = document.getElementById("migration-run");
+    var close = document.getElementById("migration-close");
+    var recommend = document.getElementById("migration-recommend");
+    var recommendation = document.getElementById("migration-recommendation");
+    var pageStatus = document.getElementById("migration-page-status");
+    var pagePrev = document.getElementById("migration-page-prev");
+    var pageNext = document.getElementById("migration-page-next");
+    recommend.disabled = true;
+    recommendation.textContent = "推荐会结合项目语言、构建文件和目录证据；不会仅因目录名是 src、include、bin 或 lib 就排除。";
+    var running = false;
+    dialog.oncancel = function (event) { if (running) event.preventDefault(); };
+    close.onclick = function () { if (!running) dialog.close(); };
+    document.getElementById("migration-project").textContent = "项目：" + els["portrait-project"].selectedOptions[0].textContent;
+    list.replaceChildren(); resultBox.hidden = true; run.disabled = true;
+    pageStatus.textContent = ""; pagePrev.disabled = true; pageNext.disabled = true;
+    note.textContent = "正在分析已索引目录…";
+    dialog.showModal();
     try {
-      els["optimize-index"].disabled = true;
-      els["portrait-index-state"].textContent = "正在备份、迁移索引并回收空间…";
-      var result = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index", { method: "POST", body: { confirmProjectId: projectId } });
-      toast("索引迁移完成：" + storageMetricBytes(result.cleanup.after.totalBytes) + "，回收 " + storageBytes(result.cleanup.reclaimedBytes));
-      await loadPortrait(true);
-    } catch (error) { toast(error.message || "索引迁移失败，请查看索引日志", true); }
-    finally { els["optimize-index"].disabled = false; }
+      var preview = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index");
+      if (!dialog.open || sequence !== migrationPreviewSequence) return;
+      note.textContent = preview.note + " 已索引 " + preview.totalIndexedFiles + " 个文件。未勾选目录会按当前规则保留。";
+      var selectedDirectories = new Set();
+      var pageSize = 10; var page = 0;
+      function renderMigrationPage() {
+        var totalPages = Math.max(1, Math.ceil(preview.directories.length / pageSize));
+        page = Math.max(0, Math.min(page, totalPages - 1));
+        list.replaceChildren();
+        preview.directories.slice(page * pageSize, (page + 1) * pageSize).forEach(function (directory) {
+          var label = element("label", "migration-directory");
+          var checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.value = directory.path; checkbox.checked = selectedDirectories.has(directory.path);
+          checkbox.dataset.recommended = directory.recommended ? "true" : "false";
+          checkbox.addEventListener("change", function () { if (checkbox.checked) selectedDirectories.add(directory.path); else selectedDirectories.delete(directory.path); });
+          var details = element("span", "");
+          details.append(element("strong", "", directory.path), element("small", "", directory.files + " 个文件 · " + directory.chunks + " 个片段 · 源码 " + migrationBytes(directory.sourceBytes)), element("small", "", directory.reason), element("small", "", "示例：" + directory.samples.join("；")));
+          label.append(checkbox, details); list.append(label);
+          if (directory.recommended) details.append(element("small", "", "推荐：" + (directory.recommendationReason || "符合项目构建证据") + "，可取消勾选。"));
+        });
+        pageStatus.textContent = "第 " + (page + 1) + " / " + totalPages + " 页 · 共 " + preview.directories.length + " 个目录 · 已选 " + selectedDirectories.size + " 个";
+        pagePrev.disabled = page === 0; pageNext.disabled = page >= totalPages - 1;
+      }
+      pagePrev.onclick = function () { page -= 1; renderMigrationPage(); };
+      pageNext.onclick = function () { page += 1; renderMigrationPage(); };
+      renderMigrationPage();
+      var recommendedCount = preview.directories.filter(function (directory) { return directory.recommended; }).length;
+      recommend.disabled = recommendedCount === 0;
+      if (preview.projectTypes && preview.projectTypes.length) recommendation.textContent += " 检测到项目类型：" + preview.projectTypes.map(function (type) { return type.name; }).join("、") + "。";
+      if (!recommendedCount) recommendation.textContent += " 当前预览没有符合推荐规则的目录，可手动选择或保留当前搜索范围。";
+      recommend.onclick = function () {
+        var inputs = Array.from(list.querySelectorAll("input"));
+        var added = 0;
+        preview.directories.filter(function (directory) { return directory.recommended; }).forEach(function (directory) {
+          var covered = Array.from(selectedDirectories).some(function (other) { return directory.path === other || directory.path.startsWith(other + "/"); });
+          if (!covered) { selectedDirectories.add(directory.path); added++; }
+        });
+        renderMigrationPage();
+        recommendation.textContent = "本次新增勾选 " + added + " 个推荐目录，保留已有选择。可取消勾选；确认执行升级后才保存规则。";
+      };
+      run.disabled = false;
+    } catch (error) { if (sequence === migrationPreviewSequence) note.textContent = "分析失败：" + error.message; return; }
+    run.onclick = async function () {
+      var selected = Array.from(selectedDirectories);
+      var confirmDialog = document.getElementById("migration-confirm-dialog");
+      document.getElementById("migration-confirm-message").textContent = selected.length ? "将排除所选 " + selected.length + " 个目录，目录中的内容将不再参与本项目搜索。备份会额外占用磁盘空间。" : "当前保留全部搜索范围。备份会额外占用磁盘空间。";
+      var confirmed = await new Promise(function (resolve) {
+        var done = function (value) { confirmDialog.close(); resolve(value); };
+        document.getElementById("migration-confirm-ok").onclick = function () { done(true); };
+        document.getElementById("migration-confirm-cancel").onclick = function () { done(false); };
+        confirmDialog.oncancel = function (event) { event.preventDefault(); done(false); };
+        confirmDialog.showModal();
+      });
+      if (!confirmed) return;
+      running = true; maintenanceBusy = true; run.disabled = true; close.disabled = true;
+      recommend.disabled = true;
+      list.querySelectorAll("input").forEach(function (input) { input.disabled = true; });
+      resultBox.hidden = false; resultBox.textContent = "正在备份、迁移索引并回收空间，大型项目可能需要较长时间…";
+      try {
+        var result = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index", { method: "POST", body: { confirmProjectId: projectId, excludeDirectories: selected } });
+        var lines = [result.status === "completed" ? "升级及空间回收完成" : "升级部分完成，仍需处理以下问题", "活动数据库（含 WAL/SHM）：" + migrationBytes(result.before.totalBytes) + " → " + migrationBytes(result.after.totalBytes), result.byteChange > 0 ? "本次占用增加：" + migrationBytes(result.byteChange) : "全流程减少：" + migrationBytes(result.reclaimedBytes), "保留备份：" + result.backupDestination, "备份额外占用：" + migrationBytes(result.retainedBackupBytes) + "（未计入上述减少量）", "索引更新 " + result.index.indexed + "，移除 " + result.index.removed + "，文件错误 " + result.index.errors.length];
+        if (result.ignoreRulesSaved) lines.push("所选目录已保存到 .project-context-ignore；源文件保持不变。");
+        lines = lines.concat(result.warnings || []);
+        result.index.errors.slice(0, 5).forEach(function (error) { lines.push(error.path + "：" + error.message); });
+        resultBox.textContent = lines.join("\n");
+        if (els["portrait-project"].value === projectId) await loadPortrait(true);
+      } catch (error) {
+        resultBox.textContent = "升级未完成：" + error.message + (error.details && error.details.backupDestination ? "\n备份保留于：" + error.details.backupDestination + "\n忽略规则已保存：" + (error.details.ignoreRulesSaved ? "是" : "否") : "");
+      } finally { running = false; maintenanceBusy = false; close.disabled = false; }
+    };
   }
 
   async function toggleSelectedWatch() {
@@ -2495,7 +2609,7 @@ export const UI_JS = String.raw`(function () {
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
     var data = await response.json().catch(function () { return { message: "服务返回了无效响应" }; });
-    if (!response.ok) throw new Error(data.message || "请求失败");
+    if (!response.ok) { var error = new Error(data.message || "请求失败"); error.details = data.details; throw error; }
     return data;
   }
 

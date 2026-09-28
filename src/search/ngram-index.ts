@@ -1,4 +1,5 @@
 import type { SqliteDatabase } from "../storage/database.js";
+import { isLowRelevanceSourcePath } from "../indexing/file-policy.js";
 
 export type SearchItemKind = "chunk" | "symbol" | "memory";
 
@@ -77,10 +78,12 @@ export async function rebuildNgramIndex(
   await clearNgramIndex(db, options);
   await rebuildKind(db, "chunk", {
     select: "SELECT id, source_path, content FROM chunks WHERE id > ? ORDER BY id LIMIT ?",
+    include: (row) => !isLowRelevanceSourcePath(String(row.source_path)),
     content: (row) => `${String(row.source_path)}\n${String(row.content)}`,
   }, options);
   await rebuildKind(db, "symbol", {
-    select: "SELECT id, name, qualified_name, signature FROM symbols WHERE id > ? ORDER BY id LIMIT ?",
+    select: "SELECT id, source_path, name, qualified_name, signature FROM symbols WHERE id > ? ORDER BY id LIMIT ?",
+    include: (row) => !isLowRelevanceSourcePath(String(row.source_path)),
     content: (row) => `${String(row.name)}\n${String(row.qualified_name)}\n${String(row.signature ?? "")}`,
   }, options);
   await rebuildKind(db, "memory", {
@@ -113,12 +116,19 @@ async function clearNgramIndex(db: SqliteDatabase, options: NgramRebuildOptions)
 async function rebuildKind(
   db: SqliteDatabase,
   kind: SearchItemKind,
-  source: { select: string; content: (row: Record<string, unknown>) => string },
+  source: {
+    select: string;
+    include?: (row: Record<string, unknown>) => boolean;
+    content: (row: Record<string, unknown>) => string;
+  },
   options: NgramRebuildOptions,
 ): Promise<void> {
   const select = db.prepare(source.select);
   const insertBatch = db.transaction((rows: Array<Record<string, unknown>>) => {
-    for (const row of rows) replaceItemNgrams(db, kind, String(row.id), source.content(row));
+    for (const row of rows) {
+      if (source.include && !source.include(row)) continue;
+      replaceItemNgrams(db, kind, String(row.id), source.content(row));
+    }
   });
   let cursor = "";
   while (true) {

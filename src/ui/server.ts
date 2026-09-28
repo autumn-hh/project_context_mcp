@@ -258,11 +258,16 @@ async function routeRequest(
       }
     }
     const optimizeIndexMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/optimize-index$/);
+    if (request.method === "GET" && optimizeIndexMatch) {
+      const projectId = decodeSegment(optimizeIndexMatch[1]!);
+      await withApp(response, (app) => app.indexMigrationPreview(projectId));
+      return;
+    }
     if (request.method === "POST" && optimizeIndexMatch) {
       const projectId = decodeSegment(optimizeIndexMatch[1]!);
-      const input = z.object({ confirmProjectId: z.string().min(1) }).strict().parse(await readJsonBody(request));
+      const input = z.object({ confirmProjectId: z.string().min(1), excludeDirectories: z.array(z.string().min(1).max(2000)).max(60).default([]) }).strict().parse(await readJsonBody(request));
       if (input.confirmProjectId !== projectId) throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before migration.");
-      await withApp(response, (app) => app.optimizeProjectIndex(projectId));
+      await withApp(response, (app) => app.optimizeProjectIndex(projectId, input.excludeDirectories));
       return;
     }
     const projectMemoryMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memories\/([^/]+)\/status$/);

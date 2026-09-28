@@ -1,3 +1,4 @@
+import { indexMigrationPreview } from "../maintenance/index-migration-preview.js";
 import type { SqliteDatabase } from "../storage/database.js";
 import { loadGlobalConfig } from "../config/paths.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
@@ -51,7 +52,7 @@ import {
 } from "../context/context-service.js";
 import type { z } from "zod/v4";
 import { ProjectContextError } from "../shared/errors.js";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
+import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import ignore from "ignore";
@@ -218,7 +219,14 @@ export class ProjectContextApp {
     return this.userMemoryService.updateStatus(memoryId, status);
   }
 
-  async index(projectId: string, options: IndexOptions = {}): Promise<IndexResult & {
+  async index(projectId: string, options: IndexOptions = {}) {
+    if (activeMigrations.has(projectId)) {
+      throw new ProjectContextError("INDEX_MIGRATION_RUNNING", "Wait for the active index migration to finish.");
+    }
+    return this.indexInternal(projectId, options);
+  }
+
+  private async indexInternal(projectId: string, options: IndexOptions = {}): Promise<IndexResult & {
     symbols: number;
     relations: number;
     staleMemories: string[];
@@ -317,6 +325,9 @@ export class ProjectContextApp {
     index: Awaited<ReturnType<ProjectContextApp["index"]>>;
   }> {
     validateProjectIgnore(content);
+    if (activeMigrations.has(projectId)) {
+      throw new ProjectContextError("INDEX_MIGRATION_RUNNING", "Wait for the active index migration before changing ignore rules.");
+    }
     const project = this.projects.get(projectId);
     const normalized = content.replace(/\r\n?/g, "\n");
     const path = join(project.rootPath, ".project-context-ignore");
@@ -544,7 +555,7 @@ export class ProjectContextApp {
     if (options.dryRun === false && options.confirmProjectId !== projectId) {
       throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Pass the exact project ID to confirm database cleanup.");
     }
-    if (options.dryRun === false && activeIndexes.has(projectId)) {
+    if (options.dryRun === false && (activeIndexes.has(projectId) || activeMigrations.has(projectId))) {
       throw new ProjectContextError("INDEX_ALREADY_RUNNING", "Wait for the active index run to finish before database cleanup.");
     }
     return this.withDb(projectId, (db) => cleanupDatabase(db, options));
@@ -562,15 +573,75 @@ export class ProjectContextApp {
     return this.withDbAsync(projectId, (db) => backupProjectDatabase(db, destination, this.allowedOutputRoots));
   }
 
-  async optimizeProjectIndex(projectId: string): Promise<Record<string, unknown>> {
+  indexMigrationPreview(projectId: string) {
+    return this.withDb(projectId, (db) => indexMigrationPreview(db));
+  }
+
+  async optimizeProjectIndex(projectId: string, excludeDirectories: string[] = []): Promise<Record<string, unknown>> {
     const project = this.projects.get(projectId);
-    if (activeIndexes.has(projectId)) throw new ProjectContextError("INDEX_ALREADY_RUNNING", "Wait for the active index run to finish before migration.");
-    const before = this.storageUsage(projectId);
-    const backupDestination = join(this.allowedOutputRoots[0]!, "backups", `${project.id}-pre-index-migration-${Date.now()}.db`);
-    const backup = await this.backup(projectId, backupDestination);
-    const index = await this.index(projectId);
-    const cleanup = this.cleanupProject(projectId, { dryRun: false, vacuum: true, retentionDays: 30, confirmProjectId: projectId });
-    return { projectId, backup, index, cleanup, before, after: cleanup.after };
+    if (activeIndexes.has(projectId) || activeMigrations.has(projectId)) {
+      throw new ProjectContextError("INDEX_ALREADY_RUNNING", "Wait for the active index run or migration to finish before migration.");
+    }
+    activeMigrations.add(projectId);
+    let backupDestination: string | undefined;
+    let ignoreRulesSaved = false;
+    try {
+      const selectedDirectories = [...new Set(excludeDirectories)];
+      if (selectedDirectories.length) {
+        const available = new Set(this.indexMigrationPreview(projectId).directories.map((item) => item.path));
+        if (selectedDirectories.some((path) => !available.has(path) || !safeMigrationDirectory(path))) {
+          throw new ProjectContextError("INVALID_MIGRATION_EXCLUSION", "Select only directories listed in the current index migration preview.");
+        }
+      }
+      const before = this.storageUsage(projectId);
+      const destination = join(this.allowedOutputRoots[0]!, "backups", `${project.id}-pre-index-migration-${Date.now()}-${randomUUID()}.db`);
+      const backup = await this.backup(projectId, destination);
+      backupDestination = destination;
+      const retainedBackupBytes = (await stat(destination)).size;
+      if (selectedDirectories.length) {
+        const original = (await this.readProjectIgnore(projectId)).content;
+        const addedRules = selectedDirectories.map((path) => `/${path}/**`);
+        const content = `${original.replace(/\r\n?/g, "\n")}\n\n# Directories excluded by index migration (source files are preserved)\n${addedRules.join("\n")}\n`;
+        validateProjectIgnore(content);
+        const target = join(project.rootPath, ".project-context-ignore");
+        const temporary = join(project.rootPath, `.project-context-ignore.${randomUUID()}.tmp`);
+        try {
+          await writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
+          await rename(temporary, target);
+          ignoreRulesSaved = true;
+        } finally {
+          await rm(temporary, { force: true }).catch(() => undefined);
+        }
+      }
+      const index = await this.indexInternal(projectId);
+      const cleanup = this.withDb(projectId, (db) => cleanupDatabase(db, { dryRun: false, vacuum: true, retentionDays: 30 }));
+      // Read again after cleanup closes its connection and persists its final history entry.
+      const after = this.storageUsage(projectId);
+      const warnings = [...cleanup.warnings];
+      if (index.errors.length) warnings.push(`Index migration encountered ${index.errors.length} file error(s); review index.errors and retry.`);
+      if (!cleanup.vacuumCompleted) warnings.push("Database compaction did not complete; retry space reclamation when other connections are idle.");
+      if (cleanup.checkpointBusy) warnings.push("WAL truncation is pending because another database connection is active.");
+      const completed = index.errors.length === 0 && cleanup.vacuumCompleted && !cleanup.checkpointBusy && warnings.length === 0;
+      return {
+        projectId, status: completed ? "completed" : "partial", warnings: [...new Set(warnings)],
+        backup, backupDestination, retainedBackupBytes, index, cleanup, before, after,
+        reclaimedBytes: Math.max(0, before.totalBytes - after.totalBytes),
+        byteChange: after.totalBytes - before.totalBytes,
+        excludeDirectories: selectedDirectories, ignoreRulesSaved,
+        notes: [
+          "Reclaimed bytes compare the active database, WAL and SHM across the entire migration; retained backups are excluded.",
+          ...(ignoreRulesSaved ? ["Selected directory exclusions were saved to .project-context-ignore; source files were preserved."] : []),
+        ],
+      };
+    } catch (error) {
+      if (!backupDestination) throw error;
+      throw new ProjectContextError("INDEX_MIGRATION_FAILED", `Index migration failed: ${error instanceof Error ? error.message : String(error)}`, {
+        backupDestination, ignoreRulesSaved,
+        recovery: "The pre-migration database backup is retained. Review saved ignore rules before retrying.",
+      });
+    } finally {
+      activeMigrations.delete(projectId);
+    }
   }
 
   async encryptedBackup(projectId: string, destination: string, passphraseEnv: string) {
@@ -644,6 +715,13 @@ function validateProjectIgnore(content: string): void {
   }
 }
 
+function safeMigrationDirectory(path: string): boolean {
+  return path.length > 0 && !path.startsWith("/") && !path.endsWith("/") &&
+    !/[\\*?!#\[\]\r\n\0]/.test(path) &&
+    path.split("/").every((part) => part !== "" && part !== "." && part !== ".." && part === part.trim());
+}
+
+const activeMigrations = new Set<string>();
 const activeIndexes = new Set<string>();
 const projectWatches = new ProjectWatchService(async (projectId) => {
   const app = await ProjectContextApp.create();
