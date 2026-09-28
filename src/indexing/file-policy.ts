@@ -124,6 +124,16 @@ export function detectKind(relativePath: string): string {
   return "code";
 }
 
+/** Files kept for text search but too noisy for symbol, relation and n-gram indexes. */
+export function isLowRelevanceSourcePath(relativePath: string): boolean {
+  const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
+  const segments = normalized.split("/");
+  if (["vendor", "vendors", "plugin", "plugins", "static", "dist", "assets", "build"].some((segment) => segments.includes(segment))) {
+    return true;
+  }
+  return /\.(svg|eot|ttf|otf|woff2?|map|min\.(?:js|css))$/u.test(normalized);
+}
+
 export function containsLikelySecret(content: string): boolean {
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(content)) return true;
   return /(?:api[_-]?key|access[_-]?token|client[_-]?secret|private[_-]?key|password)\s*[:=]\s*["']?[A-Za-z0-9_\-/.+=]{16,}/i

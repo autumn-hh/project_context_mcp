@@ -31,6 +31,7 @@ export const UI_HTML = String.raw`<!doctype html>
           <div class="field"><label for="portrait-project">项目</label><select id="portrait-project"></select></div>
           <button id="edit-project" class="secondary-button" type="button">编辑项目</button>
           <button id="index-project" class="secondary-button" type="button">立即索引</button>
+          <button id="optimize-index" class="primary-button" type="button">升级索引并回收空间</button>
           <button id="toggle-watch" class="secondary-button" type="button">启动监听</button>
           <button id="refresh-portrait" class="secondary-button" type="button">刷新画像</button>
         </div>
@@ -69,6 +70,7 @@ export const UI_HTML = String.raw`<!doctype html>
                 <div class="maintenance-card-actions"><button id="save-maintenance" class="secondary-button" type="button" disabled>保存自动维护设置</button></div>
               </section>
             </div>
+            <section class="maintenance-card ranking-settings-card" aria-labelledby="ranking-settings-title"><header><div><span class="panel-label">SEARCH RANKING</span><h3 id="ranking-settings-title">搜索排序权重</h3><p class="maintenance-note">只影响搜索结果顺序，不改变索引内容；范围为 0–2。</p></div><span id="ranking-settings-status" class="subtle-status"></span></header><form id="ranking-settings-form" class="ranking-settings-form"><div class="ranking-fields"><label><span>业务代码片段</span><input id="ranking-business-chunk" type="number" min="0" max="2" step="0.01"></label><label><span>业务代码符号</span><input id="ranking-business-symbol" type="number" min="0" max="2" step="0.01"></label><label><span>记忆结果</span><input id="ranking-memory" type="number" min="0" max="2" step="0.01"></label><label><span>低相关代码片段</span><input id="ranking-low-chunk" type="number" min="0" max="2" step="0.01"></label><label><span>低相关代码符号</span><input id="ranking-low-symbol" type="number" min="0" max="2" step="0.01"></label></div><div class="maintenance-card-actions"><button id="reset-ranking" class="secondary-button" type="button">恢复默认</button><button id="save-ranking" class="primary-button" type="submit">保存权重</button></div></form><p id="ranking-settings-result" class="maintenance-note" role="status"></p></section>
             <section id="cleanup-details" class="cleanup-details" aria-labelledby="cleanup-details-title" hidden><h3 id="cleanup-details-title">清理明细</h3><p id="cleanup-details-note" class="maintenance-note"></p><div id="cleanup-details-table"></div></section>
             <details class="storage-inspect"><summary>最近索引日志 <span id="recent-index-count"></span></summary><p class="maintenance-note">直接展开记录即可查看已有内容，无需重新索引。索引完成后保留当前阅读位置，可按需刷新列表。</p><div class="maintenance-controls log-pagination"><div class="field"><label for="index-log-limit">每页条数</label><select id="index-log-limit"><option value="10">10 条</option><option value="20" selected>20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></div><div class="field"><label for="index-log-status">运行状态</label><select id="index-log-status"><option value="all">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="running">运行中</option></select></div><button id="index-log-prev" class="secondary-button" type="button" disabled>上一页</button><button id="index-log-next" class="secondary-button" type="button" disabled>下一页</button><button id="refresh-index-logs" class="secondary-button" type="button">刷新日志</button></div><p id="index-log-page" class="maintenance-note" role="status"></p><div id="recent-index-list"></div></details>
             <details class="storage-inspect cleanup-history"><summary>最近清理记录 <span id="cleanup-history-count"></span></summary><p class="maintenance-note">保留最近 20 次手动或自动清理记录。旧版本未记录的清理明细无法恢复。</p><div class="maintenance-controls"><div class="field"><label for="cleanup-history-limit">显示记录数</label><select id="cleanup-history-limit"><option value="5" selected>最近 5 次</option><option value="10">最近 10 次</option><option value="20">最近 20 次</option></select></div></div><div id="cleanup-history-list"></div></details>
@@ -585,8 +587,14 @@ h1, h2, p { margin: 0; }
 .maintenance-controls input { width: 100%; min-width: 0; }
 .maintenance-toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .maintenance-toggle input { width: auto; }
-@media (max-width: 900px) { .maintenance-columns { grid-template-columns: minmax(0, 1fr); } .storage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (max-width: 560px) { .storage-metrics { gap: 8px; } .storage-metric { padding: 12px; } .storage-counts { grid-template-columns: minmax(0, 1fr); } .maintenance-card { padding: 15px; } .maintenance-card-actions button { max-width: 100%; white-space: normal; } }
+.ranking-settings-card { margin-top: 18px; }
+.ranking-settings-form { display: grid; gap: 14px; }
+.ranking-fields { display: grid; grid-template-columns: repeat(5, minmax(110px, 1fr)); gap: 10px; }
+.ranking-fields label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: 11px; }
+.ranking-fields input { width: 100%; min-width: 0; font-variant-numeric: tabular-nums; }
+.ranking-settings-card .maintenance-card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 900px) { .maintenance-columns { grid-template-columns: minmax(0, 1fr); } .storage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ranking-fields { grid-template-columns: repeat(3, minmax(110px, 1fr)); } }
+@media (max-width: 560px) { .storage-metrics { gap: 8px; } .storage-metric { padding: 12px; } .storage-counts { grid-template-columns: minmax(0, 1fr); } .maintenance-card { padding: 15px; } .maintenance-card-actions button { max-width: 100%; white-space: normal; } .ranking-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ignore-form { display: grid; gap: 10px; }
 .ignore-builder { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, .8fr); gap: 12px; align-items: center; }
 .ignore-presets { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
@@ -852,12 +860,12 @@ export const UI_JS = String.raw`(function () {
       "editor-panel", "editor-close",
       "context-project", "context-task", "context-budget", "preview-context", "context-results",
       "context-summary", "empty-context",
-      "storage-path", "storage-usage", "storage-counts", "refresh-storage", "cleanup-retention", "preview-cleanup", "execute-cleanup", "cleanup-result", "maintenance-auto", "maintenance-retention", "maintenance-interval", "save-maintenance", "maintenance-result",
+      "storage-path", "storage-usage", "storage-counts", "refresh-storage", "cleanup-retention", "preview-cleanup", "execute-cleanup", "cleanup-result", "maintenance-auto", "maintenance-retention", "maintenance-interval", "save-maintenance", "maintenance-result", "ranking-settings-form", "ranking-business-chunk", "ranking-business-symbol", "ranking-memory", "ranking-low-chunk", "ranking-low-symbol", "reset-ranking", "save-ranking", "ranking-settings-status", "ranking-settings-result",
       "cleanup-details", "cleanup-details-title", "cleanup-details-note", "cleanup-details-table", "cleanup-history-count", "cleanup-history-list",
       "recent-index-count", "recent-index-list", "index-log-limit", "index-log-status", "index-log-prev", "index-log-next", "index-log-page", "cleanup-history-limit", "refresh-index-logs",
       "task-project", "task-project-search", "task-project-results", "refresh-tasks", "task-loading", "task-empty", "task-workspace", "task-count", "task-list", "task-detail",
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
-      "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics",
+      "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics", "optimize-index",
       "project-dialog", "project-form", "project-name", "project-root", "cancel-project", "save-project",
       "portrait-file-types", "portrait-git", "portrait-knowledge", "portrait-tasks", "portrait-memories", "portrait-stale-memories",
       "portrait-sources", "portrait-candidates", "portrait-overview", "portrait-graph",
@@ -910,6 +918,8 @@ export const UI_JS = String.raw`(function () {
     els["refresh-tasks"].addEventListener("click", function () { loadTaskView(true, false); });
     els["portrait-project"].addEventListener("change", function () { resetGraph(); state.ignoreProjectId = null; resetMaintenance(); loadPortrait(true); });
     els["refresh-storage"].addEventListener("click", function () { loadMaintenance(els["portrait-project"].value); });
+    els["ranking-settings-form"].addEventListener("submit", saveRankingSettings);
+    els["reset-ranking"].addEventListener("click", function () { fillRankingSettings(defaultRankingSettings()); });
     els["preview-cleanup"].addEventListener("click", function () { runCleanup(false); });
     els["execute-cleanup"].addEventListener("click", function () { runCleanup(true); });
     els["cleanup-retention"].addEventListener("input", invalidateCleanupPreview);
@@ -923,6 +933,7 @@ export const UI_JS = String.raw`(function () {
     els["project-form"].addEventListener("submit", saveProject);
     els["cancel-project"].addEventListener("click", function () { els["project-dialog"].close(); });
     els["index-project"].addEventListener("click", indexSelectedProject);
+    els["optimize-index"].addEventListener("click", optimizeSelectedProject);
     els["toggle-watch"].addEventListener("click", toggleSelectedWatch);
     els["refresh-portrait"].addEventListener("click", function () { loadPortrait(true); });
     els["ignore-form"].addEventListener("submit", saveIgnoreRules);
@@ -1320,6 +1331,29 @@ export const UI_JS = String.raw`(function () {
   }
 
   function maintenancePath(projectId, action) { return "/api/projects/" + encodeURIComponent(projectId) + "/" + action; }
+  function rankingPath(projectId) { return "/api/projects/" + encodeURIComponent(projectId) + "/search-ranking"; }
+  function defaultRankingSettings() { return { businessChunk: 1, businessSymbol: 1.12, memory: 0.78, lowRelevanceChunk: 0.48, lowRelevanceSymbol: 0.62 }; }
+  function fillRankingSettings(settings) {
+    els["ranking-business-chunk"].value = settings.businessChunk;
+    els["ranking-business-symbol"].value = settings.businessSymbol;
+    els["ranking-memory"].value = settings.memory;
+    els["ranking-low-chunk"].value = settings.lowRelevanceChunk;
+    els["ranking-low-symbol"].value = settings.lowRelevanceSymbol;
+  }
+  async function loadRankingSettings(projectId) {
+    var settings = await fetchJson(rankingPath(projectId));
+    fillRankingSettings(settings); els["ranking-settings-status"].textContent = "已加载";
+  }
+  async function saveRankingSettings(event) {
+    event.preventDefault();
+    var projectId = els["portrait-project"].value;
+    var input = ["ranking-business-chunk", "ranking-business-symbol", "ranking-memory", "ranking-low-chunk", "ranking-low-symbol"].map(function (id) { return Number(els[id].value); });
+    if (input.some(function (value) { return !Number.isFinite(value) || value < 0 || value > 2; })) { els["ranking-settings-result"].textContent = "权重必须是 0 到 2 之间的数字。"; return; }
+    try {
+      var settings = await fetchJson(rankingPath(projectId), { method: "PUT", body: { businessChunk: input[0], businessSymbol: input[1], memory: input[2], lowRelevanceChunk: input[3], lowRelevanceSymbol: input[4] } });
+      fillRankingSettings(settings); els["ranking-settings-status"].textContent = "已保存"; els["ranking-settings-result"].textContent = "已保存；新的搜索请求会立即使用这组权重。";
+    } catch (error) { els["ranking-settings-result"].textContent = error.message || "保存失败，请重试。"; }
+  }
   function maintenanceCurrent(projectId, sequence) { return sequence === maintenanceSequence && els["portrait-project"].value === projectId; }
   function storageBytes(value) { return (Number(value || 0) / 1048576).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " MiB"; }
   function storageMetricBytes(value) {
@@ -1490,7 +1524,7 @@ export const UI_JS = String.raw`(function () {
     try {
       var results = await Promise.all([fetchJson(maintenancePath(projectId, "storage")), fetchJson(maintenancePath(projectId, "maintenance"))]);
       if (!maintenanceCurrent(projectId, sequence)) return;
-      renderStorage(results[0]); renderMaintenanceSettings(results[1]); maintenanceProjectId = projectId;
+      renderStorage(results[0]); renderMaintenanceSettings(results[1]); await loadRankingSettings(projectId); maintenanceProjectId = projectId;
       await loadIndexLogs(firstLoad);
     } catch (error) {
       if (maintenanceCurrent(projectId, sequence)) els["cleanup-result"].textContent = error.message || "无法读取数据库信息，请刷新重试";
@@ -2116,6 +2150,20 @@ export const UI_JS = String.raw`(function () {
     var projectId = els["portrait-project"].value;
     if (!projectId) return;
     await mutatePortrait("/api/projects/" + encodeURIComponent(projectId) + "/index", { method: "POST", body: {} }, "项目索引已更新", els["index-project"]);
+  }
+
+  async function optimizeSelectedProject() {
+    var projectId = els["portrait-project"].value;
+    if (!projectId || maintenanceBusy) return;
+    if (!window.confirm("将先备份数据库，再按当前分级规则重建索引并执行压缩。大型项目可能需要较长时间，是否继续？")) return;
+    try {
+      els["optimize-index"].disabled = true;
+      els["portrait-index-state"].textContent = "正在备份、迁移索引并回收空间…";
+      var result = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index", { method: "POST", body: { confirmProjectId: projectId } });
+      toast("索引迁移完成：" + storageMetricBytes(result.cleanup.after.totalBytes) + "，回收 " + storageBytes(result.cleanup.reclaimedBytes));
+      await loadPortrait(true);
+    } catch (error) { toast(error.message || "索引迁移失败，请查看索引日志", true); }
+    finally { els["optimize-index"].disabled = false; }
   }
 
   async function toggleSelectedWatch() {

@@ -42,6 +42,7 @@ describe("project graph recall", () => {
     tempRoot = await mkdtemp(join(tmpdir(), "project-context-search-"));
     projectRoot = join(tempRoot, "project");
     await mkdir(join(projectRoot, "src"), { recursive: true });
+    await mkdir(join(projectRoot, "static"), { recursive: true });
     previousHome = process.env.PROJECT_CONTEXT_HOME;
     previousAllowedRoots = process.env.PROJECT_CONTEXT_ALLOWED_ROOTS;
     previousOutputRoots = process.env.PROJECT_CONTEXT_ALLOWED_OUTPUT_ROOTS;
@@ -70,6 +71,10 @@ describe("project graph recall", () => {
       "import './config';",
       "export function consumer() { return true; }",
     ].join("\n"), "utf8");
+    await writeFile(join(projectRoot, "src", "business.ts"),
+      "export function businessToken() { return 'application'; }\n", "utf8");
+    await writeFile(join(projectRoot, "static", "vendor-copy.js"),
+      "export function businessToken() { return 'generated'; }\n", "utf8");
   });
 
   afterEach(async () => {
@@ -151,6 +156,20 @@ describe("project graph recall", () => {
       const relatedHelpers = hits.filter((hit) => hit.kind === "symbol" && hit.title.includes("#helper"));
       expect(relatedHelpers).toHaveLength(1);
       expect(relatedHelpers[0]!.source).toBe("src/local-entry.ts");
+    } finally {
+      app.close();
+    }
+  });
+
+  it("ranks application symbols above matching static resources", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      const hits = app.search(project.id, "businessToken", 6);
+      expect(hits[0]).toMatchObject({ kind: "symbol", source: "src/business.ts" });
+      expect(hits.some((hit) => hit.source === "static/vendor-copy.js")).toBe(true);
+      expect(hits.findIndex((hit) => hit.source === "static/vendor-copy.js")).toBeGreaterThan(0);
     } finally {
       app.close();
     }

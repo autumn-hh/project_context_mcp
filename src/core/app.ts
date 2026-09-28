@@ -3,6 +3,7 @@ import { loadGlobalConfig } from "../config/paths.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
 import { indexProject, type IndexOptions, type IndexResult } from "../indexing/indexer.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
+import { readSearchRanking, readSearchRankingSync, writeSearchRanking, type SearchRankingSettings } from "../search/search-ranking.js";
 import {
   listMemories,
   getMemory,
@@ -330,8 +331,17 @@ export class ProjectContextApp {
     return { content: normalized, index: await this.index(projectId) };
   }
 
+  async searchRanking(projectId: string): Promise<SearchRankingSettings> {
+    return readSearchRanking(this.projects.get(projectId).rootPath);
+  }
+
+  async setSearchRanking(projectId: string, settings: unknown): Promise<SearchRankingSettings> {
+    return writeSearchRanking(this.projects.get(projectId).rootPath, settings);
+  }
+
   search(projectId: string, query: string, limit = 20): SearchHit[] {
-    return this.withDb(projectId, (db) => searchProject(db, query, limit));
+    const project = this.projects.get(projectId);
+    return this.withDb(projectId, (db) => searchProject(db, query, limit, readSearchRankingSync(project.rootPath)));
   }
 
   remember(projectId: string, input: {
@@ -550,6 +560,17 @@ export class ProjectContextApp {
 
   async backup(projectId: string, destination: string) {
     return this.withDbAsync(projectId, (db) => backupProjectDatabase(db, destination, this.allowedOutputRoots));
+  }
+
+  async optimizeProjectIndex(projectId: string): Promise<Record<string, unknown>> {
+    const project = this.projects.get(projectId);
+    if (activeIndexes.has(projectId)) throw new ProjectContextError("INDEX_ALREADY_RUNNING", "Wait for the active index run to finish before migration.");
+    const before = this.storageUsage(projectId);
+    const backupDestination = join(this.allowedOutputRoots[0]!, "backups", `${project.id}-pre-index-migration-${Date.now()}.db`);
+    const backup = await this.backup(projectId, backupDestination);
+    const index = await this.index(projectId);
+    const cleanup = this.cleanupProject(projectId, { dryRun: false, vacuum: true, retentionDays: 30, confirmProjectId: projectId });
+    return { projectId, backup, index, cleanup, before, after: cleanup.after };
   }
 
   async encryptedBackup(projectId: string, destination: string, passphraseEnv: string) {

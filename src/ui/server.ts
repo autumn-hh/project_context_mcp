@@ -24,6 +24,11 @@ const maintenanceInputSchema = z.object({
   enabled: z.boolean(), retentionDays: retentionDaysSchema,
   intervalHours: z.number().int().min(1).max(8760).default(24),
 }).strict();
+const searchRankingInputSchema = z.object({
+  businessChunk: z.number().min(0).max(2), businessSymbol: z.number().min(0).max(2),
+  memory: z.number().min(0).max(2), lowRelevanceChunk: z.number().min(0).max(2),
+  lowRelevanceSymbol: z.number().min(0).max(2),
+}).strict();
 const SESSION_COOKIE = "project_context_ui";
 const require = createRequire(import.meta.url);
 const CYTOSCAPE_PATH = require.resolve("cytoscape/dist/cytoscape.min.js");
@@ -200,6 +205,19 @@ async function routeRequest(
         return;
       }
     }
+    const rankingMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/search-ranking$/);
+    if (rankingMatch) {
+      const projectId = decodeSegment(rankingMatch[1]!);
+      if (request.method === "GET") {
+        await withApp(response, (app) => app.searchRanking(projectId));
+        return;
+      }
+      if (request.method === "PUT") {
+        const input = searchRankingInputSchema.parse(await readJsonBody(request));
+        await withApp(response, (app) => app.setSearchRanking(projectId, input));
+        return;
+      }
+    }
     const projectIgnoreMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/ignore$/);
     if (projectIgnoreMatch) {
       const projectId = decodeSegment(projectIgnoreMatch[1]!);
@@ -238,6 +256,14 @@ async function routeRequest(
         await withApp(response, (app) => app.watchStop(projectId));
         return;
       }
+    }
+    const optimizeIndexMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/optimize-index$/);
+    if (request.method === "POST" && optimizeIndexMatch) {
+      const projectId = decodeSegment(optimizeIndexMatch[1]!);
+      const input = z.object({ confirmProjectId: z.string().min(1) }).strict().parse(await readJsonBody(request));
+      if (input.confirmProjectId !== projectId) throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before migration.");
+      await withApp(response, (app) => app.optimizeProjectIndex(projectId));
+      return;
     }
     const projectMemoryMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memories\/([^/]+)\/status$/);
     if (request.method === "PATCH" && projectMemoryMatch) {

@@ -11,6 +11,7 @@ import {
   detectKind,
   isCandidateTextFile,
   isGeneratedTextArtifact,
+  isLowRelevanceSourcePath,
   isSensitivePath,
 } from "./file-policy.js";
 import { analyzeCode, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
@@ -54,6 +55,15 @@ interface SourceRow {
   id: string;
   path: string;
   content_hash: string;
+}
+
+function sourceNeedsTierRefresh(db: SqliteDatabase, sourceId: string, fullIndex: boolean): boolean {
+  if (fullIndex) return false;
+  if (db.prepare("SELECT 1 FROM symbols WHERE source_id = ? LIMIT 1").get(sourceId)) return true;
+  const chunks = db.prepare("SELECT id FROM chunks WHERE source_id = ?").pluck().all(sourceId) as string[];
+  if (chunks.length === 0) return false;
+  const placeholders = chunks.map(() => "?").join(", ");
+  return Boolean(db.prepare(`SELECT 1 FROM search_ngrams WHERE item_kind = 'chunk' AND item_id IN (${placeholders}) LIMIT 1`).get(...chunks));
 }
 
 export async function indexProject(
@@ -121,7 +131,9 @@ export async function indexProject(
         }
         const contentHash = sha256(buffer);
         const existing = existingByPath.get(relativePath);
-        if (existing?.content_hash === contentHash) {
+        const fullIndex = !isLowRelevanceSourcePath(relativePath);
+        const tierChanged = existing ? sourceNeedsTierRefresh(db, existing.id, fullIndex) : false;
+        if (existing?.content_hash === contentHash && !tierChanged) {
           result.skipped += 1;
           log.record("内容未变化，复用已有索引。", relativePath);
           continue;
@@ -133,7 +145,8 @@ export async function indexProject(
           contentHash,
           sizeBytes: info.size,
           modifiedMs: info.mtimeMs,
-          analysis: analyzeCode(relativePath, content),
+          analysis: fullIndex ? analyzeCode(relativePath, content) : null,
+          fullIndex,
         });
         result.indexed += 1;
         log.record("已更新文件索引。", relativePath);
@@ -258,6 +271,7 @@ function replaceSource(db: SqliteDatabase, input: {
   sizeBytes: number;
   modifiedMs: number;
   analysis: CodeAnalysis | null;
+  fullIndex: boolean;
 }): void {
   const chunks = chunkText(input.content);
   const transaction = db.transaction(() => {
@@ -300,7 +314,7 @@ function replaceSource(db: SqliteDatabase, input: {
       const id = `chk_${sha256(`${input.relativePath}:${chunk.startLine}:${chunk.content}`).slice(0, 24)}`;
       insertChunk.run(id, input.sourceId, input.relativePath, chunk.content, chunk.startLine, chunk.endLine);
       insertFts.run(id, input.relativePath, chunk.content);
-      replaceItemNgrams(db, "chunk", id, `${input.relativePath}\n${chunk.content}`);
+      if (input.fullIndex) replaceItemNgrams(db, "chunk", id, `${input.relativePath}\n${chunk.content}`);
     }
     if (input.analysis) insertCodeAnalysis(db, input.sourceId, input.relativePath, input.analysis);
   });

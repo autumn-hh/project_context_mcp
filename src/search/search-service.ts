@@ -2,6 +2,7 @@ import { posix as posixPath } from "node:path";
 import type { SqliteDatabase } from "../storage/database.js";
 import { matchingNgramItems, type SearchItemKind } from "./ngram-index.js";
 import { rrfMerge, type FusedItem } from "./rank-fusion.js";
+import { DEFAULT_SEARCH_RANKING, type SearchRankingSettings } from "./search-ranking.js";
 
 export interface SearchHit {
   kind: "chunk" | "memory" | "symbol";
@@ -32,7 +33,12 @@ const GRAPH_RELATION_WEIGHTS: Record<string, number> = {
   IMPLEMENTS: 0.75,
 };
 
-export function searchProject(db: SqliteDatabase, query: string, limit = 20): SearchHit[] {
+export function searchProject(
+  db: SqliteDatabase,
+  query: string,
+  limit = 20,
+  ranking: SearchRankingSettings = DEFAULT_SEARCH_RANKING,
+): SearchHit[] {
   if (!Number.isFinite(limit) || limit <= 0) return [];
   const ftsQuery = toFtsQuery(query);
   if (!ftsQuery) return [];
@@ -93,10 +99,13 @@ export function searchProject(db: SqliteDatabase, query: string, limit = 20): Se
       { items: symbolExact, weight: SYMBOL_FUSION_WEIGHT },
     ],
     (hit) => hit.id,
-  );
+  ).map(({ item, score }) => ({
+    item,
+    score: score * relevanceWeight(item, ranking),
+  })).sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id));
   const direct = normalizeFusionScores(fused);
   const directIds = new Set(direct.map(({ hit }) => hit.id));
-  const related = graphRelatedHits(db, direct.slice(0, 20))
+  const related = graphRelatedHits(db, direct.slice(0, 20), ranking)
     .filter(({ hit }) => !directIds.has(hit.id));
   const relatedLimit = Math.min(MAX_RELATED_RESULTS, Math.floor(limit / 4));
   const selectedRelated = related.slice(0, relatedLimit);
@@ -115,7 +124,7 @@ function normalizeFusionScores(fused: Array<FusedItem<SearchHit>>): ScoredHit[] 
   }));
 }
 
-function graphRelatedHits(db: SqliteDatabase, seeds: ScoredHit[]): ScoredHit[] {
+function graphRelatedHits(db: SqliteDatabase, seeds: ScoredHit[], ranking: SearchRankingSettings): ScoredHit[] {
   const symbolSeeds = seeds
     .filter(({ hit }) => hit.kind === "symbol")
     .map(({ hit, score }) => ({ id: hit.id, score }))
@@ -152,7 +161,10 @@ function graphRelatedHits(db: SqliteDatabase, seeds: ScoredHit[]): ScoredHit[] {
     .filter(([id]) => !seedIds.has(id))
     .map(([id, info]) => ({ hit: ngramHit(db, "symbol", id, 0, ""), score: info.score }))
     .filter((item): item is { hit: SearchHit; score: number } => item.hit !== null)
-    .map(({ hit, score }) => ({ hit: { ...hit, score }, score }))
+    .map(({ hit, score }) => {
+      const adjustedScore = score * relevanceWeight(hit, ranking);
+      return { hit: { ...hit, score: adjustedScore }, score: adjustedScore };
+    })
     .sort((a, b) => b.score - a.score || a.hit.id.localeCompare(b.hit.id));
 }
 
@@ -306,6 +318,26 @@ function isExactSymbolMatch(hit: SearchHit, query: string): boolean {
     .split(/\s+/)
     .map(normalizedIdentifier)
     .some((token) => token === symbolName);
+}
+
+/**
+ * Keep broad retrieval coverage while putting application code ahead of
+ * generated/static and third-party resources in the final ranking.
+ */
+function relevanceWeight(hit: SearchHit, ranking: SearchRankingSettings): number {
+  if (hit.kind === "memory") return ranking.memory;
+  if (hit.kind === "symbol") return isLowRelevancePath(hit.source) ? ranking.lowRelevanceSymbol : ranking.businessSymbol;
+  return isLowRelevancePath(hit.source) ? ranking.lowRelevanceChunk : ranking.businessChunk;
+}
+
+function isLowRelevancePath(source: string | null): boolean {
+  if (!source) return false;
+  const path = source.replaceAll("\\", "/").toLowerCase();
+  const segments = path.split("/");
+  if (["vendor", "vendors", "plugin", "plugins", "static", "dist", "assets", "build"].some((segment) => segments.includes(segment))) {
+    return true;
+  }
+  return /\.(svg|eot|ttf|otf|woff2?|map|min\.(?:js|css))$/u.test(path);
 }
 
 function toFtsQuery(query: string): string {

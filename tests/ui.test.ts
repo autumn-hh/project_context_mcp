@@ -82,6 +82,8 @@ describe("localhost rule manager", () => {
     expect(pageHtml).toContain('<section id="task-view" class="task-view">');
     expect(pageHtml).toContain('<section id="portrait-view" class="portrait-view" hidden>');
     expect(pageHtml).toContain("task-project-search");
+    expect(pageHtml).toContain("ranking-settings-form");
+    expect(pageHtml).toContain("optimize-index");
     const [styles, appScript] = await Promise.all([
       fetch(`${origin}/styles.css`).then((response) => response.text()),
       fetch(`${origin}/app.js`).then((response) => response.text()),
@@ -115,6 +117,21 @@ describe("localhost rule manager", () => {
       headers: { "X-Project-Context-UI": "1", Cookie: cookie ?? "" },
     });
     expect(browserStyleGet.status).toBe(200);
+
+    const defaultRanking = await api(origin, `/api/projects/${project.id}/search-ranking`, { cookie });
+    expect(defaultRanking.response.status).toBe(200);
+    expect(defaultRanking.body).toEqual({ businessChunk: 1, businessSymbol: 1.12, memory: 0.78, lowRelevanceChunk: 0.48, lowRelevanceSymbol: 0.62 });
+    const savedRanking = await api(origin, `/api/projects/${project.id}/search-ranking`, {
+      method: "PUT", cookie,
+      body: { businessChunk: 1, businessSymbol: 1.3, memory: 0.7, lowRelevanceChunk: 0.4, lowRelevanceSymbol: 0.55 },
+    });
+    expect(savedRanking.response.status).toBe(200);
+    expect(savedRanking.body).toMatchObject({ businessSymbol: 1.3, memory: 0.7 });
+    const invalidRanking = await api(origin, `/api/projects/${project.id}/search-ranking`, {
+      method: "PUT", cookie,
+      body: { businessChunk: 3, businessSymbol: 1, memory: 1, lowRelevanceChunk: 1, lowRelevanceSymbol: 1 },
+    });
+    expect(invalidRanking.response.status).toBe(400);
 
     const portrait = await api(origin, `/api/projects/${project.id}/portrait`, { cookie });
     expect(portrait.response.status).toBe(200);
