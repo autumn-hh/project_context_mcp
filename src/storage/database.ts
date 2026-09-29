@@ -7,8 +7,14 @@ export type SqliteDatabase = Database.Database;
 export function openDatabase(path: string): SqliteDatabase {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
-  db.pragma("journal_mode = WAL");
-  db.pragma("foreign_keys = ON");
-  db.pragma("busy_timeout = 5000");
-  return db;
+  try {
+    // Apply the wait policy before journal setup, which can itself need a lock.
+    db.pragma("busy_timeout = 5000");
+    db.pragma("journal_mode = WAL");
+    db.pragma("foreign_keys = ON");
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 }

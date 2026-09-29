@@ -155,7 +155,7 @@ export class ProjectWatchService {
         entry.indexing = false;
         entry.run = null;
         entry.dirty ||= entry.indexedVersion < entry.changeVersion;
-        if (entry.dirty && this.entries.has(entry.projectId)) this.schedule(entry);
+        if (entry.dirty && this.entries.has(entry.projectId)) this.schedule(entry, entry.lastError?.code === "INDEX_MIGRATION_RUNNING" ? 2000 : entry.debounceMs);
       }
     })();
     await entry.run;

@@ -258,8 +258,7 @@ export const UI_HTML = String.raw`<!doctype html>
       <div id="migration-directories"></div>
       <div class="migration-pagination"><span id="migration-page-status"></span><button id="migration-page-prev" class="secondary-button" type="button" disabled>上一页</button><button id="migration-page-next" class="secondary-button" type="button" disabled>下一页</button></div>
       <pre id="migration-result" role="status" hidden></pre>
-      <button id="migration-check-job" class="secondary-button" type="button" hidden>重新查询原任务状态</button>
-      <div class="dialog-actions"><button id="migration-close" class="secondary-button" type="button">关闭</button><button id="migration-compact" class="secondary-button" type="button">仅重试空间回收</button><button id="migration-run" class="primary-button" type="button" disabled>备份并执行升级</button></div>
+      <div class="migration-action-bar"><p id="migration-action-hint" role="status">检查空间和选中目录后开始升级。</p><div class="dialog-actions"><button id="migration-close" class="secondary-button" type="button">关闭</button><button id="migration-check-job" class="primary-button" type="button" hidden>查询原任务</button><button id="migration-compact" class="secondary-button" type="button" hidden>仅重试空间回收</button><button id="migration-run" class="primary-button" type="button" disabled>暂停访问并升级</button></div></div>
     </div>
   </dialog>
   <dialog id="migration-confirm-dialog" aria-labelledby="migration-confirm-title"><div class="migration-body"><h2 id="migration-confirm-title">确认升级索引？</h2><p id="migration-confirm-message"></p><div class="dialog-actions"><button id="migration-confirm-cancel" class="secondary-button" type="button">返回修改</button><button id="migration-confirm-ok" class="primary-button" type="button">确认并开始</button></div></div></dialog>
@@ -733,6 +732,11 @@ dialog p { color: var(--muted); line-height: 1.5; }
 .migration-directory small { color: var(--muted); margin-top: 4px; line-height: 1.5; }
 #migration-result { white-space: pre-wrap; padding: 12px; background: var(--surface-muted); font: inherit; line-height: 1.65; }
 #migration-dialog .dialog-actions { flex-wrap: wrap; }
+.migration-action-bar { position: sticky; bottom: -20px; background: var(--surface, #fff); padding: 12px 0 0; border-top: 1px solid var(--line); margin-top: 12px; }
+.migration-action-bar .dialog-actions { margin-top: 8px; padding-bottom: 12px; }
+#migration-action-hint { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+#migration-dialog button:disabled { cursor: not-allowed; opacity: .55; }
+@media (max-width: 520px) { .migration-action-bar .dialog-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); } .migration-action-bar button { min-width: 0; white-space: normal; overflow-wrap: anywhere; } }
 #project-root { font-family: Consolas, monospace; }
 .toast { position: fixed; right: 22px; bottom: 22px; max-width: min(420px, calc(100vw - 44px)); padding: 11px 14px; border-radius: 5px; background: #202824; color: #fff; box-shadow: var(--shadow); opacity: 0; transform: translateY(8px); pointer-events: none; transition: .18s ease; }
 .toast.show { opacity: 1; transform: translateY(0); }
@@ -2266,6 +2270,11 @@ export const UI_JS = String.raw`(function () {
     var spaceRefresh = document.getElementById("migration-space-refresh");
     var checkJob = document.getElementById("migration-check-job");
     var pendingJob = null;
+    var actionHint = document.getElementById("migration-action-hint");
+    var actionOutcome = "";
+    var retryCompact = false;
+    run.textContent = "暂停访问并升级"; run.hidden = false; compact.hidden = true;
+    actionHint.textContent = "正在检查升级状态和磁盘空间…";
     checkJob.hidden = true; checkJob.onclick = null;
     var spaceReady = false;
     var finished = false;
@@ -2286,7 +2295,7 @@ export const UI_JS = String.raw`(function () {
         if (mode === "upgrade") spaceReady = check.sufficient;
         return check;
       } catch (error) { spaceBox.textContent = "无法检查空间：" + error.message; return null; }
-      finally { if (requestSequence === spaceSequence && sequence === migrationPreviewSequence) { spaceRefresh.disabled = running; run.disabled = running || finished || !!pendingJob || !previewReady || !spaceReady; } }
+      finally { if (requestSequence === spaceSequence && sequence === migrationPreviewSequence) { spaceRefresh.disabled = running; run.disabled = running || finished || !!pendingJob || !previewReady || !spaceReady; updateActions(); } }
     }
     function showSpace(check) {
       if (!check) return;
@@ -2386,11 +2395,19 @@ export const UI_JS = String.raw`(function () {
         renderMigrationPage();
         recommendation.textContent = "本次新增勾选 " + added + " 个推荐目录，保留已有选择。可取消勾选；确认执行升级后才保存规则。";
       };
-      previewReady = true; run.disabled = finished || !!pendingJob || !spaceReady;
+      previewReady = true; run.disabled = finished || !!pendingJob || !spaceReady; updateActions();
     } catch (error) { if (sequence === migrationPreviewSequence) { note.textContent = "无法读取升级状态或目录：" + error.message + "。请确认本地服务仍在运行；不要重复提交升级。"; checkJob.hidden = false; } return; }
+    function updateActions() {
+      compact.hidden = !retryCompact;
+      run.hidden = !!pendingJob || retryCompact;
+      run.textContent = running ? "正在升级，请稍候…" : actionOutcome === "completed" ? "升级已完成" : "暂停访问并升级";
+      run.disabled = run.disabled || actionOutcome === "completed";
+      actionHint.textContent = running ? "后台任务运行中，请勿重复操作。" : pendingJob ? "连接状态未知，请查询原任务，避免重复备份。" : retryCompact ? "可仅重试空间回收；不会重新备份和索引。" : actionOutcome === "completed" ? "操作已完成，可以关闭窗口。" : actionOutcome === "failed" ? "请先处理上方错误，再关闭并重新打开窗口重试升级。" : !spaceReady ? "磁盘空间预检尚未通过，请查看检查结果。" : "将暂缓新版客户端对本项目的新数据库访问和监听索引；已有或旧版连接仍可能占用。";
+    }
     function reportJob(message) { resultBox.hidden = false; resultBox.textContent = message; }
     function handleJobError(error) {
       pendingJob = error.pendingJob || null;
+      actionOutcome = "failed"; retryCompact = Boolean(error.details && error.details.canRetryCompaction);
       checkJob.hidden = !pendingJob;
       if (pendingJob || error.interrupted) {
         reportJob(error.message + (pendingJob ? "\n原任务编号：" + pendingJob.requestId : ""));
@@ -2398,6 +2415,8 @@ export const UI_JS = String.raw`(function () {
       } else { reportJob(failureText(error)); finished = Boolean(error.details && error.details.backupCompleted); }
     }
     function renderJobResult(result, kind) {
+      actionOutcome = result.status === "completed" ? "completed" : "failed";
+      retryCompact = Boolean(result.canRetryCompaction);
       resultBox.hidden = false;
       if (kind === "compact") {
         resultBox.textContent = [result.status === "completed" ? "空间回收完成（未重建索引）" : "空间回收尚未完成", "活动数据库：" + migrationBytes(result.before.totalBytes) + " → " + migrationBytes(result.after.totalBytes), "回收：" + migrationBytes(result.reclaimedBytes), ...(result.warnings || [])].join("\n");
@@ -2436,6 +2455,7 @@ export const UI_JS = String.raw`(function () {
       run.disabled = value || finished || !!pendingJob || !previewReady || !spaceReady;
       recommend.disabled = value || finished || recommendedCount === 0;
       renderMigrationPage();
+      updateActions();
     }
     compact.onclick = async function () {
       if (running || !await confirmOperation("仅压缩当前数据库并回收 WAL 空间，不会创建新备份、更新索引或保存本次目录勾选，也不会删除已有历史备份。若上次索引失败，此操作不会完成索引升级。确认继续？")) return;

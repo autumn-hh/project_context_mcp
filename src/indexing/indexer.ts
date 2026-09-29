@@ -164,7 +164,9 @@ export async function indexProject(
     const removeBatch = db.transaction((rows: SourceRow[]) => deleteSources(db, rows.map((row) => row.id), false));
     for (let offset = 0; offset < missingRows.length; offset += SOURCE_REMOVAL_BATCH_SIZE) {
       const batch = missingRows.slice(offset, offset + SOURCE_REMOVAL_BATCH_SIZE);
-      removeBatch(batch);
+      // Reserve the writer before reading IDs. A deferred WAL snapshot cannot
+      // be promoted after another connection commits, even with busy_timeout.
+      removeBatch.immediate(batch);
       for (const row of batch) log.record("已移除失效的索引来源；未删除项目文件。", row.path);
       result.removed += batch.length;
       await yieldToEventLoop();
@@ -195,7 +197,7 @@ export async function indexProject(
 }
 
 function deleteSource(db: SqliteDatabase, sourceId: string): void {
-  deleteSources(db, [sourceId], true);
+  db.transaction(() => deleteSources(db, [sourceId], true)).immediate();
 }
 
 function deleteSources(db: SqliteDatabase, sourceIds: string[], deleteFts: boolean): void {
@@ -248,7 +250,7 @@ async function removeOrphanedFtsRows(
     const rowIds = select.pluck().all(cursor, FTS_REMOVAL_BATCH_SIZE) as number[];
     if (rowIds.length === 0) return;
     const placeholders = rowIds.map(() => "?").join(", ");
-    db.transaction(() => db.prepare(`DELETE FROM ${ftsTable} WHERE rowid IN (${placeholders})`).run(...rowIds))();
+    db.transaction(() => db.prepare(`DELETE FROM ${ftsTable} WHERE rowid IN (${placeholders})`).run(...rowIds)).immediate();
     cursor = rowIds.at(-1)!;
     await reportProgress(options, result, "finalizing", "search cleanup");
     await yieldToEventLoop();
@@ -318,7 +320,7 @@ function replaceSource(db: SqliteDatabase, input: {
     }
     if (input.analysis) insertCodeAnalysis(db, input.sourceId, input.relativePath, input.analysis);
   });
-  transaction();
+  transaction.immediate();
 }
 
 function insertCodeAnalysis(

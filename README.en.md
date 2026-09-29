@@ -23,7 +23,7 @@ Run `node dist/cli.js ui --no-open`, open the printed **`launchUrl` (including i
 | Indexing succeeded but compaction did not | Use **Retry space reclamation only**. This creates no new backup, performs no indexing, saves no folder selections, and deletes no logs or historical backups. |
 | Service process exited | Treat the result as interrupted/unknown and inspect terminal output, indexes, and backups. Disconnection is not a rollback. Operations started in older versions cannot be reconstructed from new job records. |
 
-Job records live in `<project>/.project-context/migration-jobs`. Workers survive browser disconnections but depend on the local service process. Other MCP processes and existing file watchers still rely on SQLite concurrency controls. Storage savings depend on project content; no fixed reduction is guaranteed.
+Job records live in `<project>/.project-context/migration-jobs`. Workers survive browser disconnections but depend on the local service process. During an upgrade, updated clients defer opening new project database connections; watchers retain pending changes and retry later. Existing connections are not forcibly closed, and there is no full connection-drain mechanism. Older MCP clients and external database tools can still hold locks: rebuild and restart all related Web/MCP processes after updating. If `database is locked` persists, let competing operations finish before retrying the upgrade; compaction alone cannot complete failed indexing. Storage savings depend on project content; no fixed reduction is guaranteed.
 
 After updating a source checkout, run `git pull --ff-only`, rebuild with `npm run build`, and restart the Web/MCP services. See [Patch Notes](PATCH_NOTES.md) for version history.
 

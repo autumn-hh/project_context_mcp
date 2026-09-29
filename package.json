@@ -1,6 +1,6 @@
 {
   "name": "project-context-mcp",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Local-first, cross-session project intelligence and memory MCP server",
   "type": "module",
   "bin": {

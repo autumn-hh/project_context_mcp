@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { SqliteDatabase } from "../storage/database.js";
 import { openDatabase } from "../storage/database.js";
+import { assertMigrationAccess } from "../storage/migration-guard.js";
 import { migrateProject, migrateRegistry, PROJECT_SCHEMA_VERSION } from "../storage/schema.js";
 import { createId, nowIso } from "../shared/ids.js";
 import { ProjectContextError } from "../shared/errors.js";
@@ -313,13 +314,14 @@ export class ProjectService {
   }
 
   projectDatabase(projectId: string): SqliteDatabase {
+    assertMigrationAccess(this.get(projectId).rootPath);
     const databasePath = this.projectDatabasePath(projectId);
     if (!existsSync(databasePath)) {
       throw new ProjectContextError("PROJECT_DATABASE_NOT_FOUND", `Project database does not exist: ${databasePath}`);
     }
     const db = openDatabase(databasePath);
-    migrateProject(db);
-    return db;
+    try { migrateProject(db); return db; }
+    catch (error) { db.close(); throw error; }
   }
 
   close(): void {

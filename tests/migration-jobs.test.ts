@@ -66,6 +66,11 @@ describe("durable background migration jobs", () => {
     const jobs = new MigrationJobs();
     const requestId = randomUUID();
     jobs.prepare(projectRoot, { requestId, projectId, kind: "compact", excludeDirectories: [] });
+    const blockedApp = await ProjectContextApp.create();
+    try {
+      expect(() => blockedApp.storageUsage(projectId)).toThrow("暂缓其他连接");
+      await expect(blockedApp.index(projectId)).rejects.toMatchObject({ code: "INDEX_MIGRATION_RUNNING" });
+    } finally { blockedApp.close(); }
     const other = new MigrationJobs();
     expect(() => other.assertIdle(projectRoot)).toThrow("后台运行");
     expect(() => other.prepare(projectRoot, { requestId: randomUUID(), projectId, kind: "upgrade", excludeDirectories: [] })).toThrow();
