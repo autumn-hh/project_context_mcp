@@ -11,6 +11,7 @@ import { userMemoryScopeSchema } from "../memory/user-memory-service.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
+import { MigrationJobs } from "./migration-jobs.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const retentionDaysSchema = z.number().int().min(1).max(3650);
@@ -69,9 +70,10 @@ export async function startUiServer(options: {
   openBrowser?: boolean;
 } = {}): Promise<UiServerHandle> {
   const sessionToken = randomBytes(32).toString("base64url");
+  const migrationJobs = new MigrationJobs();
   let expectedOrigin = "";
   const server = createServer((request, response) => {
-    void routeRequest(request, response, sessionToken, expectedOrigin);
+    void routeRequest(request, response, sessionToken, expectedOrigin, migrationJobs);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -92,10 +94,10 @@ export async function startUiServer(options: {
     url: expectedOrigin,
     launchUrl,
     port: address.port,
-    close: () => new Promise<void>((resolve, reject) => {
+    close: async () => { await migrationJobs.wait(); return new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
       server.closeAllConnections();
-    }),
+    }); },
   };
 }
 
@@ -104,6 +106,7 @@ async function routeRequest(
   response: ServerResponse,
   sessionToken: string,
   expectedOrigin: string,
+  migrationJobs: MigrationJobs,
 ): Promise<void> {
   setSecurityHeaders(response);
   try {
@@ -139,6 +142,36 @@ async function routeRequest(
     if (!authenticated(request, sessionToken)) {
       sendJson(response, 401, { code: "AUTHENTICATION_REQUIRED", message: "Open the UI using the current launch address." });
       return;
+    }
+
+    const jobsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-jobs(?:\/([^/]+))?$/);
+    if (jobsMatch && (request.method === "GET" || request.method === "POST")) {
+      const projectId = decodeSegment(jobsMatch[1]!);
+      const app = await ProjectContextApp.create();
+      try {
+        const project = app.projects.get(projectId);
+        if (request.method === "GET") {
+          const requestId = jobsMatch[2] ? z.uuid().parse(decodeSegment(jobsMatch[2])) : undefined;
+          const job = migrationJobs.get(project.rootPath, requestId);
+          return sendJson(response, requestId && !job ? 404 : 200, job ?? (requestId ? { code: "NOT_FOUND", message: "Migration request was not found." } : null));
+        }
+        if (jobsMatch[2]) throw new ProjectContextError("INVALID_INPUT", "Start migrations at the collection endpoint.");
+        const input = z.object({ confirmProjectId: z.string(), kind: z.enum(["upgrade", "compact"]), requestId: z.uuid(), excludeDirectories: z.array(z.string().min(1).max(2000)).default([]) }).strict().parse(await readJsonBody(request));
+        if (input.confirmProjectId !== projectId) throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before migration.");
+        if (!migrationJobs.get(project.rootPath, input.requestId)) app.assertProjectMigrationIdle(projectId);
+        const prepared = migrationJobs.prepare(project.rootPath, { ...input, projectId });
+        // Finish the short HTTP acknowledgement before any long work starts.
+        response.once("finish", prepared.start);
+        response.once("close", prepared.start);
+        return sendJson(response, 202, prepared.job);
+      } finally { app.close(); }
+    }
+
+    const mutationMatch = url.pathname.match(/^\/api\/projects\/([^/]+)(?:\/(index|watch|cleanup|ignore|optimize-index|compact-index|maintenance))?$/);
+    if (mutationMatch && !["GET", "HEAD"].includes(request.method ?? "")) {
+      const app = await ProjectContextApp.create();
+      try { migrationJobs.assertIdle(app.projects.get(decodeSegment(mutationMatch[1]!)).rootPath); }
+      finally { app.close(); }
     }
 
     if (request.method === "GET" && url.pathname === "/api/bootstrap") {
@@ -258,6 +291,21 @@ async function routeRequest(
       }
     }
     const optimizeIndexMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/optimize-index$/);
+    const migrationSpaceMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-space$/);
+    if (request.method === "GET" && migrationSpaceMatch) {
+      const projectId = decodeSegment(migrationSpaceMatch[1]!);
+      const mode = z.enum(["upgrade", "compact"]).parse(url.searchParams.get("mode") ?? "upgrade");
+      await withApp(response, (app) => app.migrationSpaceCheck(projectId, mode));
+      return;
+    }
+    const compactIndexMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/compact-index$/);
+    if (request.method === "POST" && compactIndexMatch) {
+      const projectId = decodeSegment(compactIndexMatch[1]!);
+      const input = z.object({ confirmProjectId: z.string().min(1) }).strict().parse(await readJsonBody(request));
+      if (input.confirmProjectId !== projectId) throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before compaction.");
+      await withApp(response, (app) => app.compactProjectIndex(projectId));
+      return;
+    }
     if (request.method === "GET" && optimizeIndexMatch) {
       const projectId = decodeSegment(optimizeIndexMatch[1]!);
       await withApp(response, (app) => app.indexMigrationPreview(projectId));
@@ -265,7 +313,7 @@ async function routeRequest(
     }
     if (request.method === "POST" && optimizeIndexMatch) {
       const projectId = decodeSegment(optimizeIndexMatch[1]!);
-      const input = z.object({ confirmProjectId: z.string().min(1), excludeDirectories: z.array(z.string().min(1).max(2000)).max(60).default([]) }).strict().parse(await readJsonBody(request));
+      const input = z.object({ confirmProjectId: z.string().min(1), excludeDirectories: z.array(z.string().min(1).max(2000)).default([]) }).strict().parse(await readJsonBody(request));
       if (input.confirmProjectId !== projectId) throw new ProjectContextError("CLEANUP_CONFIRMATION_REQUIRED", "Confirm the selected project before migration.");
       await withApp(response, (app) => app.optimizeProjectIndex(projectId, input.excludeDirectories));
       return;

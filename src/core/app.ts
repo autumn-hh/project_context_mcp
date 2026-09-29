@@ -1,4 +1,5 @@
 import { indexMigrationPreview } from "../maintenance/index-migration-preview.js";
+import { checkMigrationSpace, migrationFailureMessage, type MigrationMode, type MigrationSpaceCheck } from "../maintenance/migration-space.js";
 import type { SqliteDatabase } from "../storage/database.js";
 import { loadGlobalConfig } from "../config/paths.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
@@ -264,7 +265,7 @@ export class ProjectContextApp {
           capturedAt: vcs.capturedAt,
         };
         // Maintenance failure must not turn an otherwise successful index into a failure.
-        try { runAutomaticMaintenance(db); }
+        try { if (!activeMigrations.has(projectId)) runAutomaticMaintenance(db); }
         catch (error) { console.error("Automatic database maintenance:", error instanceof Error ? error.message : String(error)); }
         return {
           ...result,
@@ -577,6 +578,63 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => indexMigrationPreview(db));
   }
 
+  assertProjectMigrationIdle(projectId: string): void {
+    this.projects.get(projectId);
+    if (activeIndexes.has(projectId) || activeMigrations.has(projectId)) {
+      throw new ProjectContextError("INDEX_ALREADY_RUNNING", "请等待当前索引或升级完成，再启动后台任务。");
+    }
+  }
+
+  async migrationSpaceCheck(projectId: string, mode: MigrationMode = "upgrade") {
+    const usage = this.storageUsage(projectId);
+    return checkMigrationSpace({ ...usage, backupDirectory: join(this.allowedOutputRoots[0]!, "backups"), mode });
+  }
+
+  async compactProjectIndex(projectId: string) {
+    this.projects.get(projectId);
+    if (activeIndexes.has(projectId) || activeMigrations.has(projectId)) {
+      throw new ProjectContextError("INDEX_ALREADY_RUNNING", "请等待当前索引或升级完成后再回收空间。");
+    }
+    activeMigrations.add(projectId);
+    let phase = "preflight";
+    let spaceCheck: MigrationSpaceCheck | undefined;
+    try {
+      const before = this.storageUsage(projectId);
+      spaceCheck = await this.migrationSpaceCheck(projectId, "compact");
+      if (!spaceCheck.sufficient) throw new Error("可用磁盘空间不足或无法验证，尚未开始空间回收。请检查空间预检中的路径。");
+      phase = "compaction";
+      const warnings: string[] = [];
+      let vacuumCompleted = false;
+      let checkpointBusy = false;
+      // Deliberately bypass cleanupDatabase: retry must not back up, reindex or prune logs.
+      this.withDb(projectId, db => {
+        try {
+          const checkpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+          checkpointBusy = checkpoint.some(row => row.busy !== 0);
+          if (!checkpointBusy) {
+            db.exec("VACUUM");
+            vacuumCompleted = true;
+            phase = "checkpoint";
+            checkpointBusy = (db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>).some(row => row.busy !== 0);
+          }
+          if (checkpointBusy) warnings.push("其他数据库连接正在占用 WAL，空间回收尚未完成，请等待其他 MCP 或 Web 进程空闲后重试。");
+        } catch (error) { warnings.push(migrationFailureMessage(error)); }
+      });
+      const after = this.storageUsage(projectId);
+      const completed = vacuumCompleted && !checkpointBusy && warnings.length === 0;
+      return {
+        projectId, status: completed ? "completed" : "partial", warnings, before, after,
+        reclaimedBytes: Math.max(0, before.totalBytes - after.totalBytes), byteChange: after.totalBytes - before.totalBytes,
+        canRetryCompaction: !completed, phase: completed ? "completed" : phase, spaceCheck,
+        vacuumCompleted, checkpointBusy,
+      };
+    } catch (error) {
+      throw new ProjectContextError("INDEX_COMPACTION_FAILED", `空间回收未完成（${migrationPhaseLabel(phase)}）：${migrationFailureMessage(error)}`, {
+        phase, spaceCheck, backupDestination: null, backupCompleted: false, ignoreRulesSaved: false, indexCompleted: false, canRetryCompaction: true,
+      });
+    } finally { activeMigrations.delete(projectId); }
+  }
+
   async optimizeProjectIndex(projectId: string, excludeDirectories: string[] = []): Promise<Record<string, unknown>> {
     const project = this.projects.get(projectId);
     if (activeIndexes.has(projectId) || activeMigrations.has(projectId)) {
@@ -584,7 +642,11 @@ export class ProjectContextApp {
     }
     activeMigrations.add(projectId);
     let backupDestination: string | undefined;
+    let backupCompleted = false;
     let ignoreRulesSaved = false;
+    let indexCompleted = false;
+    let phase = "validation";
+    let spaceCheck: MigrationSpaceCheck | undefined;
     try {
       const selectedDirectories = [...new Set(excludeDirectories)];
       if (selectedDirectories.length) {
@@ -594,10 +656,16 @@ export class ProjectContextApp {
         }
       }
       const before = this.storageUsage(projectId);
+      phase = "preflight";
+      spaceCheck = await this.migrationSpaceCheck(projectId);
+      if (!spaceCheck.sufficient) throw new Error("可用磁盘空间不足或无法验证，尚未创建备份或修改忽略规则。请检查空间预检中的路径。");
       const destination = join(this.allowedOutputRoots[0]!, "backups", `${project.id}-pre-index-migration-${Date.now()}-${randomUUID()}.db`);
-      const backup = await this.backup(projectId, destination);
       backupDestination = destination;
-      const retainedBackupBytes = (await stat(destination)).size;
+      phase = "backup";
+      const backup = await this.backup(projectId, destination);
+      backupCompleted = true;
+      let retainedBackupBytes = (await stat(destination)).size;
+      phase = "ignore_rules";
       if (selectedDirectories.length) {
         const original = (await this.readProjectIgnore(projectId)).content;
         const addedRules = selectedDirectories.map((path) => `/${path}/**`);
@@ -613,31 +681,69 @@ export class ProjectContextApp {
           await rm(temporary, { force: true }).catch(() => undefined);
         }
       }
+      phase = "index";
       const index = await this.indexInternal(projectId);
+      indexCompleted = index.errors.length === 0;
+      phase = "compaction";
       const cleanup = this.withDb(projectId, (db) => cleanupDatabase(db, { dryRun: false, vacuum: true, retentionDays: 30 }));
       // Read again after cleanup closes its connection and persists its final history entry.
       const after = this.storageUsage(projectId);
-      const warnings = [...cleanup.warnings];
+      const warnings = cleanup.warnings.map(migrationFailureMessage);
       if (index.errors.length) warnings.push(`Index migration encountered ${index.errors.length} file error(s); review index.errors and retry.`);
       if (!cleanup.vacuumCompleted) warnings.push("Database compaction did not complete; retry space reclamation when other connections are idle.");
       if (cleanup.checkpointBusy) warnings.push("WAL truncation is pending because another database connection is active.");
-      const completed = index.errors.length === 0 && cleanup.vacuumCompleted && !cleanup.checkpointBusy && warnings.length === 0;
+      let completed = index.errors.length === 0 && cleanup.vacuumCompleted && !cleanup.checkpointBusy && warnings.length === 0;
+      let integrity: string | null = null;
+      let backupStatus: "deleted" | "retained" = "retained";
+      let backupDeletedBytes = 0;
+      phase = !indexCompleted ? "index" : cleanup.checkpointBusy ? "checkpoint" : "compaction";
+      if (completed) {
+        phase = "integrity";
+        try {
+          integrity = this.withDb(projectId, db => String(db.pragma("quick_check", { simple: true })));
+          if (integrity !== "ok") {
+            completed = false;
+            warnings.push(`升级后的数据库完整性检查未通过，保留迁移备份：${integrity}`);
+          }
+        } catch (error) {
+          completed = false;
+          warnings.push(`无法完成数据库完整性检查，保留迁移备份：${migrationFailureMessage(error)}`);
+        }
+      }
+      if (completed) {
+        phase = "backup_cleanup";
+        try {
+          // This exact path was created by this invocation. Never scan or prune historical backups.
+          const backupBytes = (await stat(destination)).size;
+          await rm(destination);
+          backupDeletedBytes = backupBytes;
+          retainedBackupBytes = 0;
+          backupStatus = "deleted";
+          phase = "completed";
+        } catch (error) {
+          completed = false;
+          warnings.push(`索引和压缩已完成，但本次迁移备份未能删除，请检查备份路径：${migrationFailureMessage(error)}`);
+        }
+      }
       return {
         projectId, status: completed ? "completed" : "partial", warnings: [...new Set(warnings)],
-        backup, backupDestination, retainedBackupBytes, index, cleanup, before, after,
+        backup, backupDestination, backupStatus, backupDeletedBytes, retainedBackupBytes, integrity, index, cleanup, before, after,
         reclaimedBytes: Math.max(0, before.totalBytes - after.totalBytes),
         byteChange: after.totalBytes - before.totalBytes,
-        excludeDirectories: selectedDirectories, ignoreRulesSaved,
+        excludeDirectories: selectedDirectories, ignoreRulesSaved, backupCompleted, indexCompleted, phase, spaceCheck,
+        canRetryCompaction: indexCompleted && (!cleanup.vacuumCompleted || cleanup.checkpointBusy),
         notes: [
           "Reclaimed bytes compare the active database, WAL and SHM across the entire migration; retained backups are excluded.",
+          backupStatus === "deleted" ? "本次临时迁移备份在完整升级和完整性检查成功后已删除；历史及手工备份不受影响。" : "本次迁移备份保留以便恢复；仅重试空间回收不会自动删除历史备份。",
           ...(ignoreRulesSaved ? ["Selected directory exclusions were saved to .project-context-ignore; source files were preserved."] : []),
         ],
       };
     } catch (error) {
-      if (!backupDestination) throw error;
-      throw new ProjectContextError("INDEX_MIGRATION_FAILED", `Index migration failed: ${error instanceof Error ? error.message : String(error)}`, {
-        backupDestination, ignoreRulesSaved,
-        recovery: "The pre-migration database backup is retained. Review saved ignore rules before retrying.",
+      if (phase === "validation") throw error;
+      throw new ProjectContextError("INDEX_MIGRATION_FAILED", `索引升级未完成（${migrationPhaseLabel(phase)}）：${migrationFailureMessage(error)}`, {
+        phase, backupDestination: backupDestination ?? null, backupCompleted, ignoreRulesSaved, indexCompleted, spaceCheck,
+        canRetryCompaction: indexCompleted,
+        recovery: backupCompleted ? "已完成的数据库备份仍保留。索引已成功更新时可仅重试空间回收；否则检查已保存的忽略规则后再升级。" : "备份尚未完成，请保留当前数据库，释放空间后重试。",
       });
     } finally {
       activeMigrations.delete(projectId);
@@ -707,6 +813,10 @@ export class ProjectContextApp {
       db.close();
     }
   }
+}
+
+function migrationPhaseLabel(phase: string): string {
+  return ({ preflight: "空间检查", backup: "数据库备份", ignore_rules: "保存忽略规则", index: "更新索引", compaction: "压缩数据库", checkpoint: "回收 WAL", integrity: "检查数据库完整性", backup_cleanup: "清理本次迁移备份", completed: "完成" } as Record<string, string>)[phase] ?? phase;
 }
 
 function validateProjectIgnore(content: string): void {

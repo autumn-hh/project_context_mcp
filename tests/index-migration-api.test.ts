@@ -113,7 +113,8 @@ describe("index migration API", () => {
     expect(selected.body.reclaimedBytes).toBe(Math.max(0, selected.body.before.totalBytes - selected.body.after.totalBytes));
     expect(await readFile(join(projectRoot, ".project-context-ignore"), "utf8")).toContain("/references/**");
     expect(await readFile(join(projectRoot, "references", "copy.ts"), "utf8")).toBe(service);
-    expect((await stat(selected.body.backupDestination)).size).toBeGreaterThan(0);
+    expect(selected.body).toMatchObject({ backupStatus: "deleted", retainedBackupBytes: 0 });
+    await expect(stat(selected.body.backupDestination)).rejects.toMatchObject({ code: "ENOENT" });
     expect((await request(route())).body.directories).not.toEqual(expect.arrayContaining([expect.objectContaining({ path: "references" })]));
   });
 
@@ -130,5 +131,40 @@ describe("index migration API", () => {
     const retry = await request(route(), { method: "POST", body: { confirmProjectId: projectId } });
     expect(retry.response.status).toBe(200);
     expect(retry.body.status).toBe("completed");
+  });
+
+  it("checks space and retries compaction without backup or indexing", async () => {
+    const spacePath = `/api/projects/${projectId}/migration-space`;
+    const compactPath = `/api/projects/${projectId}/compact-index`;
+    expect((await request(spacePath, { authenticated: false })).response.status).toBe(401);
+    expect((await request(compactPath, { method: "POST", body: {}, authenticated: false })).response.status).toBe(401);
+    expect((await request(spacePath + "?mode=invalid")).response.status).toBe(400);
+    expect((await request(compactPath, { method: "POST", body: { confirmProjectId: "other" } })).response.status).toBe(400);
+    const check = await request(spacePath + "?mode=compact");
+    expect(check.body).toMatchObject({ sufficient: true, checks: expect.any(Array) });
+    const backup = vi.spyOn(ProjectContextApp.prototype, "backup");
+    const index = vi.spyOn(ProjectContextApp.prototype, "index");
+    const result = await request(compactPath, { method: "POST", body: { confirmProjectId: projectId } });
+    expect(result.response.status).toBe(200);
+    expect(result.body).toMatchObject({ status: "completed", before: { totalBytes: expect.any(Number) }, after: { totalBytes: expect.any(Number) } });
+    expect(backup).not.toHaveBeenCalled(); expect(index).not.toHaveBeenCalled();
+    const blocked = { sufficient: false, checks: [{ path: tempRoot, roles: ["database"], availableBytes: 0, requiredBytes: 100, shortfallBytes: 100 }], warnings: [] };
+    vi.spyOn(ProjectContextApp.prototype, "migrationSpaceCheck").mockResolvedValue(blocked as any);
+    const failed = await request(route(), { method: "POST", body: { confirmProjectId: projectId } });
+    expect(failed.response.status).toBeGreaterThanOrEqual(400);
+    expect(failed.body.details).toMatchObject({ phase: "preflight", backupCompleted: false, spaceCheck: { sufficient: false } });
+    expect(backup).not.toHaveBeenCalled();
+  });
+
+  it("returns directories beyond the former 60-entry limit", async () => {
+    for (let i = 0; i < 105; i++) {
+      const path = join(projectRoot, `folder-${String(i).padStart(3, "0")}`);
+      await mkdir(path); await writeFile(join(path, "file.txt"), `indexed folder ${i}`);
+    }
+    const app = await ProjectContextApp.create();
+    try { await app.index(projectId); } finally { app.close(); }
+    const preview = await request(route());
+    expect(preview.body.directories.length).toBe(107);
+    expect(preview.body.directories).toEqual(expect.arrayContaining([expect.objectContaining({ path: "folder-104" })]));
   });
 });

@@ -22,7 +22,7 @@ export function indexMigrationPreview(db: SqliteDatabase) {
       groups.set(path, group);
     }
   }
-  const directoryRows = [...groups.values()].sort((a, b) => b.sourceBytes - a.sourceBytes || a.path.localeCompare(b.path)).slice(0, 60);
+  const directoryRows = [...groups.values()].sort((a, b) => b.sourceBytes - a.sourceBytes || a.path.localeCompare(b.path));
   const recommendations = analyzeIndexRecommendations(rows.map(row => row.path), directoryRows.map(directory => directory.path));
   const directories = directoryRows.map(directory => ({ ...directory,
     recommended: recommendations.recommendations[directory.path]?.recommended ?? false,
@@ -31,5 +31,5 @@ export function indexMigrationPreview(db: SqliteDatabase) {
   return { directories, totalDirectories: groups.size, totalIndexedFiles: rows.length,
     sourceBytes: rows.reduce((sum, row) => sum + row.bytes, 0),
     projectTypes: recommendations.projectTypes,
-    note: "按已索引源码字节数排序，最多展示 60 个目录；父子目录统计重叠，不可相加，也不代表数据库可回收量。未索引文件不在此预览内。" };
+    note: "按已索引源码字节数排序，支持搜索全部目录；父子目录统计重叠，不可相加，也不代表数据库可回收量。未索引文件不在此预览内。" };
 }

@@ -249,14 +249,17 @@ export const UI_HTML = String.raw`<!doctype html>
   <dialog id="migration-dialog" aria-labelledby="migration-title">
     <div class="migration-body"><h2 id="migration-title">升级索引：先选择搜索范围</h2>
       <p id="migration-project"></p>
-      <p>可勾选不需要搜索的目录，保存为项目忽略规则。默认全部保留，源文件不会删除。随后自动备份、更新分级索引并回收空间。</p>
+      <p>可勾选不需要搜索的目录，保存为项目忽略规则。默认全部保留，源文件不会删除。随后备份、更新索引并回收空间；全部成功且完整性检查通过后，自动删除本次备份。失败时保留用于恢复。</p>
       <p id="migration-note" role="status"></p>
+      <details class="storage-inspect"><summary>升级前磁盘空间检查</summary><pre id="migration-space" role="status">正在检查…</pre><button id="migration-space-refresh" class="secondary-button" type="button">重新检查空间</button></details>
+      <div class="migration-filters"><div class="field"><label for="migration-search">搜索文件夹路径</label><input id="migration-search" type="search" placeholder="输入文件夹名称或路径" maxlength="2000"></div><div class="field"><label for="migration-page-size">每页文件夹数</label><select id="migration-page-size"><option value="10">10 个</option><option value="20">20 个</option><option value="50">50 个</option><option value="100">100 个</option></select></div></div>
       <div class="dialog-actions"><button id="migration-recommend" class="secondary-button" type="button" disabled>勾选推荐目录</button></div>
       <p id="migration-recommendation" role="status">推荐会结合项目语言、构建文件和目录证据；学习、示例和业务目录由你判断。</p>
       <div id="migration-directories"></div>
       <div class="migration-pagination"><span id="migration-page-status"></span><button id="migration-page-prev" class="secondary-button" type="button" disabled>上一页</button><button id="migration-page-next" class="secondary-button" type="button" disabled>下一页</button></div>
       <pre id="migration-result" role="status" hidden></pre>
-      <div class="dialog-actions"><button id="migration-close" class="secondary-button" type="button">关闭</button><button id="migration-run" class="primary-button" type="button" disabled>备份并执行升级</button></div>
+      <button id="migration-check-job" class="secondary-button" type="button" hidden>重新查询原任务状态</button>
+      <div class="dialog-actions"><button id="migration-close" class="secondary-button" type="button">关闭</button><button id="migration-compact" class="secondary-button" type="button">仅重试空间回收</button><button id="migration-run" class="primary-button" type="button" disabled>备份并执行升级</button></div>
     </div>
   </dialog>
   <dialog id="migration-confirm-dialog" aria-labelledby="migration-confirm-title"><div class="migration-body"><h2 id="migration-confirm-title">确认升级索引？</h2><p id="migration-confirm-message"></p><div class="dialog-actions"><button id="migration-confirm-cancel" class="secondary-button" type="button">返回修改</button><button id="migration-confirm-ok" class="primary-button" type="button">确认并开始</button></div></div></dialog>
@@ -717,6 +720,10 @@ dialog p { color: var(--muted); line-height: 1.5; }
 #migration-directories { max-height: 40dvh; overflow: auto; display: grid; gap: 8px; }
 .migration-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .migration-pagination span { margin-right: auto; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.migration-filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
+.migration-filters .field:first-child { flex: 1 1 200px; min-width: 0; }
+.migration-filters input { min-width: 0; width: 100%; }
+#migration-space { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
 .migration-directory { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid var(--line); }
 .migration-directory input { width: 16px; height: 16px; margin-top: 3px; }
 .migration-directory:hover { border-color: var(--accent); }
@@ -2182,6 +2189,60 @@ export const UI_JS = String.raw`(function () {
   }
 
   var migrationPreviewSequence = 0;
+  async function migrationJobFetch(path, options) {
+    var controller = new AbortController();
+    var timer = setTimeout(function () { controller.abort(); }, 15000);
+    try { return await fetchJson(path, Object.assign({}, options || {}, { signal: controller.signal })); }
+    finally { clearTimeout(timer); }
+  }
+  async function runMigrationJob(projectId, kind, directories, report, requestId) {
+    var path = "/api/projects/" + encodeURIComponent(projectId) + "/migration-jobs";
+    var key = "project-context-migration-job:" + projectId;
+    var job;
+    if (!requestId) {
+      requestId = crypto.randomUUID();
+      try { localStorage.setItem(key, JSON.stringify({requestId:requestId, kind:kind})); } catch (_) {}
+      report("正在提交后台任务…任务编号：" + requestId);
+      try { job = await migrationJobFetch(path, {method:"POST", body:{confirmProjectId:projectId, kind:kind, excludeDirectories:directories, requestId:requestId}}); }
+      catch (error) {
+        if (error.httpStatus && error.httpStatus < 500) {
+          try { localStorage.removeItem(key); } catch (_) {}
+          throw error;
+        }
+        // Never repeat a POST when its response may have been lost. Query the same ID.
+        report("提交响应中断，正在查询原任务；不会重复提交或再次备份。任务编号：" + requestId);
+      }
+    }
+    var failures = 0;
+    for (;;) {
+      if (!job) {
+        try { job = await migrationJobFetch(path + "/" + encodeURIComponent(requestId)); failures = 0; }
+        catch (error) {
+          failures++;
+          report("暂时无法连接本地服务，后台结果未知，正在重连（" + failures + "/3）。不会重复执行。任务编号：" + requestId);
+          if (failures >= 3 || error.httpStatus === 401 || error.httpStatus === 404) {
+            var disconnected = new Error("未能查询原任务结果。连接中断不代表升级失败；请确认 Web 服务仍在运行，查看终端错误，再查询原任务。若重启服务，请使用新的带 token 地址。");
+            disconnected.pendingJob = {requestId:requestId, kind:kind}; throw disconnected;
+          }
+          await new Promise(function (resolve) { setTimeout(resolve, 1500); }); continue;
+        }
+      }
+      if (job.status === "completed") {
+        try { localStorage.removeItem(key); } catch (_) {}
+        return job.result;
+      }
+      if (job.status === "failed" || job.status === "interrupted") {
+        try { localStorage.removeItem(key); } catch (_) {}
+        var failed = new Error(job.error && job.error.message || "后台进程已中断，最终数据库状态未确认。请检查服务终端和备份，不要直接重复升级。");
+        failed.details = job.error && job.error.details || {};
+        if (job.status === "interrupted") failed.interrupted = true;
+        throw failed;
+      }
+      report("后台" + (kind === "compact" ? "空间回收" : "索引升级") + "进行中，正在查询状态；无需重复点击。任务编号：" + requestId);
+      job = null;
+      await new Promise(function (resolve) { setTimeout(resolve, 1500); });
+    }
+  }
   function migrationBytes(value) { return Number(value || 0).toLocaleString() + " 字节（" + storageBytes(value) + "）"; }
   async function optimizeSelectedProject() {
     var projectId = els["portrait-project"].value;
@@ -2198,6 +2259,43 @@ export const UI_JS = String.raw`(function () {
     var pageStatus = document.getElementById("migration-page-status");
     var pagePrev = document.getElementById("migration-page-prev");
     var pageNext = document.getElementById("migration-page-next");
+    var search = document.getElementById("migration-search");
+    var sizeSelect = document.getElementById("migration-page-size");
+    var compact = document.getElementById("migration-compact");
+    var spaceBox = document.getElementById("migration-space");
+    var spaceRefresh = document.getElementById("migration-space-refresh");
+    var checkJob = document.getElementById("migration-check-job");
+    var pendingJob = null;
+    checkJob.hidden = true; checkJob.onclick = null;
+    var spaceReady = false;
+    var finished = false;
+    var previewReady = false;
+    var renderMigrationPage = function () {};
+    search.value = ""; search.disabled = true; sizeSelect.disabled = true;
+    spaceBox.textContent = "正在检查…";
+    compact.disabled = true; compact.onclick = null; close.disabled = false;
+    var spaceSequence = 0;
+    async function refreshSpace(mode) {
+      var requestSequence = ++spaceSequence;
+      spaceRefresh.disabled = true;
+      if (mode === "upgrade") { spaceReady = false; run.disabled = true; }
+      try {
+        var check = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/migration-space?mode=" + mode);
+        if (sequence !== migrationPreviewSequence || requestSequence !== spaceSequence) return;
+        showSpace(check);
+        if (mode === "upgrade") spaceReady = check.sufficient;
+        return check;
+      } catch (error) { spaceBox.textContent = "无法检查空间：" + error.message; return null; }
+      finally { if (requestSequence === spaceSequence && sequence === migrationPreviewSequence) { spaceRefresh.disabled = running; run.disabled = running || finished || !!pendingJob || !previewReady || !spaceReady; } }
+    }
+    function showSpace(check) {
+      if (!check) return;
+      if (!check.sufficient) spaceBox.parentElement.open = true;
+      spaceBox.textContent = [check.sufficient ? "空间预检通过（保守估算，不保证执行期间空间不变）" : "空间不足或无法验证，暂不能执行", ...check.checks.map(function (entry) {
+        var names = { database: "数据库", backup: "备份", temp: "临时目录", temporary: "临时目录" };
+        return (entry.paths || [entry.path]).join("\n") + "\n用途：" + entry.roles.map(function (role) { return names[role] || role; }).join("、") + "\n可用：" + (entry.availableBytes == null ? "未知" : migrationBytes(entry.availableBytes)) + " · 预计额外需要：" + migrationBytes(entry.requiredBytes) + (entry.shortfallBytes > 0 ? "\n还缺：" + migrationBytes(entry.shortfallBytes) : "");
+      }), ...(check.warnings || [])].join("\n\n");
+    }
     recommend.disabled = true;
     recommendation.textContent = "推荐会结合项目语言、构建文件和目录证据；不会仅因目录名是 src、include、bin 或 lib 就排除。";
     var running = false;
@@ -2208,38 +2306,78 @@ export const UI_JS = String.raw`(function () {
     pageStatus.textContent = ""; pagePrev.disabled = true; pageNext.disabled = true;
     note.textContent = "正在分析已索引目录…";
     dialog.showModal();
+    checkJob.onclick = async function () {
+      if (running) return;
+      lockControls(true);
+      try {
+        var job = pendingJob || await migrationJobFetch("/api/projects/" + encodeURIComponent(projectId) + "/migration-jobs");
+        if (!job) { reportJob("未找到后台任务记录。请检查终端和备份，确认状态后关闭并重新打开升级窗口。"); return; }
+        renderJobResult(await runMigrationJob(projectId, job.kind, [], reportJob, job.requestId), job.kind);
+        pendingJob = null; checkJob.hidden = true; finished = true;
+      } catch (error) { handleJobError(error); }
+      finally { lockControls(false); }
+    };
+    spaceRefresh.onclick = function () { if (!running) void refreshSpace("upgrade"); };
     try {
+      var latest = await migrationJobFetch("/api/projects/" + encodeURIComponent(projectId) + "/migration-jobs");
+      if (!dialog.open || sequence !== migrationPreviewSequence) return;
+      var savedJob = null;
+      try { savedJob = JSON.parse(localStorage.getItem("project-context-migration-job:" + projectId) || "null"); } catch (_) {}
+      if (savedJob && (!latest || latest.requestId !== savedJob.requestId)) latest = Object.assign({status:"running"}, savedJob);
+      if (latest && latest.status === "running") {
+        lockControls(true);
+        try { renderJobResult(await runMigrationJob(projectId, latest.kind, [], reportJob, latest.requestId), latest.kind); finished = true; }
+        catch (error) { handleJobError(error); }
+        finally { lockControls(false); }
+      } else if (latest && latest.status === "completed") {
+        renderJobResult(latest.result, latest.kind);
+      } else if (latest && (latest.status === "failed" || latest.status === "interrupted")) {
+        resultBox.hidden = false; resultBox.textContent = "上次任务状态：" + latest.status + "\n" + (latest.error && latest.error.message || "进程中断，结果未知，请检查备份及索引日志。");
+      }
+      void refreshSpace("upgrade");
       var preview = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index");
       if (!dialog.open || sequence !== migrationPreviewSequence) return;
       note.textContent = preview.note + " 已索引 " + preview.totalIndexedFiles + " 个文件。未勾选目录会按当前规则保留。";
       var selectedDirectories = new Set();
-      var pageSize = 10; var page = 0;
-      function renderMigrationPage() {
-        var totalPages = Math.max(1, Math.ceil(preview.directories.length / pageSize));
+      var pageSize = Number(sizeSelect.value); var page = 0;
+      var filteredDirectories = [];
+      var totalPages = 1;
+      function updatePageStatus() {
+        var visibleSelected = filteredDirectories.filter(function (directory) { return selectedDirectories.has(directory.path); }).length;
+        pageStatus.textContent = "第 " + (page + 1) + " / " + totalPages + " 页 · 匹配 " + filteredDirectories.length + " / " + preview.directories.length + " 个目录 · 全部已选 " + selectedDirectories.size + " 个（筛选外 " + (selectedDirectories.size - visibleSelected) + " 个）";
+      }
+      var renderMigrationPage = function () {
+        var query = search.value.trim().replaceAll("\\", "/").toLowerCase();
+        filteredDirectories = preview.directories.filter(function (directory) { return directory.path.toLowerCase().includes(query); });
+        totalPages = Math.max(1, Math.ceil(filteredDirectories.length / pageSize));
         page = Math.max(0, Math.min(page, totalPages - 1));
         list.replaceChildren();
-        preview.directories.slice(page * pageSize, (page + 1) * pageSize).forEach(function (directory) {
+        filteredDirectories.slice(page * pageSize, (page + 1) * pageSize).forEach(function (directory) {
           var label = element("label", "migration-directory");
           var checkbox = document.createElement("input"); checkbox.type = "checkbox"; checkbox.value = directory.path; checkbox.checked = selectedDirectories.has(directory.path);
           checkbox.dataset.recommended = directory.recommended ? "true" : "false";
-          checkbox.addEventListener("change", function () { if (checkbox.checked) selectedDirectories.add(directory.path); else selectedDirectories.delete(directory.path); });
+          checkbox.disabled = running || finished;
+          checkbox.addEventListener("change", function () { if (checkbox.checked) selectedDirectories.add(directory.path); else selectedDirectories.delete(directory.path); updatePageStatus(); });
           var details = element("span", "");
           details.append(element("strong", "", directory.path), element("small", "", directory.files + " 个文件 · " + directory.chunks + " 个片段 · 源码 " + migrationBytes(directory.sourceBytes)), element("small", "", directory.reason), element("small", "", "示例：" + directory.samples.join("；")));
           label.append(checkbox, details); list.append(label);
           if (directory.recommended) details.append(element("small", "", "推荐：" + (directory.recommendationReason || "符合项目构建证据") + "，可取消勾选。"));
         });
-        pageStatus.textContent = "第 " + (page + 1) + " / " + totalPages + " 页 · 共 " + preview.directories.length + " 个目录 · 已选 " + selectedDirectories.size + " 个";
-        pagePrev.disabled = page === 0; pageNext.disabled = page >= totalPages - 1;
-      }
-      pagePrev.onclick = function () { page -= 1; renderMigrationPage(); };
-      pageNext.onclick = function () { page += 1; renderMigrationPage(); };
+        if (!filteredDirectories.length) list.append(element("p", "maintenance-note", "没有匹配的文件夹，修改或清空搜索关键词。已有勾选仍保留。"));
+        updatePageStatus(); list.scrollTop = 0;
+        pagePrev.disabled = running || page === 0; pageNext.disabled = running || page >= totalPages - 1;
+      };
+      search.oninput = function () { page = 0; renderMigrationPage(); };
+      sizeSelect.onchange = function () { pageSize = Number(sizeSelect.value); page = 0; renderMigrationPage(); };
+      pagePrev.onclick = function () { if (!running) { page -= 1; renderMigrationPage(); } };
+      pageNext.onclick = function () { if (!running) { page += 1; renderMigrationPage(); } };
+      search.disabled = false; sizeSelect.disabled = false;
       renderMigrationPage();
       var recommendedCount = preview.directories.filter(function (directory) { return directory.recommended; }).length;
       recommend.disabled = recommendedCount === 0;
       if (preview.projectTypes && preview.projectTypes.length) recommendation.textContent += " 检测到项目类型：" + preview.projectTypes.map(function (type) { return type.name; }).join("、") + "。";
       if (!recommendedCount) recommendation.textContent += " 当前预览没有符合推荐规则的目录，可手动选择或保留当前搜索范围。";
       recommend.onclick = function () {
-        var inputs = Array.from(list.querySelectorAll("input"));
         var added = 0;
         preview.directories.filter(function (directory) { return directory.recommended; }).forEach(function (directory) {
           var covered = Array.from(selectedDirectories).some(function (other) { return directory.path === other || directory.path.startsWith(other + "/"); });
@@ -2248,35 +2386,81 @@ export const UI_JS = String.raw`(function () {
         renderMigrationPage();
         recommendation.textContent = "本次新增勾选 " + added + " 个推荐目录，保留已有选择。可取消勾选；确认执行升级后才保存规则。";
       };
-      run.disabled = false;
-    } catch (error) { if (sequence === migrationPreviewSequence) note.textContent = "分析失败：" + error.message; return; }
-    run.onclick = async function () {
-      var selected = Array.from(selectedDirectories);
+      previewReady = true; run.disabled = finished || !!pendingJob || !spaceReady;
+    } catch (error) { if (sequence === migrationPreviewSequence) { note.textContent = "无法读取升级状态或目录：" + error.message + "。请确认本地服务仍在运行；不要重复提交升级。"; checkJob.hidden = false; } return; }
+    function reportJob(message) { resultBox.hidden = false; resultBox.textContent = message; }
+    function handleJobError(error) {
+      pendingJob = error.pendingJob || null;
+      checkJob.hidden = !pendingJob;
+      if (pendingJob || error.interrupted) {
+        reportJob(error.message + (pendingJob ? "\n原任务编号：" + pendingJob.requestId : ""));
+        finished = true;
+      } else { reportJob(failureText(error)); finished = Boolean(error.details && error.details.backupCompleted); }
+    }
+    function renderJobResult(result, kind) {
+      resultBox.hidden = false;
+      if (kind === "compact") {
+        resultBox.textContent = [result.status === "completed" ? "空间回收完成（未重建索引）" : "空间回收尚未完成", "活动数据库：" + migrationBytes(result.before.totalBytes) + " → " + migrationBytes(result.after.totalBytes), "回收：" + migrationBytes(result.reclaimedBytes), ...(result.warnings || [])].join("\n");
+        return;
+      }
+      var lines = [result.status === "completed" ? "升级及空间回收完成" : "升级部分完成，仍需处理以下问题", "活动数据库（含 WAL/SHM）：" + migrationBytes(result.before.totalBytes) + " → " + migrationBytes(result.after.totalBytes), result.byteChange > 0 ? "本次占用增加：" + migrationBytes(result.byteChange) : "全流程减少：" + migrationBytes(result.reclaimedBytes), result.backupStatus === "deleted" ? "本次临时备份已自动删除，释放 " + migrationBytes(result.backupDeletedBytes) : "本次备份保留用于恢复：" + result.backupDestination, "本次备份剩余占用：" + migrationBytes(result.retainedBackupBytes) + "（与活动数据库分开统计）", "索引更新 " + result.index.indexed + "，移除 " + result.index.removed + "，文件错误 " + result.index.errors.length];
+      if (result.ignoreRulesSaved) lines.push("所选目录已保存到 .project-context-ignore；源文件保持不变。");
+      lines = lines.concat(result.warnings || []);
+      result.index.errors.slice(0, 5).forEach(function (error) { lines.push(error.path + "：" + error.message); });
+      resultBox.textContent = lines.join("\n");
+      if (result.canRetryCompaction) resultBox.textContent += "\n索引已更新；释放空间或解除占用后，可仅重试空间回收。";
+      showSpace(result.spaceCheck);
+    }
+    function failureText(error) {
+      var details = error.details || {};
+      showSpace(details.spaceCheck);
+      var phases = { validation: "校验目录", preflight: "空间检查", backup: "备份", ignore_rules: "保存忽略规则", index: "更新索引", compaction: "压缩数据库", checkpoint: "回收 WAL 空间", integrity: "数据库完整性检查", backup_cleanup: "删除本次临时备份", completed: "完成" };
+      return "操作未完成：" + error.message + (details.phase ? "\n失败阶段：" + (phases[details.phase] || details.phase) : "") + (details.backupDestination ? "\n备份路径：" + details.backupDestination + "\n备份完整：" + (details.backupCompleted ? "是" : "未确认，请勿直接用来恢复") : "") + "\n忽略规则已保存：" + (details.ignoreRulesSaved ? "是" : "否") + "\n索引更新完成：" + (details.indexCompleted ? "是" : "否") + (details.canRetryCompaction ? "\n释放空间后，可仅重试空间回收。" : "\n若索引尚未完成，请先处理错误再重新升级；仅压缩不会补建索引。");
+    }
+    async function confirmOperation(message) {
       var confirmDialog = document.getElementById("migration-confirm-dialog");
-      document.getElementById("migration-confirm-message").textContent = selected.length ? "将排除所选 " + selected.length + " 个目录，目录中的内容将不再参与本项目搜索。备份会额外占用磁盘空间。" : "当前保留全部搜索范围。备份会额外占用磁盘空间。";
-      var confirmed = await new Promise(function (resolve) {
+      document.getElementById("migration-confirm-message").textContent = message;
+      return new Promise(function (resolve) {
         var done = function (value) { confirmDialog.close(); resolve(value); };
         document.getElementById("migration-confirm-ok").onclick = function () { done(true); };
         document.getElementById("migration-confirm-cancel").onclick = function () { done(false); };
         confirmDialog.oncancel = function (event) { event.preventDefault(); done(false); };
         confirmDialog.showModal();
       });
+    }
+    function lockControls(value) {
+      running = value; maintenanceBusy = value;
+      close.disabled = value; compact.disabled = value || !!pendingJob || !previewReady; spaceRefresh.disabled = value;
+      checkJob.disabled = value;
+      search.disabled = value; sizeSelect.disabled = value;
+      run.disabled = value || finished || !!pendingJob || !previewReady || !spaceReady;
+      recommend.disabled = value || finished || recommendedCount === 0;
+      renderMigrationPage();
+    }
+    compact.onclick = async function () {
+      if (running || !await confirmOperation("仅压缩当前数据库并回收 WAL 空间，不会创建新备份、更新索引或保存本次目录勾选，也不会删除已有历史备份。若上次索引失败，此操作不会完成索引升级。确认继续？")) return;
+      lockControls(true); resultBox.hidden = false; resultBox.textContent = "正在检查空间并压缩数据库…";
+      try {
+        renderJobResult(await runMigrationJob(projectId, "compact", [], reportJob), "compact");
+        if (els["portrait-project"].value === projectId) await loadPortrait(true);
+      } catch (error) { handleJobError(error); }
+      finally { lockControls(false); void refreshSpace("upgrade"); }
+    };
+    compact.disabled = !!pendingJob;
+    run.onclick = async function () {
+      if (running || finished || !spaceReady) return;
+      var selected = Array.from(selectedDirectories);
+      var confirmed = await confirmOperation((selected.length ? "将排除全部已选 " + selected.length + " 个目录（包括其他分页和搜索结果外的选择），目录中的内容将不再参与本项目搜索。" : "当前保留全部搜索范围。") + "升级期间备份会临时占用空间；全部成功且完整性检查通过后删除本次备份，失败时保留。历史备份不自动删除。");
       if (!confirmed) return;
-      running = true; maintenanceBusy = true; run.disabled = true; close.disabled = true;
-      recommend.disabled = true;
-      list.querySelectorAll("input").forEach(function (input) { input.disabled = true; });
+      lockControls(true);
       resultBox.hidden = false; resultBox.textContent = "正在备份、迁移索引并回收空间，大型项目可能需要较长时间…";
       try {
-        var result = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/optimize-index", { method: "POST", body: { confirmProjectId: projectId, excludeDirectories: selected } });
-        var lines = [result.status === "completed" ? "升级及空间回收完成" : "升级部分完成，仍需处理以下问题", "活动数据库（含 WAL/SHM）：" + migrationBytes(result.before.totalBytes) + " → " + migrationBytes(result.after.totalBytes), result.byteChange > 0 ? "本次占用增加：" + migrationBytes(result.byteChange) : "全流程减少：" + migrationBytes(result.reclaimedBytes), "保留备份：" + result.backupDestination, "备份额外占用：" + migrationBytes(result.retainedBackupBytes) + "（未计入上述减少量）", "索引更新 " + result.index.indexed + "，移除 " + result.index.removed + "，文件错误 " + result.index.errors.length];
-        if (result.ignoreRulesSaved) lines.push("所选目录已保存到 .project-context-ignore；源文件保持不变。");
-        lines = lines.concat(result.warnings || []);
-        result.index.errors.slice(0, 5).forEach(function (error) { lines.push(error.path + "：" + error.message); });
-        resultBox.textContent = lines.join("\n");
+        renderJobResult(await runMigrationJob(projectId, "upgrade", selected, reportJob), "upgrade");
+        finished = true;
         if (els["portrait-project"].value === projectId) await loadPortrait(true);
       } catch (error) {
-        resultBox.textContent = "升级未完成：" + error.message + (error.details && error.details.backupDestination ? "\n备份保留于：" + error.details.backupDestination + "\n忽略规则已保存：" + (error.details.ignoreRulesSaved ? "是" : "否") : "");
-      } finally { running = false; maintenanceBusy = false; close.disabled = false; }
+        handleJobError(error);
+      } finally { lockControls(false); void refreshSpace("upgrade"); }
     };
   }
 
@@ -2604,12 +2788,13 @@ export const UI_JS = String.raw`(function () {
   async function fetchJson(path, options) {
     options = options || {};
     var response = await fetch(path, {
+      signal: options.signal,
       method: options.method || "GET", credentials: "same-origin",
       headers: { "Content-Type": "application/json", "X-Project-Context-UI": "1" },
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
     var data = await response.json().catch(function () { return { message: "服务返回了无效响应" }; });
-    if (!response.ok) { var error = new Error(data.message || "请求失败"); error.details = data.details; throw error; }
+    if (!response.ok) { var error = new Error(data.message || "请求失败"); error.details = data.details; error.httpStatus = response.status; throw error; }
     return data;
   }
 
