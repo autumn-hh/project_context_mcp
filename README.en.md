@@ -4,7 +4,30 @@
 
 Project Context MCP is a local-first, cross-session project intelligence and memory server for coding agents. It incrementally indexes project text and code, stores sourced decisions and constraints, persists task checkpoints, and assembles task-focused context through MCP.
 
-## Personal Storage Capabilities (v0.8.0)
+The local web workspace includes project portraits, search-ranking settings, and index storage management. Select indexed directories, check available disk space, run an upgrade in a background worker, and recover its status after a connection loss. Successful upgrades remove their temporary backup; source files remain intact.
+
+## Index Upgrades and Space Reclamation
+
+Run `node dist/cli.js ui --no-open`, open the printed **`launchUrl` (including its session token)**, and choose **Project portrait → Upgrade index and reclaim space**.
+
+1. Search all indexed folder paths and select 10/20/50/100 entries per page. Selections survive filtering and pagination, including hidden selections at confirmation. Indexed source bytes are not an estimate of database savings.
+2. Optionally select recommended directories. Recommendations use indexed path, language, framework, and build-file evidence and require review. Detecting a project language does not imply Tree-sitter symbol support for that language. Business and reference sources are not automatically excluded.
+3. Preflight checks the database, backup, and SQLite temporary volumes, combining requirements on shared volumes. Insufficient or unverifiable free space blocks the upgrade. These estimates do not reserve space against other processes.
+4. A background worker backs up the database, writes selected exclusions to `.project-context-ignore`, updates tiered indexes, and compacts SQLite. Low-relevance content retains text search according to the indexing policy; excluded sources are removed from the index without deleting source files.
+5. Only a fully successful upgrade followed by a successful `quick_check` removes the backup created by that upgrade. Failures retain it and report the phase and path. Historical and manually created backups are not deleted automatically.
+
+| Situation | What to do |
+| --- | --- |
+| `database or disk is full` | Review preflight paths, free space, and shortfalls; free space and check again. Do not manually remove the database or WAL files. |
+| `Failed to fetch` or connection loss | The UI queries the original request instead of submitting another upgrade. Reopen the dialog or retry the status query. A restarted service requires its new `launchUrl`. |
+| Indexing succeeded but compaction did not | Use **Retry space reclamation only**. This creates no new backup, performs no indexing, saves no folder selections, and deletes no logs or historical backups. |
+| Service process exited | Treat the result as interrupted/unknown and inspect terminal output, indexes, and backups. Disconnection is not a rollback. Operations started in older versions cannot be reconstructed from new job records. |
+
+Job records live in `<project>/.project-context/migration-jobs`. Workers survive browser disconnections but depend on the local service process. Other MCP processes and existing file watchers still rely on SQLite concurrency controls. Storage savings depend on project content; no fixed reduction is guaranteed.
+
+After updating a source checkout, run `git pull --ff-only`, rebuild with `npm run build`, and restart the Web/MCP services. See [Patch Notes](PATCH_NOTES.md) for version history.
+
+## Personal Storage and Project Capabilities
 
 - User-selected persistent storage; no silent MCP-side initialization
 - Project registry shared across Codex, Claude Code, Cursor, and other MCP clients
