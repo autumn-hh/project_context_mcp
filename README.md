@@ -8,7 +8,7 @@ Project Context MCP 是一个面向编码智能体的本地优先、跨会话项
 
 ## 索引升级与空间回收
 
-启动 `node dist/cli.js ui --no-open`，打开输出中的 **`launchUrl`（包含本次启动的 token）**，进入 **项目画像 → 升级索引并回收空间**。
+启动 `node dist/cli.js ui --no-open`，打开输出中的 **`launchUrl`（包含本次启动的 token）**，进入 **项目画像 → 索引与存储 → 升级索引并回收空间**。
 
 1. 搜索已索引文件夹，选择每页 10/20/50/100 项。切换搜索和分页保留勾选，确认时包含筛选外的选择；源码字节数不是预计可回收的数据库大小。
 2. 可点击“勾选推荐目录”。推荐依据已索引路径中的语言、框架和构建文件线索，供用户核对；多语言项目识别不代表所有语言都支持 Tree-sitter 符号解析。默认不自动排除学习或业务目录。
@@ -26,6 +26,26 @@ Project Context MCP 是一个面向编码智能体的本地优先、跨会话项
 任务状态保存在 `<project>/.project-context/migration-jobs`。后台任务不依赖浏览器长连接，但仍依赖本地服务进程。点击“暂停访问并升级”后，新版客户端在任务运行期间暂缓打开项目数据库，文件监听保留变化并延后重试；不会强制断开已有连接，也尚未等待所有连接排空。旧版 MCP 和外部数据库工具仍可能占用数据库，更新后应重新构建并重启所有相关 Web/MCP 进程。若仍报 `database is locked`，让其他读写任务结束后重新升级；索引失败时仅压缩不能完成升级。数据库最终节省多少取决于重复内容和索引构成，不保证固定缩减比例。
 
 源码安装用户更新后需重新构建并重启服务：`git pull --ff-only` → `npm run build` → 重启 Web/MCP 服务。完整变更见 [补丁说明](PATCH_NOTES.md)。
+
+## 完整任务浏览与更新历史
+
+Web 的“任务流水线”支持全部项目或单项目查询、目标/当前摘要搜索、进行中/已完成/已取消筛选，以及每页 10/20/50 条。可按更新时间、创建时间或结束时间排序；归档项目默认排除。部分项目不可读取时，其余结果仍可查看，并明确提示总数仅覆盖已读取项目。项目画像继续保留近期摘要，可从“查看全部任务”进入完整列表。
+
+工作台采用统一的浅色卡片与分段导航，分页集中在任务队列底部；详情通过紧凑步骤展示检查点阶段，流程示意默认折叠，不代表后台自动执行或验证通过。设计参考和响应式验收范围见 [界面说明](docs/ui-design.md)。
+
+任务详情可切换“当前状态”和“更新历史”。创建、检查点、完成和取消会原子保存对应快照；历史保留修改文件、验证结果、阻塞和风险，完成任务不代表所有环境均已验证。阅读历史时暂停自动刷新，避免展开内容被打断。
+
+首次使用新版访问项目数据库会执行 Schema v8 增量迁移：保留任务和现有索引，为旧任务追加一条明确标记的“迁移时快照”，不伪造此前历史，也无需重建代码索引。升级后请重启所有相关 MCP/Web 进程；旧版进程不会记录新历史。历史属于持久工作记录，不由日志清理自动删除；备份、恢复及 JSONL 导出包含历史和检查点请求回执。
+
+新增 MCP `task_query`（项目可选、分页与筛选）和 `task_history`；原有 `task_list` 保持兼容。`task_checkpoint` 可传 `requestId`，重试时复用相同 ID：不会把较新的进度回退到旧请求，同一 ID 对应不同内容会报冲突。不提供 ID 时，仅连续相同内容去重，不能识别跨更新的旧请求重放。
+
+```powershell
+node dist/cli.js task query --status in_progress --limit 20
+node dist/cli.js task query --project <project-id> --query "升级" --include-archived
+node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
+```
+
+这是个人工作记忆扩展的第一批。任务仍归属项目；跨项目查询按项目读取，不提供全库同一时刻的快照，数据更新时偏移分页也可能移动。深页读取和大量项目的延迟仍需评估。独立工作总览、任务恢复专用入口、规则来源解释和个人记忆画像属于后续阶段。
 
 ## 个人存储与项目能力
 
@@ -404,7 +424,7 @@ project_context
 - `memory_remember`、`memory_list`、`memory_update_status`
 - `memory_candidates`、`memory_candidate_accept`、`memory_candidate_reject`
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`
-- `task_start`、`task_checkpoint`、`task_list`、`task_complete`、`task_cancel`
+- `task_start`、`task_checkpoint`、`task_list`、`task_query`、`task_history`、`task_complete`、`task_cancel`
 
 `project_index` 会返回符号与关系总数、过期记忆 ID、新生成的候选以及 Git 元数据。索引和 watcher 会跳过常见跨语言编译产物，包括 C/C++ 的 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、预编译头、Java/Python 字节码以及覆盖率和性能分析输出。存在 Git 时优先使用 Git 证据；没有 Git 的项目仍可以根据新增或修改的知识文档生成候选。每个已完成任务最多生成一条候选，依次优先使用任务摘要、第一条风险和第一条明确具有长期价值的已完成事项，避免把普通执行记录拆成多条待审记忆。系统不会返回或保存完整 diff。候选记忆在调用 `memory_candidate_accept` 前始终只处于待审核状态。
 

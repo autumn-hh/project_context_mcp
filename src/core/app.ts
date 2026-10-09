@@ -43,9 +43,11 @@ import {
   listTasks,
   getTask,
   startTask,
+  listTaskHistory,
   type TaskCheckpoint,
   type TaskRecord,
 } from "../tasks/task-service.js";
+import { queryWorkspaceTasks, type TaskQueryInput } from "../tasks/task-query.js";
 import {
   buildProjectContext,
   DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -156,6 +158,18 @@ export class ProjectContextApp {
       throw new ProjectContextError("PROJECT_WATCH_ACTIVE", "Stop the project watcher before permanent deletion.");
     }
     return this.projects.delete(projectId, options);
+  }
+
+  unregisterMissingProject(projectId: string, confirmProjectId: string) {
+    this.assertProjectMigrationIdle(projectId);
+    const watch = projectWatches.list().find((item) => item.projectId === projectId);
+    if (watch?.indexing) {
+      throw new ProjectContextError("INDEX_ALREADY_RUNNING", "请等待当前索引完成后再移除项目登记。");
+    }
+    // Validate first so failed confirmation never interrupts a healthy watcher.
+    this.projects.assertMissingRegistration(projectId, confirmProjectId);
+    if (watch) projectWatches.stop(projectId);
+    return this.projects.unregisterMissing(projectId, confirmProjectId);
   }
 
   async restoreProject(input: {
@@ -399,24 +413,24 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => rejectCandidate(db, candidateId));
   }
 
-  startTask(projectId: string, goal: string): TaskRecord {
-    return this.withDb(projectId, (db) => startTask(db, goal));
+  startTask(projectId: string, goal: string, options: { source?: string } = {}): TaskRecord {
+    return this.withDb(projectId, (db) => startTask(db, goal, options));
   }
 
-  checkpoint(projectId: string, taskId: string, checkpoint: TaskCheckpoint): TaskRecord {
-    return this.withDb(projectId, (db) => checkpointTask(db, taskId, checkpoint));
+  checkpoint(projectId: string, taskId: string, checkpoint: TaskCheckpoint, options: { requestId?: string; source?: string } = {}): TaskRecord {
+    return this.withDb(projectId, (db) => checkpointTask(db, taskId, checkpoint, options));
   }
 
-  completeTask(projectId: string, taskId: string, checkpoint?: TaskCheckpoint): TaskRecord {
+  completeTask(projectId: string, taskId: string, checkpoint?: TaskCheckpoint, options: { source?: string } = {}): TaskRecord {
     return this.withDb(projectId, (db) => {
-      const task = completeTask(db, taskId, checkpoint);
+      const task = completeTask(db, taskId, checkpoint, options);
       generateTaskCandidates(db, task);
       return task;
     });
   }
 
-  cancelTask(projectId: string, taskId: string): TaskRecord {
-    return this.withDb(projectId, (db) => cancelTask(db, taskId));
+  cancelTask(projectId: string, taskId: string, options: { source?: string } = {}): TaskRecord {
+    return this.withDb(projectId, (db) => cancelTask(db, taskId, options));
   }
 
   tasks(projectId: string, status = "in_progress", limit = 20): TaskRecord[] {
@@ -425,6 +439,14 @@ export class ProjectContextApp {
 
   task(projectId: string, taskId: string): TaskRecord {
     return this.withDb(projectId, (db) => getTask(db, taskId));
+  }
+
+  queryTasks(input: TaskQueryInput = {}) {
+    return queryWorkspaceTasks(this.projects.list(true), (projectId) => this.projects.projectDatabase(projectId), input);
+  }
+
+  taskHistory(projectId: string, taskId: string, options: { limit?: number; offset?: number } = {}) {
+    return this.withDb(projectId, (db) => listTaskHistory(db, taskId, options));
   }
 
   source(projectId: string, sourceId: string): Record<string, unknown> {

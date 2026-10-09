@@ -101,7 +101,7 @@ export function databaseUsage(db: SqliteDatabase) {
   const walBytes = fileBytes(`${db.name}-wal`);
   const shmBytes = fileBytes(`${db.name}-shm`);
   const counts = Object.fromEntries([
-    "sources", "chunks", "symbols", "relations", "memories", "tasks", "memory_candidates", "index_runs",
+    "sources", "chunks", "symbols", "relations", "memories", "tasks", "task_events", "task_checkpoint_requests", "memory_candidates", "index_runs",
   ].map((table) => [table, db.prepare(`SELECT COUNT(*) FROM ${table}`).pluck().get() as number]));
   return {
     databasePath: db.name, databaseBytes, walBytes, shmBytes,

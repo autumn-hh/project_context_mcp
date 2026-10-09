@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { ProjectContextApp } from "../src/core/app.js";
+import { PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -369,7 +370,7 @@ describe("Project Context core", () => {
       const manifest = JSON.parse(await readFile(join(exportPath, "manifest.json"), "utf8")) as {
         schemaVersion: number;
       };
-      expect(manifest.schemaVersion).toBe(7);
+      expect(manifest.schemaVersion).toBe(PROJECT_SCHEMA_VERSION);
       const doctor = await app.doctor(project.id);
       expect(doctor.integrity).toBe("ok");
       expect(doctor.counts.symbols).toBeGreaterThan(0);

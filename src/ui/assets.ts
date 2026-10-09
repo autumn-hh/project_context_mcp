@@ -12,13 +12,13 @@ export const UI_HTML = String.raw`<!doctype html>
   <header class="app-header">
     <div class="brand">
       <span class="brand-mark">PC</span>
-      <div><strong>Project Context</strong><span>任务运行工作台</span></div>
+      <div><strong>Project Context</strong><span>项目与工作记忆</span></div>
     </div>
     <nav class="view-tabs" aria-label="主要视图">
-      <button class="tab active" data-view="task">任务流水线</button>
-      <button class="tab" data-view="portrait">项目画像</button>
-      <button class="tab" data-view="rules">规则</button>
-      <button class="tab" data-view="context">上下文</button>
+      <button class="tab active" data-view="task" aria-pressed="true"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M7 5h10M7 10h10M7 15h10M2 5h1M2 10h1M2 15h1"/></svg>任务流水线</button>
+      <button class="tab" data-view="portrait" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M8 8v9"/></svg>项目画像</button>
+      <button class="tab" data-view="rules" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h4m4 0h6M3 14h8m4 0h2"/><circle cx="9" cy="6" r="2"/><circle cx="13" cy="14" r="2"/></svg>规则</button>
+      <button class="tab" data-view="context" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 8 4-8 4-8-4 8-4ZM2 10l8 4 8-4M2 14l8 4 8-4"/></svg>上下文</button>
     </nav>
     <div class="local-state"><span class="status-dot"></span><div><strong>本地运行</strong><span>连接正常</span></div></div>
   </header>
@@ -26,13 +26,10 @@ export const UI_HTML = String.raw`<!doctype html>
   <main>
     <section id="portrait-view" class="portrait-view" hidden>
       <header class="portrait-toolbar">
-        <div><span class="panel-label">PROJECT PORTRAIT</span><h1>项目画像</h1></div>
+        <div><h1>项目画像</h1></div>
         <div class="portrait-actions">
           <div class="field"><label for="portrait-project">项目</label><select id="portrait-project"></select></div>
           <button id="edit-project" class="secondary-button" type="button">编辑项目</button>
-          <button id="index-project" class="secondary-button" type="button">立即索引</button>
-          <button id="optimize-index" class="primary-button" type="button">升级索引并回收空间</button>
-          <button id="toggle-watch" class="secondary-button" type="button">启动监听</button>
           <button id="refresh-portrait" class="secondary-button" type="button">刷新画像</button>
         </div>
       </header>
@@ -47,10 +44,29 @@ export const UI_HTML = String.raw`<!doctype html>
           <div id="portrait-metrics" class="portrait-metrics"></div>
         </section>
         <nav class="portrait-mode-tabs" aria-label="项目画像模式">
-          <button class="portrait-mode active" data-portrait-mode="overview" type="button">概览</button>
-          <button class="portrait-mode" data-portrait-mode="graph" type="button">关系图</button>
+          <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
+          <button class="portrait-mode" data-portrait-mode="graph" aria-pressed="false" type="button">代码关系</button>
+          <button class="portrait-mode" data-portrait-mode="maintenance" aria-pressed="false" type="button">索引与存储</button>
         </nav>
         <div id="portrait-overview" class="portrait-grid">
+          <div class="portrait-column">
+          <section class="portrait-section"><header><div><span class="panel-label">ACTIVE WORK</span><h2>进行中的任务</h2></div><button id="portrait-all-tasks" class="secondary-button" type="button">查看全部任务</button></header><div id="portrait-tasks" class="portrait-list"></div></section>
+          <section class="portrait-section portrait-span-2"><header><div><span class="panel-label">CODEBASE</span><h2>代码构成</h2></div></header><div id="portrait-file-types" class="file-types"></div></section>
+          <section class="portrait-section"><header><div><span class="panel-label">KNOWLEDGE</span><h2>知识状态</h2></div></header><div id="portrait-knowledge" class="status-groups"></div></section>
+          <section class="portrait-section"><header><div><span class="panel-label">INDEXED SOURCES</span><h2>主要来源</h2></div></header><div id="portrait-sources" class="portrait-list source-list"></div></section>
+          </div>
+          <div class="portrait-column">
+          <section class="portrait-section"><header><div><span class="panel-label">RECENT MEMORY</span><h2>近期记忆</h2></div></header><div id="portrait-memories" class="portrait-list"></div></section>
+          <section class="portrait-section"><header><div><span class="panel-label">VERSION CONTROL</span><h2>版本控制状态</h2></div></header><dl id="portrait-git" class="portrait-facts"></dl></section>
+          <section class="portrait-section"><header><div><span class="panel-label">STALE MEMORY</span><h2>待处理记忆</h2></div></header><div id="portrait-stale-memories" class="portrait-list"></div></section>
+          <section class="portrait-section"><header><div><span class="panel-label">REVIEW QUEUE</span><h2>待审核候选</h2></div></header><div id="portrait-candidates" class="portrait-list"></div></section>
+          </div>
+        </div>
+        <div id="portrait-maintenance" class="portrait-grid" hidden>
+          <div class="portrait-maintenance-actions"><div><h2>索引与存储</h2><p>管理搜索范围、索引升级和数据库空间</p></div><div class="maintenance-toolbar-actions">          <button id="index-project" class="secondary-button" type="button">立即索引</button>
+          <button id="optimize-index" class="primary-button" type="button">升级索引并回收空间</button>
+          <button id="toggle-watch" class="secondary-button" type="button">启动监听</button>
+</div></div>
           <section class="portrait-section portrait-span-2 maintenance-section">
             <header><div><span class="panel-label">DATABASE</span><h2>数据库维护</h2></div><button id="refresh-storage" class="secondary-button" type="button">刷新占用</button></header>
             <div id="storage-usage" class="storage-metrics"></div>
@@ -75,7 +91,6 @@ export const UI_HTML = String.raw`<!doctype html>
             <details class="storage-inspect"><summary>最近索引日志 <span id="recent-index-count"></span></summary><p class="maintenance-note">直接展开记录即可查看已有内容，无需重新索引。索引完成后保留当前阅读位置，可按需刷新列表。</p><div class="maintenance-controls log-pagination"><div class="field"><label for="index-log-limit">每页条数</label><select id="index-log-limit"><option value="10">10 条</option><option value="20" selected>20 条</option><option value="50">50 条</option><option value="100">100 条</option></select></div><div class="field"><label for="index-log-status">运行状态</label><select id="index-log-status"><option value="all">全部状态</option><option value="completed">已完成</option><option value="failed">失败</option><option value="running">运行中</option></select></div><button id="index-log-prev" class="secondary-button" type="button" disabled>上一页</button><button id="index-log-next" class="secondary-button" type="button" disabled>下一页</button><button id="refresh-index-logs" class="secondary-button" type="button">刷新日志</button></div><p id="index-log-page" class="maintenance-note" role="status"></p><div id="recent-index-list"></div></details>
             <details class="storage-inspect cleanup-history"><summary>最近清理记录 <span id="cleanup-history-count"></span></summary><p class="maintenance-note">保留最近 20 次手动或自动清理记录。旧版本未记录的清理明细无法恢复。</p><div class="maintenance-controls"><div class="field"><label for="cleanup-history-limit">显示记录数</label><select id="cleanup-history-limit"><option value="5" selected>最近 5 次</option><option value="10">最近 10 次</option><option value="20">最近 20 次</option></select></div></div><div id="cleanup-history-list"></div></details>
           </section>
-          <section class="portrait-section portrait-span-2"><header><div><span class="panel-label">CODEBASE</span><h2>代码构成</h2></div></header><div id="portrait-file-types" class="file-types"></div></section>
           <section class="portrait-section portrait-span-2 ignore-section">
             <header><div><span class="panel-label">INDEX FILTER</span><h2>索引过滤</h2></div><span id="ignore-status" class="subtle-status"></span></header>
             <form id="ignore-form" class="ignore-form">
@@ -102,13 +117,6 @@ export const UI_HTML = String.raw`<!doctype html>
               <div class="ignore-actions"><button id="reload-ignore" class="secondary-button" type="button">重新载入</button><button id="save-ignore" class="primary-button" type="submit">保存并索引</button></div>
             </form>
           </section>
-          <section class="portrait-section"><header><div><span class="panel-label">VERSION CONTROL</span><h2>版本控制状态</h2></div></header><dl id="portrait-git" class="portrait-facts"></dl></section>
-          <section class="portrait-section"><header><div><span class="panel-label">KNOWLEDGE</span><h2>知识状态</h2></div></header><div id="portrait-knowledge" class="status-groups"></div></section>
-          <section class="portrait-section"><header><div><span class="panel-label">ACTIVE WORK</span><h2>进行中的任务</h2></div></header><div id="portrait-tasks" class="portrait-list"></div></section>
-          <section class="portrait-section"><header><div><span class="panel-label">RECENT MEMORY</span><h2>近期记忆</h2></div></header><div id="portrait-memories" class="portrait-list"></div></section>
-          <section class="portrait-section"><header><div><span class="panel-label">STALE MEMORY</span><h2>待处理记忆</h2></div></header><div id="portrait-stale-memories" class="portrait-list"></div></section>
-          <section class="portrait-section"><header><div><span class="panel-label">INDEXED SOURCES</span><h2>主要来源</h2></div></header><div id="portrait-sources" class="portrait-list source-list"></div></section>
-          <section class="portrait-section"><header><div><span class="panel-label">REVIEW QUEUE</span><h2>待审核候选</h2></div></header><div id="portrait-candidates" class="portrait-list"></div></section>
         </div>
         <section id="portrait-graph" class="graph-panel" hidden>
           <header class="graph-toolbar">
@@ -160,7 +168,7 @@ export const UI_HTML = String.raw`<!doctype html>
 
     <section id="task-view" class="task-view">
       <header class="task-toolbar">
-        <div><span class="panel-label">LIVE OPERATIONS</span><h1>任务流水线</h1></div>
+        <div><h1>任务流水线</h1></div>
         <div class="task-toolbar-actions">
           <div class="task-project-picker">
             <label for="task-project-search">切换项目</label>
@@ -172,12 +180,24 @@ export const UI_HTML = String.raw`<!doctype html>
           <button id="refresh-tasks" class="secondary-button" type="button">刷新</button>
         </div>
       </header>
+      <div id="task-warnings" class="task-warnings" role="status" hidden></div>
       <div id="task-loading" class="empty-state"><strong>正在读取任务动态</strong></div>
       <div id="task-empty" class="empty-state" hidden><strong>没有可展示的项目</strong><span>登记项目后，任务动态会显示在这里。</span></div>
       <div id="task-workspace" class="task-workspace" hidden>
         <aside class="task-queue" aria-labelledby="task-queue-title">
           <header><div><span class="panel-label">TASK QUEUE</span><h2 id="task-queue-title">任务队列</h2></div><span id="task-count" class="task-count"></span></header>
+      <div class="task-filters" aria-label="任务筛选">
+        <label class="task-query-field">搜索任务<input id="task-query" type="search" maxlength="200" placeholder="任务目标或当前摘要"></label>
+        <details class="task-filter-options"><summary>筛选与排序</summary><div class="task-filter-fields"><label>状态<select id="task-status"><option value="all">全部状态</option><option value="in_progress">进行中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select></label>
+        <label>排序<select id="task-sort"><option value="updated">最近更新</option><option value="created">最近创建</option><option value="completed">最近完成</option></select></label>
+        <label class="task-archive-filter"><input id="task-archived" type="checkbox">包含归档项目</label>
+        </div></details>
+      </div>
           <div id="task-list" class="task-list"></div>
+          <nav class="task-list-pagination" aria-label="任务列表分页">
+            <div class="task-page-summary"><span id="task-page" aria-live="polite"></span><label for="task-limit">每页<select id="task-limit"><option value="10">10 条</option><option value="20" selected>20 条</option><option value="50">50 条</option></select></label></div>
+            <div class="task-page-controls"><button id="task-prev" class="secondary-button" type="button" disabled>上一页</button><span id="task-page-number" aria-live="polite"></span><button id="task-next" class="secondary-button" type="button" disabled>下一页</button></div>
+          </nav>
         </aside>
         <div id="task-detail" class="task-detail" aria-live="polite"></div>
       </div>
@@ -265,6 +285,7 @@ export const UI_HTML = String.raw`<!doctype html>
   <dialog id="confirm-dialog">
     <form method="dialog"><h2>停用这条规则？</h2><p>规则会转为 deleted 状态并保留审计记录，不会物理删除。</p><div class="dialog-actions"><button value="cancel" class="secondary-button">取消</button><button value="confirm" class="danger-button">停用</button></div></form>
   </dialog>
+  <dialog id="unregister-dialog" aria-labelledby="unregister-title"><form method="dialog"><h2 id="unregister-title">移除失效项目登记？</h2><p id="unregister-description"></p><p>仅从项目列表移除登记，不删除源码、备份或个人规则。服务器会再次检查数据库是否确实缺失；数据库仍存在时拒绝移除。</p><div class="dialog-actions"><button class="secondary-button" value="cancel">保留登记</button><button class="danger-button" value="confirm">移除登记</button></div></form></dialog>
   <dialog id="project-dialog">
     <form id="project-form">
       <h2>编辑项目</h2>
@@ -387,6 +408,45 @@ h1, h2, p { margin: 0; }
 .context-entry p { color: #56615c; font-size: 12px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
 .context-entry small { display: block; margin-top: 5px; color: var(--muted); }
 .context-empty { margin-top: 80px; }
+
+.task-filters { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: end; gap: 10px; padding: 12px 24px; border-bottom: 1px solid var(--line); }
+.task-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; min-width: 0; }
+.task-filters .task-query-field { flex: 1 1 300px; max-width: 640px; }
+.task-filters input, .task-filters select { min-width: 0; width: 100%; }
+.task-filters .task-archive-filter { display: flex; align-items: center; min-height: 38px; }
+.task-archive-filter input { width: auto; }
+.task-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 0; flex: 0 0 auto; }
+.task-pagination > span { font-size: 11px; overflow-wrap: anywhere; }
+.task-pagination button:disabled, .task-list-pagination button:disabled { opacity: .45; cursor: default; }
+.task-list-pagination { flex: 0 0 auto; padding: 10px 12px; border-top: 1px solid var(--line); background: var(--surface); }
+.task-page-summary, .task-page-controls { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.task-page-summary { flex-wrap: wrap; margin-bottom: 8px; color: var(--muted); font-size: 11px; }
+.task-page-summary > span { min-width: 0; overflow-wrap: anywhere; flex: 1 1 100px; }
+.task-page-summary label { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.task-page-summary select { width: auto; min-width: 66px; height: 30px; padding: 3px 6px; font-size: 11px; }
+.task-page-controls { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; }
+.task-page-controls > span { text-align: center; font-size: 11px; overflow-wrap: anywhere; }
+.task-page-controls button { min-width: 0; padding: 7px 9px; font-size: 11px; }
+.task-warnings { padding: 10px 24px; max-height: 120px; overflow: auto; background: #fff4df; color: #795518; font-size: 11px; overflow-wrap: anywhere; flex: 0 0 auto; }
+.task-detail-tabs { display: flex; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.task-detail-tabs button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-strong); }
+.task-focus-title, .task-focus-meta > span { min-width: 0; overflow-wrap: anywhere; }
+.task-history { padding: 16px; overflow-wrap: anywhere; }
+.task-history > p { margin: 10px 0; color: var(--muted); font-size: 12px; }
+.task-history-record { border: 1px solid var(--line); border-radius: 5px; margin-top: 12px; min-width: 0; }
+.task-history-record > summary { cursor: pointer; padding: 14px; line-height: 1.6; font-size: 12px; }
+.task-history-record > p { padding: 0 14px 12px; font-size: 12px; }
+.task-history-note, .task-cancelled-note { color: #795518; background: #fff4df; padding: 12px; margin-top: 12px; line-height: 1.6; }
+.task-live-state.paused span { animation: none; background: #9da7a2; }
+.task-list-item.cancelled .task-list-indicator { background: #b6781f; }
+@media (max-width: 760px) {
+  .task-filters { padding: 12px 16px; gap: 8px; }
+  .task-filters .task-query-field { flex-basis: 100%; max-width: none; }
+  .task-filters > label:not(.task-query-field):not(.task-archive-filter) { flex: 1 1 80px; }
+  .task-workspace .task-queue { max-height: none; }
+  .task-history { padding: 12px; }
+}
+
 .task-view { height: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--surface); }
 .task-toolbar { position: relative; z-index: 10; flex: 0 0 auto; min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 24px; border-bottom: 1px solid var(--line); background: #f9fbfa; box-shadow: 0 2px 10px rgba(19,36,29,.04); }
 .task-toolbar .panel-label { margin-bottom: 4px; color: #47715e; font-size: 9px; }
@@ -407,11 +467,11 @@ h1, h2, p { margin: 0; }
 .task-live-state { min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
 .task-live-state span { width: 7px; height: 7px; border-radius: 50%; background: #36a474; box-shadow: 0 0 0 0 rgba(54,164,116,.28); animation: live-pulse 2.2s ease-out infinite; }
 .task-workspace { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(260px, 320px) minmax(0, 1fr); }
-.task-queue { min-height: 0; overflow-y: auto; border-right: 1px solid var(--line); background: var(--surface-muted); }
-.task-queue > header { position: sticky; top: 0; z-index: 1; min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: rgba(248,250,249,.96); }
+.task-queue { min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-right: 1px solid var(--line); background: var(--surface-muted); }
+.task-queue > header { flex: 0 0 auto; min-height: 72px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--line); background: rgba(248,250,249,.96); }
 .task-queue h2 { font-size: 15px; }
 .task-count { color: var(--muted); font-size: 11px; }
-.task-list { padding: 8px; }
+.task-list { padding: 8px; min-height: 0; flex: 1 1 auto; overflow-y: auto; }
 .task-list-group { margin: 12px 8px 6px; color: var(--muted); font-size: 10px; font-weight: 800; text-transform: uppercase; }
 .task-list-item { width: 100%; display: grid; grid-template-columns: 9px minmax(0, 1fr); gap: 10px; padding: 12px 10px; border: 1px solid transparent; border-radius: 5px; background: transparent; color: var(--text); text-align: left; }
 .task-list-item:hover { background: #fff; border-color: var(--line); }
@@ -788,9 +848,9 @@ dialog p { color: var(--muted); line-height: 1.5; }
   .task-project-picker { width: auto; min-width: 0; }
   .task-project-results { max-height: min(238px, 38vh); }
   .task-workspace { height: auto; min-height: calc(100% - 138px); display: block; }
-  .task-queue { max-height: 150px; border-right: 0; border-bottom: 1px solid var(--line); }
+  .task-queue { border-right: 0; border-bottom: 1px solid var(--line); }
   .task-queue > header { min-height: 54px; padding-block: 9px; }
-  .task-list { display: flex; gap: 7px; overflow-x: auto; padding: 8px 12px 12px; }
+  .task-list { display: flex; flex: 0 0 auto; max-height: 200px; gap: 7px; overflow: auto; padding: 8px 12px 12px; }
   .task-list-group { display: none; }
   .task-list-item { flex: 0 0 min(78vw, 290px); background: #fff; border-color: var(--line); }
   .task-detail { overflow: visible; }
@@ -861,6 +921,7 @@ export const UI_JS = String.raw`(function () {
     graphCy: null, graphProjectId: null, graphRoot: null, graphScope: "files",
     graphSelectedId: null, graphSearchResults: [], graphSearchSequence: 0, graphSearchTimer: null,
     portraitLoading: false, ignoreProjectId: null, taskProjectId: null, taskPortrait: null,
+    taskMutating: false, taskOffset: 0, taskSequence: 0, taskHistorySequence: 0, taskHistoryOffset: 0, taskDetailMode: "current", taskSearchTimer: null, taskQueryKey: null,
     taskLoading: false, selectedTaskId: null, taskSignature: null, taskProjectActiveIndex: -1
   };
   var scopes = [
@@ -903,12 +964,13 @@ export const UI_JS = String.raw`(function () {
       "storage-path", "storage-usage", "storage-counts", "refresh-storage", "cleanup-retention", "preview-cleanup", "execute-cleanup", "cleanup-result", "maintenance-auto", "maintenance-retention", "maintenance-interval", "save-maintenance", "maintenance-result", "ranking-settings-form", "ranking-business-chunk", "ranking-business-symbol", "ranking-memory", "ranking-low-chunk", "ranking-low-symbol", "reset-ranking", "save-ranking", "ranking-settings-status", "ranking-settings-result",
       "cleanup-details", "cleanup-details-title", "cleanup-details-note", "cleanup-details-table", "cleanup-history-count", "cleanup-history-list",
       "recent-index-count", "recent-index-list", "index-log-limit", "index-log-status", "index-log-prev", "index-log-next", "index-log-page", "cleanup-history-limit", "refresh-index-logs",
+      "task-query", "task-status", "task-sort", "task-limit", "task-archived", "task-warnings", "task-page", "task-prev", "task-next",
       "task-project", "task-project-search", "task-project-results", "refresh-tasks", "task-loading", "task-empty", "task-workspace", "task-count", "task-list", "task-detail",
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
       "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics", "optimize-index",
       "project-dialog", "project-form", "project-name", "project-root", "cancel-project", "save-project",
-      "portrait-file-types", "portrait-git", "portrait-knowledge", "portrait-tasks", "portrait-memories", "portrait-stale-memories",
-      "portrait-sources", "portrait-candidates", "portrait-overview", "portrait-graph",
+      "portrait-file-types", "portrait-git", "portrait-knowledge", "portrait-all-tasks", "portrait-tasks", "portrait-memories", "portrait-stale-memories",
+      "portrait-sources", "portrait-candidates", "portrait-overview", "portrait-graph", "portrait-maintenance",
       "ignore-form", "ignore-content", "ignore-status", "reload-ignore", "save-ignore", "ignore-path", "add-ignore-path",
       "ignore-path-warning", "normalize-ignore", "ignore-impact-summary", "ignore-impact-paths",
       "graph-search-form", "graph-search", "graph-search-results", "graph-relations", "graph-layout",
@@ -937,6 +999,7 @@ export const UI_JS = String.raw`(function () {
     els["task-project"].addEventListener("change", function () {
       storeTaskProjectId(els["task-project"].value);
       state.taskProjectId = null; state.taskPortrait = null; state.selectedTaskId = null; state.taskSignature = null;
+      state.taskOffset = 0; state.taskDetailMode = "current"; state.taskHistorySequence++;
       syncTaskProjectSearch();
       loadTaskView(true, false);
     });
@@ -955,7 +1018,32 @@ export const UI_JS = String.raw`(function () {
     document.addEventListener("click", function (event) {
       if (!event.target.closest(".task-project-picker")) closeTaskProjectResults();
     });
+    function changeTaskFilter() {
+      window.clearTimeout(state.taskSearchTimer); state.taskSearchTimer = null;
+      state.taskOffset = 0; state.taskDetailMode = "current"; state.taskHistorySequence++;
+      loadTaskView(true, false);
+    }
+    ["task-status", "task-sort", "task-limit", "task-archived"].forEach(function (id) { els[id].addEventListener("change", changeTaskFilter); });
+    els["task-query"].addEventListener("input", function () {
+      window.clearTimeout(state.taskSearchTimer); state.taskSequence++;
+      state.taskSearchTimer = window.setTimeout(changeTaskFilter, 300);
+    });
+    els["task-prev"].addEventListener("click", function () { state.taskOffset = Math.max(0, state.taskOffset - Number(els["task-limit"].value)); loadTaskView(true, false); });
+    els["task-next"].addEventListener("click", function () { state.taskOffset += Number(els["task-limit"].value); loadTaskView(true, false); });
     els["refresh-tasks"].addEventListener("click", function () { loadTaskView(true, false); });
+    els["portrait-all-tasks"].addEventListener("click", function () {
+      var projectId = els["portrait-project"].value;
+      if (!projectId) return;
+      window.clearTimeout(state.taskSearchTimer); state.taskSearchTimer = null;
+      els["task-query"].value = ""; els["task-status"].value = "all";
+      els["task-project"].value = projectId;
+      var project = projectById(projectId);
+      if (project && project.archivedAt) els["task-archived"].checked = true;
+      storeTaskProjectId(projectId); syncTaskProjectSearch();
+      state.taskOffset = 0; state.selectedTaskId = null; state.taskDetailMode = "current";
+      state.taskHistoryOffset = 0; state.taskHistorySequence++; state.taskSequence++; state.taskQueryKey = null;
+      switchView("task");
+    });
     els["portrait-project"].addEventListener("change", function () { resetGraph(); state.ignoreProjectId = null; resetMaintenance(); loadPortrait(true); });
     els["refresh-storage"].addEventListener("click", function () { loadMaintenance(els["portrait-project"].value); });
     els["ranking-settings-form"].addEventListener("submit", saveRankingSettings);
@@ -1047,11 +1135,15 @@ export const UI_JS = String.raw`(function () {
       var current = select.value;
       if (select === els["task-project"] && !current) current = readTaskProjectId();
       select.replaceChildren();
-      if (index === 0) addOption(select, "", "全部项目");
+      if (index === 0 || select === els["task-project"]) addOption(select, "", "全部项目");
       else if (state.projects.length === 0) addOption(select, "", "没有已登记项目");
       state.projects.forEach(function (project) { addOption(select, project.id, project.name + (project.archivedAt ? "（已归档）" : "")); });
       if ([].some.call(select.options, function (option) { return option.value === current; })) select.value = current;
-      if (select === els["task-project"]) storeTaskProjectId(select.value);
+      if (select === els["task-project"]) {
+        storeTaskProjectId(select.value);
+        var restoredProject = projectById(select.value);
+        if (restoredProject && restoredProject.archivedAt) els["task-archived"].checked = true;
+      }
     });
     syncTaskProjectSearch();
     els["edit-project"].disabled = !els["portrait-project"].value;
@@ -1106,13 +1198,13 @@ export const UI_JS = String.raw`(function () {
 
   function syncTaskProjectSearch() {
     var project = projectById(els["task-project"].value);
-    els["task-project-search"].value = project ? project.name : "";
+    els["task-project-search"].value = project ? project.name : "全部项目";
     els["task-project-search"].title = project ? project.rootPath : "";
   }
 
   function renderTaskProjectResults(query) {
     var normalized = query.trim().toLocaleLowerCase();
-    var matches = state.projects.filter(function (project) {
+    var matches = [{ id: "", name: "全部项目", rootPath: "汇总各项目任务（默认不含归档项目）" }].concat(state.projects).filter(function (project) {
       return !normalized || project.name.toLocaleLowerCase().includes(normalized) || project.rootPath.toLocaleLowerCase().includes(normalized);
     }).slice(0, 30);
     state.taskProjectActiveIndex = matches.length ? 0 : -1;
@@ -1145,6 +1237,8 @@ export const UI_JS = String.raw`(function () {
   }
 
   function selectTaskProject(projectId) {
+    var project = projectById(projectId);
+    if (project && project.archivedAt) els["task-archived"].checked = true;
     els["task-project"].value = projectId;
     closeTaskProjectResults();
     els["task-project"].dispatchEvent(new Event("change"));
@@ -1409,7 +1503,7 @@ export const UI_JS = String.raw`(function () {
     });
     els["storage-counts"].replaceChildren();
     var sharedMemory = element("div", "storage-count"); sharedMemory.append(element("dt", "", "SHM 共享内存"), element("dd", "", storageBytes(usage.shmBytes))); els["storage-counts"].append(sharedMemory);
-    var countLabels = { sources: "索引文件", chunks: "内容片段", symbols: "代码符号", relations: "代码关系", memories: "记忆", tasks: "任务", memory_candidates: "记忆候选", index_runs: "索引运行日志" };
+    var countLabels = { sources: "索引文件", chunks: "内容片段", symbols: "代码符号", relations: "代码关系", memories: "记忆", tasks: "任务", task_events: "任务历史", task_checkpoint_requests: "检查点请求记录", memory_candidates: "记忆候选", index_runs: "索引运行日志" };
     Object.keys(usage.counts || {}).forEach(function (name) {
       var count = element("div", "storage-count"); count.append(element("dt", "", countLabels[name] || name), element("dd", "", formatNumber(usage.counts[name]) + " 条")); els["storage-counts"].append(count);
     });
@@ -1656,14 +1750,48 @@ export const UI_JS = String.raw`(function () {
       if (maintenanceProjectId !== projectId || (!silent && force)) await loadMaintenance(projectId);
     } catch (error) {
       if (!silent) {
-        els["portrait-loading"].replaceChildren(errorState(error.message || "无法读取项目画像"));
-        toast(error.message || String(error), true);
+        els["portrait-content"].hidden = true;
+        els["portrait-loading"].hidden = false;
+        els["portrait-loading"].replaceChildren(projectErrorState(error, projectId));
+        if (error.code !== "PROJECT_DATABASE_NOT_FOUND") toast(error.message || String(error), true);
       }
     } finally {
       state.portraitLoading = false;
       if (!silent) els["refresh-portrait"].disabled = false;
       if (els["portrait-project"].value !== projectId) loadPortrait(true);
     }
+  }
+
+  function projectErrorState(error, projectId) {
+    if (error.code !== "PROJECT_DATABASE_NOT_FOUND") return errorState(error.message || "无法读取项目画像", error.httpStatus);
+    var project = projectById(projectId);
+    var panel = element("section", "empty-state missing-project-state");
+    panel.append(element("strong", "", "项目数据库不存在"), element("p", "", project ? project.name + " · " + project.rootPath : projectId), element("p", "", "项目仍在登记列表中，但数据库文件已丢失或目录已移动。可修改根目录，或移除这条失效登记。"));
+    var details = element("details"); details.append(element("summary", "", "查看具体路径"), element("p", "", error.message)); panel.append(details);
+    var actions = element("div", "dialog-actions");
+    var edit = element("button", "secondary-button", "修改项目路径"); edit.type = "button"; edit.addEventListener("click", openProjectEditor);
+    var remove = element("button", "danger-button", "移除失效登记"); remove.type = "button";
+    remove.addEventListener("click", function () { confirmUnregister(projectId, remove); });
+    actions.append(edit, remove); panel.append(actions); return panel;
+  }
+
+  function confirmUnregister(projectId, control) {
+    var project = projectById(projectId); if (!project) return;
+    var dialog = document.getElementById("unregister-dialog");
+    document.getElementById("unregister-description").textContent = project.name + " · " + project.rootPath;
+    dialog.returnValue = "";
+    dialog.addEventListener("close", async function () {
+      if (dialog.returnValue !== "confirm") return;
+      control.disabled = true;
+      try {
+        await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/unregister-missing", { method: "POST", body: { confirmProjectId: projectId } });
+        state.portraitProjectId = null; state.portrait = null; state.taskQueryKey = null; state.selectedTaskId = null;
+        resetGraph(); resetMaintenance(); await refresh(); await loadPortrait(true); await loadTaskView(true, false);
+        toast("失效登记已移除，未删除任何项目文件");
+      } catch (error) { toast(error.message || String(error), true); }
+      finally { control.disabled = false; }
+    }, { once: true });
+    dialog.showModal();
   }
 
   function refreshWatchedPortrait() {
@@ -1798,125 +1926,138 @@ export const UI_JS = String.raw`(function () {
     });
   }
 
+  function taskKey(task) { return task.projectId + ":" + task.id; }
+
+  function taskQuery() {
+    var query = new URLSearchParams({ status: els["task-status"].value, q: els["task-query"].value.trim(), sort: els["task-sort"].value, limit: els["task-limit"].value, offset: String(state.taskOffset), includeArchived: String(els["task-archived"].checked) });
+    if (els["task-project"].value) query.set("projectId", els["task-project"].value);
+    return query.toString();
+  }
+
   async function loadTaskView(force, silent) {
-    var projectId = els["task-project"].value;
-    if (!projectId) {
-      els["task-loading"].hidden = true;
-      els["task-workspace"].hidden = true;
-      els["task-empty"].hidden = false;
-      return;
-    }
-    if (!force && state.taskProjectId === projectId) return;
-    if (state.taskLoading) return;
+    var filterSummary = document.querySelector(".task-filter-options > summary");
+    filterSummary.textContent = "筛选 · " + els["task-status"].selectedOptions[0].textContent + " · " + els["task-sort"].selectedOptions[0].textContent + (els["task-archived"].checked ? " · 含归档" : "");
+    var query = taskQuery();
+    if (!force && state.taskQueryKey === query && state.taskPortrait) return;
+    if (silent && state.taskLoading) return;
+    var sequence = ++state.taskSequence;
     state.taskLoading = true;
     if (!silent) {
+      els["task-loading"].replaceChildren(element("strong", "", "正在读取任务动态"));
       els["task-loading"].hidden = false;
+      els["task-workspace"].hidden = true;
       els["task-empty"].hidden = true;
       els["refresh-tasks"].disabled = true;
     }
     try {
-      var portrait = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/portrait");
-      if (els["task-project"].value !== projectId) return;
-      var signature = taskPortraitSignature(portrait);
-      var unchanged = state.taskProjectId === projectId && state.taskSignature === signature;
-      var changed = Boolean(state.taskSignature && state.taskSignature !== signature);
-      state.taskPortrait = portrait;
-      state.taskProjectId = projectId;
-      state.taskSignature = signature;
-      if (silent && unchanged) return;
-      renderTaskView(portrait, changed);
+      var page = await fetchJson("/api/tasks?" + query);
+      if (sequence !== state.taskSequence || query !== taskQuery()) return;
+      if (!page.items.length && state.taskOffset > 0 && state.taskOffset >= page.total) {
+        state.taskOffset = page.total ? Math.floor((page.total - 1) / page.limit) * page.limit : 0;
+        await loadTaskView(true, false); return;
+      }
+      var signature = JSON.stringify(page);
+      var unchanged = state.taskQueryKey === query && state.taskSignature === signature;
+      var changed = Boolean(state.taskSignature && !unchanged);
+      state.taskPortrait = page; state.taskQueryKey = query; state.taskSignature = signature;
+      if (silent && unchanged && els["task-warnings"].hidden) return;
+      renderTaskView(page, changed);
     } catch (error) {
+      if (sequence !== state.taskSequence) return;
       if (!silent) {
+        els["task-loading"].hidden = false;
         els["task-loading"].replaceChildren(errorState(error.message || "无法读取任务动态"));
-        toast(error.message || String(error), true);
+      } else {
+        els["task-warnings"].hidden = false;
+        els["task-warnings"].textContent = "自动刷新失败，当前仍为上次读取结果：" + (error.message || String(error));
       }
     } finally {
-      state.taskLoading = false;
-      if (!silent) els["refresh-tasks"].disabled = false;
+      if (sequence === state.taskSequence) { state.taskLoading = false; els["refresh-tasks"].disabled = false; }
     }
   }
 
   function refreshTaskActivity() {
-    var taskView = document.getElementById("task-view");
-    if (document.hidden || taskView.hidden || !els["task-project"].value) return;
+    if (document.hidden || document.getElementById("task-view").hidden || state.taskSearchTimer || state.taskMutating || state.taskDetailMode === "history") return;
     loadTaskView(true, true);
   }
 
-  function taskPortraitSignature(portrait) {
-    return portrait.activeTasks.concat(portrait.completedTasks).map(function (task) {
-      return task.id + ":" + task.status + ":" + task.updatedAt;
-    }).join("|");
-  }
-
-  function renderTaskView(portrait, changed) {
-    var activeTasks = portrait.activeTasks || [];
-    var completedTasks = portrait.completedTasks || [];
-    var allTasks = activeTasks.concat(completedTasks);
-    if (!allTasks.some(function (task) { return task.id === state.selectedTaskId; })) {
-      state.selectedTaskId = allTasks.length ? allTasks[0].id : null;
+  function renderTaskView(page, changed) {
+    var allTasks = page.items;
+    if (!allTasks.some(function (task) { return taskKey(task) === state.selectedTaskId; })) {
+      state.selectedTaskId = allTasks.length ? taskKey(allTasks[0]) : null;
+      state.taskDetailMode = "current"; state.taskHistoryOffset = 0; state.taskHistorySequence++;
     }
-    els["task-loading"].hidden = true;
-    els["task-empty"].hidden = true;
-    els["task-workspace"].hidden = false;
-    els["task-count"].textContent = activeTasks.length + " 进行中";
+    syncTaskLiveState();
+    els["task-loading"].hidden = true; els["task-empty"].hidden = true; els["task-workspace"].hidden = false;
+    els["task-count"].textContent = "本页 " + allTasks.length + " / 共 " + page.total;
+    els["task-page"].textContent = (page.partial ? "已读取项目中：" : "") + "共 " + page.total + " 条 · " + (page.total ? page.offset + 1 : 0) + "–" + (page.offset + allTasks.length) + " 条";
+    document.getElementById("task-page-number").textContent = "第 " + (page.total ? Math.floor(page.offset / page.limit) + 1 : 0) + " / " + Math.ceil(page.total / page.limit) + " 页";
+    els["task-prev"].disabled = page.offset === 0;
+    els["task-next"].disabled = page.offset + page.limit >= page.total;
+    els["task-warnings"].replaceChildren();
+    els["task-warnings"].hidden = !page.partial && !(page.warnings || []).length;
+    var warningDetails = element("details");
+    warningDetails.append(element("summary", "", "部分项目未能读取 · 总数仅包含已读取项目 · 展开原因"));
+    (page.warnings || []).forEach(function (warning) { warningDetails.append(element("div", "", warning.projectName + "：" + warning.message)); });
+    els["task-warnings"].append(warningDetails);
     els["task-list"].replaceChildren();
-    appendTaskGroup("进行中", activeTasks);
-    appendTaskGroup("最近完成", completedTasks);
-    if (!allTasks.length) {
-      var empty = element("div", "task-detail-empty");
-      var copy = element("div");
-      copy.append(element("strong", "", "当前没有任务"), element("span", "", "任务开始后，这里会显示当前焦点、检查点和验证状态。"));
-      empty.append(copy);
-      els["task-detail"].replaceChildren(empty);
-      return;
-    }
-    var selected = allTasks.find(function (task) { return task.id === state.selectedTaskId; }) || allTasks[0];
-    renderTaskDetail(selected, changed);
-  }
-
-  function appendTaskGroup(label, tasks) {
-    if (!tasks.length) return;
-    els["task-list"].append(element("div", "task-list-group", label));
-    tasks.forEach(function (task) {
-      var button = element("button", "task-list-item " + (task.status === "in_progress" ? "in-progress" : "complete") + (task.id === state.selectedTaskId ? " active" : ""));
-      button.type = "button";
-      var indicator = element("span", "task-list-indicator");
+    allTasks.forEach(function (task) {
+      var button = element("button", "task-list-item " + (task.status === "in_progress" ? "in-progress" : task.status) + (taskKey(task) === state.selectedTaskId ? " active" : ""));
+      button.type = "button"; button.setAttribute("aria-pressed", String(taskKey(task) === state.selectedTaskId));
       var copy = element("span", "task-list-copy");
-      copy.append(
-        element("strong", "", task.goal),
-        element("span", "", task.checkpoint.summary || (task.status === "in_progress" ? "等待下一次进度记录" : "任务已完成")),
-        element("small", "", statusLabel(task.status) + " · " + formatRelativeTime(task.updatedAt))
-      );
-      button.append(indicator, copy);
+      var title = element("span", "task-list-title");
+      var goal = element("strong", "", task.goal); goal.title = task.goal;
+      var blocked = task.status === "in_progress" && task.checkpoint.blockers.length > 0;
+      title.append(goal, element("span", "task-state-badge " + (blocked ? "blocked" : task.status), blocked ? "有阻塞" : statusLabel(task.status)));
+      var summary = element("span", "task-list-summary", task.checkpoint.summary || "尚未记录摘要"); summary.title = task.checkpoint.summary || "尚未记录摘要";
+      var metadata = element("span", "task-list-metadata");
+      metadata.append(element("small", "", task.projectName + (task.projectArchived ? "（已归档）" : "")), element("small", "", formatRelativeTime(task.updatedAt)));
+      copy.append(title, summary, metadata);
+      button.append(element("span", "task-list-indicator"), copy);
       button.addEventListener("click", function () {
-        state.selectedTaskId = task.id;
+        state.selectedTaskId = taskKey(task); state.taskDetailMode = "current"; state.taskHistoryOffset = 0; state.taskHistorySequence++;
         renderTaskView(state.taskPortrait, false);
       });
       els["task-list"].append(button);
     });
+    if (!allTasks.length) {
+      var empty = element("div", "task-detail-empty");
+      var copy = element("div");
+      copy.append(element("strong", "", "没有匹配的任务"), element("span", "", "可以调整项目、状态或搜索条件。默认不包含归档项目。"));
+      empty.append(copy); els["task-detail"].replaceChildren(empty); return;
+    }
+    renderTaskDetail(allTasks.find(function (task) { return taskKey(task) === state.selectedTaskId; }), changed);
+  }
+
+  function syncTaskLiveState() {
+    var live = document.querySelector(".task-live-state");
+    live.replaceChildren(element("span"), document.createTextNode(state.taskDetailMode === "history" ? "历史阅读中" : "实时更新"));
+    live.setAttribute("aria-label", state.taskDetailMode === "history" ? "查看历史时暂停自动刷新，点击刷新可获取最新数据" : "自动刷新已开启");
+    live.classList.toggle("paused", state.taskDetailMode === "history");
   }
 
   function renderTaskDetail(task, changed) {
+    syncTaskLiveState();
     var checkpoint = task.checkpoint;
-    var focusLabel = "当前焦点";
-    var focus = checkpoint.next[0];
-    if (checkpoint.blockers.length) { focusLabel = "当前阻塞"; focus = checkpoint.blockers[0]; }
-    else if (!focus && checkpoint.summary) { focusLabel = "最近进展"; focus = checkpoint.summary; }
-    if (!focus) focus = task.goal;
-
     var focusBand = element("section", "task-focus");
     var heading = element("div", "task-focus-heading");
     var title = element("div", "task-focus-title");
-    title.append(element("span", "panel-label", focusLabel), element("h2", "", focus));
-    if (focus !== task.goal) title.append(element("p", "", task.goal));
-    heading.append(title);
+    title.append(element("span", "panel-label", "任务目标"), element("h2", "", task.goal));
+    title.append(element("p", "task-identity-line", task.projectName + (task.projectArchived ? "（已归档）" : "") + " · 更新于 " + formatRelativeTime(task.updatedAt)));
+    heading.append(title, element("span", "status-badge " + task.status, statusLabel(task.status)));
     var meta = element("div", "task-focus-meta");
     meta.append(
+      element("span", "", "所属项目 " + task.projectName + (task.projectArchived ? "（已归档）" : "")),
+      element("span", "", "状态 " + statusLabel(task.status)),
       element("span", "", "创建于 " + formatDate(task.createdAt)),
       element("span", "", "最近变化 " + formatRelativeTime(task.updatedAt)),
       element("span", "", "任务 ID " + task.id)
     );
-    focusBand.append(heading, meta, taskProgress(task));
+    var processDetail = element("details", "task-process-detail");
+    processDetail.append(element("summary", "", "查看流程示意"), element("p", "", "根据当前检查点展示阶段，不代表后台正在自动执行。"), taskProgress(task));
+    var recordDetail = element("details", "task-record-detail");
+    recordDetail.append(element("summary", "", "任务记录信息与流程说明"), meta, processDetail);
+    focusBand.append(heading, taskStepper(task));
 
     var metrics = element("section", "task-metrics", "");
     metrics.append(
@@ -1928,10 +2069,12 @@ export const UI_JS = String.raw`(function () {
 
     var details = element("div", "task-detail-grid");
     details.append(
-      taskDetailSection("已完成", checkpoint.completed, "尚未记录完成事项", "success"),
+      taskDetailSection("最新进展", checkpoint.summary ? [checkpoint.summary] : [], "尚未记录摘要", ""),
       taskDetailSection("接下来", checkpoint.next, task.status === "completed" ? "任务已经收尾" : "尚未记录下一步", ""),
+      taskDetailSection("已完成", checkpoint.completed, "尚未记录完成事项", "success"),
+      taskIssuesSection(checkpoint.blockers, checkpoint.risks),
       verificationSection(checkpoint.verification),
-      taskIssuesSection(checkpoint.blockers, checkpoint.risks)
+      taskDetailSection("修改文件", checkpoint.changedFiles || [], "尚未记录修改文件", "")
     );
 
     var actions = element("div", "task-detail-actions");
@@ -1939,16 +2082,101 @@ export const UI_JS = String.raw`(function () {
       var complete = element("button", "secondary-button", "标记完成");
       var cancel = element("button", "danger-button", "取消任务");
       complete.type = cancel.type = "button";
-      complete.addEventListener("click", function () { updateTaskFromActivity(task.id, "complete", complete); });
-      cancel.addEventListener("click", function () { updateTaskFromActivity(task.id, "cancel", cancel); });
+      complete.addEventListener("click", function () { updateTaskFromActivity(task, "complete", complete); });
+      cancel.addEventListener("click", function () { updateTaskFromActivity(task, "cancel", cancel); });
       actions.append(complete, cancel);
     }
-    els["task-detail"].replaceChildren(focusBand, metrics, details, actions);
+    var tabs = element("div", "task-detail-tabs");
+    [ ["current", "当前状态"], ["history", "更新历史"] ].forEach(function (entry) {
+      var button = element("button", "secondary-button", entry[1]); button.type = "button";
+      button.setAttribute("aria-pressed", String(state.taskDetailMode === entry[0]));
+      button.addEventListener("click", function () { state.taskDetailMode = entry[0]; state.taskHistoryOffset = 0; state.taskHistorySequence++; renderTaskDetail(task, false); });
+      tabs.append(button);
+    });
+    if (state.taskDetailMode === "history") {
+      var history = element("section", "task-history");
+      els["task-detail"].replaceChildren(tabs, history);
+      loadTaskHistory(task, history);
+    } else els["task-detail"].replaceChildren(tabs, focusBand, metrics, details, recordDetail, actions);
     els["task-detail"].classList.toggle("task-updated", changed);
     if (changed) window.setTimeout(function () { els["task-detail"].classList.remove("task-updated"); }, 700);
   }
 
+  async function loadTaskHistory(task, container) {
+    var sequence = ++state.taskHistorySequence;
+    var offset = state.taskHistoryOffset;
+    container.replaceChildren(element("h2", "", task.goal), element("p", "", task.projectName + " · 历史按最近记录排序；迁移快照之前的过程未保存。"), element("p", "", "正在读取更新历史…"));
+    try {
+      var page = await fetchJson("/api/projects/" + encodeURIComponent(task.projectId) + "/tasks/" + encodeURIComponent(task.id) + "/history?limit=10&offset=" + offset);
+      if (sequence !== state.taskHistorySequence || state.selectedTaskId !== taskKey(task) || state.taskDetailMode !== "history" || !container.isConnected) return;
+      container.lastChild.remove();
+      if (!page.items.length) container.append(element("p", "", "尚无更新历史"));
+      var kinds = { created: "创建任务", checkpoint: "更新检查点", completed: "完成任务", cancelled: "取消任务", migration_snapshot: "迁移时快照" };
+      page.items.forEach(function (event) {
+        var record = element("details", "task-history-record");
+        record.append(element("summary", "", "#" + event.sequence + " · " + (kinds[event.kind] || event.kind) + " · " + formatDate(event.recordedAt)));
+        var snapshot = event.snapshot, checkpoint = snapshot.checkpoint;
+        record.append(element("p", "", "状态：" + statusLabel(snapshot.status) + " · 来源：" + event.source), element("p", "", "目标：" + snapshot.goal));
+        if (event.kind === "migration_snapshot") record.append(element("p", "task-history-note", "这是迁移时保存的现存状态，不代表此前的完整历史。"));
+        var grid = element("div", "task-detail-grid");
+        grid.append(taskDetailSection("工作摘要", checkpoint.summary ? [checkpoint.summary] : [], "未记录摘要", ""), taskDetailSection("已完成事项", checkpoint.completed, "未记录完成事项", "success"), taskDetailSection("下一步", checkpoint.next, "未记录下一步", ""), taskDetailSection("修改文件", checkpoint.changedFiles || [], "未记录修改文件", ""), verificationSection(checkpoint.verification), taskIssuesSection(checkpoint.blockers, checkpoint.risks));
+        record.append(grid); container.append(record);
+      });
+      var navigation = element("div", "task-pagination");
+      navigation.append(element("span", "", "共 " + page.total + " 条 · 第 " + (Math.floor(page.offset / page.limit) + 1) + " 页"));
+      [["上一页", -page.limit, page.offset === 0], ["下一页", page.limit, page.offset + page.limit >= page.total]].forEach(function (entry) {
+        var button = element("button", "secondary-button", entry[0]); button.type = "button"; button.disabled = entry[2];
+        button.addEventListener("click", function () { state.taskHistoryOffset = Math.max(0, offset + entry[1]); loadTaskHistory(task, container); }); navigation.append(button);
+      });
+      container.append(navigation);
+    } catch (error) {
+      if (sequence !== state.taskHistorySequence || !container.isConnected) return;
+      container.lastChild.remove(); container.append(errorState(error.message || "无法读取历史"));
+      var retry = element("button", "secondary-button", "重试读取历史"); retry.type = "button";
+      retry.addEventListener("click", function () { loadTaskHistory(task, container); }); container.append(retry);
+    }
+  }
+
+  function taskStepper(task) {
+    var checkpoint = task.checkpoint;
+    var hasProgress = Boolean(checkpoint.summary || checkpoint.completed.length || checkpoint.next.length);
+    var stage = task.status === "completed" ? 3 : checkpoint.verification.length ? 2 : hasProgress ? 1 : 0;
+    var blocked = task.status === "in_progress" && checkpoint.blockers.length > 0;
+    var panel = element("section", "task-stepper flow-" + (blocked ? "blocked" : task.status)); panel.setAttribute("aria-label", "任务记录阶段");
+    var header = element("div", "task-stepper-head");
+    var heading = element("div", "flow-heading");
+    heading.append(element("span", "flow-eyebrow", "WORKFLOW"), element("strong", "", "任务流水线"));
+    header.append(heading, element("span", "flow-status", blocked ? "等待解除阻塞" : task.status === "completed" ? "已收尾" : task.status === "cancelled" ? "已取消 · 记录保留" : "当前记录 · " + ["任务建立", "进展更新", "验证记录", "任务收尾"][stage]));
+    panel.append(header);
+    var steps = element("ol", "task-steps");
+    var records = [true, hasProgress, checkpoint.verification.length > 0, task.status === "completed"];
+    var descriptions = ["目标已保存", hasProgress ? "已有检查点" : "尚未记录进展", checkpoint.verification.length ? checkpoint.verification.length + " 条验证记录" : "尚未记录验证", task.status === "cancelled" ? "已取消，保留进展" : task.status === "completed" ? "完成状态已记录" : "尚未完成"];
+    ["建立任务", "记录进展", "验证记录", "任务收尾"].forEach(function (label, index) {
+      var current = task.status !== "cancelled" && index === stage;
+      var step = element("li", "task-step " + (records[index] ? "recorded" : "pending") + (current ? " current" : ""));
+      if (current) step.setAttribute("aria-current", "step");
+      var indicator = element("span", "task-step-index");
+      indicator.append(flowIcon(index));
+      indicator.setAttribute("aria-hidden", "true");
+      var copy = element("span", "task-step-copy"); copy.append(element("strong", "", label), element("small", "", descriptions[index]));
+      var rail = element("span", "flow-rail"); rail.setAttribute("aria-hidden", "true");
+      step.append(rail, indicator, copy); steps.append(step);
+    });
+    panel.append(steps, element("p", "flow-caption", "依据检查点展示阶段 · 动效不代表后台自动执行"));
+    if (task.status === "cancelled") panel.append(element("p", "task-cancelled-note", "任务已取消，已有进展与验证记录仍保留。"));
+    return panel;
+  }
+
+  function flowIcon(index) {
+    var paths = ["M7 4h10v16H5V6h2m1-3h8v4H8zM9 11h5m-5 4h7", "M4 17l5-5 4 3 7-9M15 6h5v5M4 21h16", "M10 4l-6 3v6c0 4 6 7 6 7s6-3 6-7V7zM7 12l2 2 4-4", "M6 21V3m0 1h12l-2 4 2 4H6"];
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
+    var path = document.createElementNS("http://www.w3.org/2000/svg", "path"); path.setAttribute("d", paths[index]);
+    svg.append(path); return svg;
+  }
+
   function taskProgress(task) {
+    if (task.status === "cancelled") return element("p", "task-cancelled-note", "任务已取消。取消前的进展与验证记录仍保留，不表示任务已完成。");
     var checkpoint = task.checkpoint;
     var hasProgress = Boolean(checkpoint.summary || checkpoint.completed.length || checkpoint.next.length);
     var stage = checkpoint.verification.length ? 2 : hasProgress ? 1 : 0;
@@ -2010,7 +2238,7 @@ export const UI_JS = String.raw`(function () {
     var statusCopy = element("span", "factory-status-copy");
     statusCopy.append(
       element("span", "factory-status-dot"),
-      document.createTextNode(blocked ? "流水线等待解除阻塞" : task.status === "in_progress" ? "流水线正在生产" : "任务已完成出厂")
+      document.createTextNode(blocked ? "当前记录包含阻塞" : task.status === "in_progress" ? "依据最新检查点展示" : "任务已标记完成")
     );
     var status = element("div", "factory-status");
     status.append(statusCopy, element("span", "factory-stage-name", labels[stage]));
@@ -2060,19 +2288,21 @@ export const UI_JS = String.raw`(function () {
     return section;
   }
 
-  async function updateTaskFromActivity(taskId, action, control) {
-    var projectId = els["task-project"].value;
+  async function updateTaskFromActivity(task, action, control) {
+    var projectId = task.projectId, taskId = task.id;
+    if (state.taskMutating) return;
+    state.taskMutating = true;
     control.disabled = true;
     try {
       await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/" + action, { method: "POST", body: {} });
-      state.selectedTaskId = taskId;
+      state.selectedTaskId = taskKey(task);
       await loadTaskView(true, true);
       state.portraitProjectId = null;
       toast(action === "complete" ? "任务已完成" : "任务已取消");
     } catch (error) {
       toast(error.message || String(error), true);
     } finally {
-      control.disabled = false;
+      state.taskMutating = false; control.disabled = false;
     }
   }
 
@@ -2525,11 +2755,14 @@ export const UI_JS = String.raw`(function () {
   }
 
   function setPortraitMode(mode) {
-    if (["overview", "graph"].indexOf(mode) < 0) return;
+    if (["overview", "graph", "maintenance"].indexOf(mode) < 0) return;
+    els["portrait-content"].dataset.mode = mode;
     els["portrait-overview"].hidden = mode !== "overview";
     els["portrait-graph"].hidden = mode !== "graph";
+    els["portrait-maintenance"].hidden = mode !== "maintenance";
     document.querySelectorAll(".portrait-mode").forEach(function (button) {
       button.classList.toggle("active", button.dataset.portraitMode === mode);
+      button.setAttribute("aria-pressed", String(button.dataset.portraitMode === mode));
     });
     if (mode === "graph") {
       loadGraphOverview(false);
@@ -2800,7 +3033,7 @@ export const UI_JS = String.raw`(function () {
 
   function switchView(view) {
     ["portrait", "task", "rules", "context"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });
-    document.querySelectorAll(".tab").forEach(function (button) { button.classList.toggle("active", button.dataset.view === view); });
+    document.querySelectorAll(".tab").forEach(function (button) { var selected = button.dataset.view === view; button.classList.toggle("active", selected); button.setAttribute("aria-pressed", String(selected)); });
     if (view === "portrait") loadPortrait(false);
     if (view === "task") loadTaskView(false, false);
   }
@@ -2814,7 +3047,7 @@ export const UI_JS = String.raw`(function () {
       body: options.body === undefined ? undefined : JSON.stringify(options.body)
     });
     var data = await response.json().catch(function () { return { message: "服务返回了无效响应" }; });
-    if (!response.ok) { var error = new Error(data.message || "请求失败"); error.details = data.details; error.httpStatus = response.status; throw error; }
+    if (!response.ok) { var error = new Error(data.message || "请求失败"); error.details = data.details; error.code = data.code; error.httpStatus = response.status; throw error; }
     return data;
   }
 
@@ -2843,6 +3076,6 @@ export const UI_JS = String.raw`(function () {
   function indexRunLabel(status) { return status === "completed" ? "索引正常" : status === "running" ? "正在索引" : "索引状态：" + status; }
   function statusLabel(status) { var labels = { active: "活跃", accepted: "已接受", pending: "待审核", in_progress: "进行中", completed: "已完成", cancelled: "已取消", stale: "已过期", conflicted: "有冲突", rejected: "已拒绝", superseded: "已替代", deleted: "已删除" }; return labels[status] || status; }
   function summaryStat(label, value) { var item = element("span", "summary-stat"); item.append(element("strong", "", value), document.createTextNode(label)); return item; }
-  function errorState(message) { var node = element("div", "empty-state"); node.append(element("strong", "", message), element("span", "", "确认通过 project-context ui 启动，并使用启动时打开的地址。")); return node; }
+  function errorState(message, status) { var node = element("div", "empty-state"); node.append(element("strong", "", message), element("span", "", status === 401 ? "登录已失效，请使用本次启动时提供的完整地址重新打开。" : "请核对错误原因后重试，或切换其他项目。")); return node; }
   function toast(message, error) { els.toast.textContent = message; els.toast.className = "toast show" + (error ? " error" : ""); clearTimeout(toast.timer); toast.timer = setTimeout(function () { els.toast.className = "toast"; }, 3200); }
 })();`;

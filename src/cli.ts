@@ -9,6 +9,7 @@ import { ProjectContextError, errorMessage } from "./shared/errors.js";
 import { memoryStatusSchema, memoryTypeSchema } from "./memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "./memory/user-memory-service.js";
 import type { TaskCheckpoint } from "./tasks/task-service.js";
+import { taskQuerySchema } from "./tasks/task-query.js";
 import { startUiServer } from "./ui/server.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "./indexing/watch-service.js";
 
@@ -277,12 +278,33 @@ const task = program.command("task").description("Manage cross-session task chec
 task.command("start")
   .argument("<project-id>")
   .argument("<goal>")
-  .action(withApp((app, projectId: string, goal: string) => print(app.startTask(projectId, goal))));
+  .action(withApp((app, projectId: string, goal: string) => print(app.startTask(projectId, goal, { source: "cli" }))));
 task.command("list")
   .argument("<project-id>")
   .option("--status <status>", "task status", "in_progress")
   .action(withApp((app, projectId: string, options: { status: string }) => {
     print(app.tasks(projectId, options.status));
+  }));
+task.command("query")
+  .description("Page through tasks in one or all projects")
+  .option("--project <id>", "limit results to this project")
+  .option("--status <status>", "all, in_progress, completed, or cancelled", "all")
+  .option("--query <text>", "search goals and checkpoint summaries", "")
+  .option("--sort <field>", "updated, created, or completed", "updated")
+  .option("--limit <number>", "page size (1–100)", numberOption, 20)
+  .option("--offset <number>", "number of rows to skip", numberOption, 0)
+  .option("--include-archived", "include archived projects", false)
+  .action(withApp((app, options: Record<string, unknown>) => print(app.queryTasks(taskQuerySchema.parse({
+    projectId: options.project, status: options.status, q: options.query, sort: options.sort,
+    limit: options.limit, offset: options.offset, includeArchived: options.includeArchived,
+  })))));
+task.command("history")
+  .argument("<project-id>")
+  .argument("<task-id>")
+  .option("--limit <number>", "page size (1–100)", numberOption, 20)
+  .option("--offset <number>", "number of events to skip", numberOption, 0)
+  .action(withApp((app, projectId: string, taskId: string, options: { limit: number; offset: number }) => {
+    print(app.taskHistory(projectId, taskId, options));
   }));
 task.command("checkpoint")
   .argument("<project-id>")
@@ -293,17 +315,20 @@ task.command("checkpoint")
   .option("--changed-file <path...>")
   .option("--blocker <item...>")
   .option("--risk <item...>")
+  .option("--request-id <id>", "reuse on retries to avoid replaying an older checkpoint")
   .action(withApp((app, projectId: string, taskId: string, options: Record<string, unknown>) => {
-    print(app.checkpoint(projectId, taskId, checkpointFromOptions(options)));
+    print(app.checkpoint(projectId, taskId, checkpointFromOptions(options), {
+      source: "cli", ...(options.requestId ? { requestId: String(options.requestId) } : {}),
+    }));
   }));
 task.command("complete")
   .argument("<project-id>")
   .argument("<task-id>")
-  .action(withApp((app, projectId: string, taskId: string) => print(app.completeTask(projectId, taskId))));
+  .action(withApp((app, projectId: string, taskId: string) => print(app.completeTask(projectId, taskId, undefined, { source: "cli" }))));
 task.command("cancel")
   .argument("<project-id>")
   .argument("<task-id>")
-  .action(withApp((app, projectId: string, taskId: string) => print(app.cancelTask(projectId, taskId))));
+  .action(withApp((app, projectId: string, taskId: string) => print(app.cancelTask(projectId, taskId, { source: "cli" }))));
 
 program.command("context")
   .argument("<project-id>")

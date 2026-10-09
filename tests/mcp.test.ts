@@ -57,7 +57,7 @@ describe("Project Context MCP", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(38);
+      expect(tools.tools).toHaveLength(40);
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
       await call(client, "storage_status", {});
@@ -120,6 +120,21 @@ describe("Project Context MCP", () => {
         changedFiles: [], verification: [], blockers: [], risks: [],
       });
       await call(client, "task_list", { projectId, status: "in_progress" });
+      const checkpointRetry = { projectId, taskId, summary: "Ready for resources", requestId: "mcp-checkpoint-1" };
+      await call(client, "task_checkpoint", checkpointRetry);
+      await call(client, "task_checkpoint", { ...checkpointRetry, requestId: "mcp-checkpoint-2", summary: "Newer progress" });
+      const replayed = object(await call(client, "task_checkpoint", checkpointRetry));
+      expect(object(replayed.checkpoint).summary).toBe("Newer progress");
+      const history = object(await call(client, "task_history", { projectId, taskId, limit: 2 }));
+      expect(history.total).toBe(4);
+      expect(array(history.items)).toHaveLength(2);
+      expect(object(array(history.items)[0]).source).toBe("mcp");
+      const taskPage = object(await call(client, "task_query", { projectId, q: "contract", status: "all", limit: 1 }));
+      expect(taskPage.total).toBe(1);
+      expect(object(array(taskPage.items)[0]).projectId).toBe(projectId);
+      const conflict = await client.callTool({ name: "task_checkpoint", arguments: { ...checkpointRetry, summary: "Different request payload" } });
+      expect(conflict.isError).toBe(true);
+      expect(JSON.stringify(conflict.content)).toContain("TASK_REQUEST_CONFLICT");
       await call(client, "project_watch_start", { projectId, initialIndex: false, debounceMs: 100 });
       await writeFile(join(projectRoot, "src", "completion.ts"), "export const finalRefresh = 'task completion refresh';\n", "utf8");
       await call(client, "task_complete", { projectId, taskId });
@@ -202,7 +217,7 @@ describe("Project Context MCP", () => {
     const client = new Client({ name: "stdio-test", version: "1.0.0" });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(38);
+      expect((await client.listTools()).tools).toHaveLength(40);
       const status = await client.callTool({ name: "storage_status", arguments: {} });
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {

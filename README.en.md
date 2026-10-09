@@ -6,9 +6,28 @@ Project Context MCP is a local-first, cross-session project intelligence and mem
 
 The local web workspace includes project portraits, search-ranking settings, and index storage management. Select indexed directories, check available disk space, run an upgrade in a background worker, and recover its status after a connection loss. Successful upgrades remove their temporary backup; source files remain intact.
 
+The workspace uses consistent light cards and segmented navigation. Pagination stays in the task queue footer. Compact steps represent recorded checkpoints, not automatic execution or successful verification; the process illustration is collapsed by default. See [UI design notes](docs/ui-design.md) for references and validation coverage.
+
+## Complete Task Browsing and History
+
+The task workspace supports all-project or single-project browsing, goal/current-summary search, status filters including cancelled tasks, and 10/20/50 rows per page. Sort by update, creation, or end time. Archived projects are excluded by default. Unavailable projects produce explicit partial-result warnings without hiding accessible tasks. Project portraits retain recent summaries and link to the full task list.
+
+Task details now include current state and paginated history. Creation, changed checkpoints, completion, and cancellation atomically append snapshots with verification, changed files, blockers, and risks. History reading pauses automatic polling. Completion does not imply every environment has been verified.
+
+Schema v8 migrates on project database access, retaining tasks and indexes and recording one clearly labelled migration snapshot for each legacy task. Earlier history is not reconstructed, and code reindexing is unnecessary. Restart all MCP/Web processes after updating: old processes do not record new events. Persistent history survives log cleanup, backup/restore, and JSONL export. Task and history exports share one SQLite read snapshot.
+
+New MCP tools `task_query` and `task_history` provide pagination; existing `task_list` remains compatible. Supply the same optional `requestId` when retrying `task_checkpoint` to avoid reverting newer progress; a different payload with the same ID is rejected. Without an ID, only consecutive identical content is deduplicated.
+
+```powershell
+node dist/cli.js task query --status in_progress --limit 20
+node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
+```
+
+This is the first work-memory increment. Tasks still belong to projects. Cross-project reads do not constitute a workspace-wide snapshot; live changes may shift offset-based pages, and deep pages across many projects still need performance evaluation. A dedicated personal overview, task-resume flow, rule applicability explanations, and personal memory portraits remain later stages.
+
 ## Index Upgrades and Space Reclamation
 
-Run `node dist/cli.js ui --no-open`, open the printed **`launchUrl` (including its session token)**, and choose **Project portrait → Upgrade index and reclaim space**.
+Run `node dist/cli.js ui --no-open`, open the printed **`launchUrl` (including its session token)**, and choose **Project portrait → Index & storage → Upgrade index and reclaim space**.
 
 1. Search all indexed folder paths and select 10/20/50/100 entries per page. Selections survive filtering and pagination, including hidden selections at confirmation. Indexed source bytes are not an estimate of database savings.
 2. Optionally select recommended directories. Recommendations use indexed path, language, framework, and build-file evidence and require review. Detecting a project language does not imply Tree-sitter symbol support for that language. Business and reference sources are not automatically excluded.
@@ -388,7 +407,7 @@ For client-specific configuration, see the official Codex documentation for [MCP
 - `memory_remember`, `memory_list`, `memory_update_status`
 - `memory_candidates`, `memory_candidate_accept`, `memory_candidate_reject`
 - `user_memory_remember`, `user_memory_list`, `user_memory_update_status`
-- `task_start`, `task_checkpoint`, `task_list`, `task_complete`, `task_cancel`
+- `task_start`, `task_checkpoint`, `task_list`, `task_query`, `task_history`, `task_complete`, `task_cancel`
 
 `project_index` returns symbol/relation totals, stale memory IDs, newly generated candidates, and Git metadata. The indexer and watcher skip common cross-language compiler artifacts, including C/C++ `.d` dependency files, `.o/.obj` objects, `.a/.lib` static libraries, precompiled headers, Java/Python bytecode, and coverage or profiling output. Git evidence is preferred when available; projects without Git can still generate candidates from added or changed indexed knowledge documents. Each completed task generates at most one candidate, preferring its summary, then its first risk, then its first explicitly durable completed item, so routine execution records do not become multiple review items. It never returns or stores the full diff. Candidate memories remain review-only until `memory_candidate_accept` is called.
 

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ProjectContextApp } from "../src/core/app.js";
 import { startUiServer, type UiServerHandle } from "../src/ui/server.js";
+import { PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
 
 describe("localhost rule manager", () => {
   let tempRoot: string;
@@ -97,9 +98,9 @@ describe("localhost rule manager", () => {
     expect(appScript).toContain('var TASK_PROJECT_STORAGE_KEY = "project-context-mcp:task-project-id";');
     expect(appScript).toContain('current = readTaskProjectId()');
     expect(appScript).toContain('storeTaskProjectId(els["task-project"].value)');
-    expect(appScript).toContain('if (select === els["task-project"]) storeTaskProjectId(select.value);');
+    expect(appScript).toContain('storeTaskProjectId(select.value)');
     expect(styles).toContain(".factory-station-label");
-    expect(appScript).toContain("流水线正在生产");
+    expect(appScript).toContain("任务记录阶段");
     expect(appScript).toContain('"factory-station-label"');
     expect(appScript).toContain("factory-work-orders");
     expect(appScript).toContain("等待验证结果");
@@ -137,7 +138,7 @@ describe("localhost rule manager", () => {
     expect(portrait.response.status).toBe(200);
     expect(portrait.body).toMatchObject({
       project: { id: project.id, name: "project" },
-      health: { sources: 3, schemaVersion: 7 },
+      health: { sources: 3, schemaVersion: PROJECT_SCHEMA_VERSION },
       statuses: {
         memories: { active: 1, stale: 1 }, candidates: { pending: 2 },
         tasks: { completed: 1, in_progress: 2 },

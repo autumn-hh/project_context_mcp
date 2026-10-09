@@ -10,3 +10,5 @@ output/
 *.db
 *.db-shm
 *.db-wal
+
+.playwright-cli/

@@ -9,9 +9,11 @@ import { ProjectContextError, errorMessage } from "../shared/errors.js";
 import { memoryTypeSchema } from "../memory/memory-service.js";
 import { userMemoryScopeSchema } from "../memory/user-memory-service.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
+import { WORKSPACE_THEME_CSS } from "./workspace-theme.js";
 import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
+import { taskQuerySchema } from "../tasks/task-query.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const retentionDaysSchema = z.number().int().min(1).max(3650);
@@ -116,7 +118,7 @@ async function routeRequest(
     }
     const url = new URL(request.url ?? "/", expectedOrigin);
     if (request.method === "GET" && url.pathname === "/") return sendAsset(response, "text/html; charset=utf-8", UI_HTML);
-    if (request.method === "GET" && url.pathname === "/styles.css") return sendAsset(response, "text/css; charset=utf-8", UI_CSS);
+    if (request.method === "GET" && url.pathname === "/styles.css") return sendAsset(response, "text/css; charset=utf-8", UI_CSS + "\n" + WORKSPACE_THEME_CSS);
     if (request.method === "GET" && url.pathname === "/vendor/cytoscape.js") {
       cytoscapeSource ??= readFile(CYTOSCAPE_PATH, "utf8");
       return sendAsset(response, "text/javascript; charset=utf-8", await cytoscapeSource);
@@ -167,7 +169,7 @@ async function routeRequest(
       } finally { app.close(); }
     }
 
-    const mutationMatch = url.pathname.match(/^\/api\/projects\/([^/]+)(?:\/(index|watch|cleanup|ignore|optimize-index|compact-index|maintenance))?$/);
+    const mutationMatch = url.pathname.match(/^\/api\/projects\/([^/]+)(?:\/(index|watch|cleanup|ignore|optimize-index|compact-index|maintenance|unregister-missing))?$/);
     if (mutationMatch && !["GET", "HEAD"].includes(request.method ?? "")) {
       const app = await ProjectContextApp.create();
       try { migrationJobs.assertIdle(app.projects.get(decodeSegment(mutationMatch[1]!)).rootPath); }
@@ -193,6 +195,13 @@ async function routeRequest(
         if (current.rootPath !== input.rootPath) await app.relocateProject(projectId, input.rootPath);
         return app.updateProject(projectId, input.name);
       });
+      return;
+    }
+    const unregisterMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/unregister-missing$/);
+    if (request.method === "POST" && unregisterMatch) {
+      const projectId = decodeSegment(unregisterMatch[1]!);
+      const input = z.object({ confirmProjectId: z.string().min(1) }).strict().parse(await readJsonBody(request));
+      await withApp(response, (app) => app.unregisterMissingProject(projectId, input.confirmProjectId));
       return;
     }
     const portraitMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/portrait$/);
@@ -342,14 +351,38 @@ async function routeRequest(
         : app.rejectCandidate(projectId, candidateId));
       return;
     }
+    if (request.method === "GET" && url.pathname === "/api/tasks") {
+      const input = taskQuerySchema.parse({
+        projectId: url.searchParams.get("projectId") ?? undefined,
+        status: url.searchParams.get("status") ?? undefined,
+        q: url.searchParams.get("q") ?? undefined,
+        sort: url.searchParams.get("sort") ?? undefined,
+        limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        offset: url.searchParams.has("offset") ? Number(url.searchParams.get("offset")) : undefined,
+        includeArchived: z.enum(["true", "false"]).parse(url.searchParams.get("includeArchived") ?? "false") === "true",
+      });
+      await withApp(response, (app) => app.queryTasks(input));
+      return;
+    }
+    const taskReadMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)(\/history)?$/);
+    if (request.method === "GET" && taskReadMatch) {
+      const projectId = decodeSegment(taskReadMatch[1]!);
+      const taskId = decodeSegment(taskReadMatch[2]!);
+      const options = {
+        limit: z.coerce.number().int().min(1).max(100).parse(url.searchParams.get("limit") ?? "20"),
+        offset: z.coerce.number().int().min(0).max(100_000).parse(url.searchParams.get("offset") ?? "0"),
+      };
+      await withApp(response, (app) => taskReadMatch[3] ? app.taskHistory(projectId, taskId, options) : app.task(projectId, taskId));
+      return;
+    }
     const taskActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(complete|cancel)$/);
     if (request.method === "POST" && taskActionMatch) {
       const projectId = decodeSegment(taskActionMatch[1]!);
       const taskId = decodeSegment(taskActionMatch[2]!);
       const action = taskActionMatch[3]!;
       await withApp(response, (app) => action === "complete"
-        ? app.completeTask(projectId, taskId)
-        : app.cancelTask(projectId, taskId));
+        ? app.completeTask(projectId, taskId, undefined, { source: "web" })
+        : app.cancelTask(projectId, taskId, { source: "web" }));
       return;
     }
     const graphMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/graph$/);

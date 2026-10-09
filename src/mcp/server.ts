@@ -11,6 +11,7 @@ import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/use
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
 import { maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
+import { taskQuerySchema } from "../tasks/task-query.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -363,14 +364,14 @@ export function createMcpServer(): McpServer {
     outputSchema,
     inputSchema: { projectId: z.string().min(1), goal: z.string().min(1) },
     annotations: { idempotentHint: false },
-  }, ({ projectId, goal }) => withApp((app) => app.startTask(projectId, goal)));
+  }, ({ projectId, goal }) => withApp((app) => app.startTask(projectId, goal, { source: "mcp" })));
 
   server.registerTool("task_checkpoint", {
-    description: "Save completed work, next steps, changed files, verification, blockers, and risks for a task.",
+    description: "Save the latest task checkpoint and append its history atomically. Reuse requestId to retry safely without reverting newer progress.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1), ...checkpointSchema },
+    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1), requestId: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/-]+$/).optional(), ...checkpointSchema },
     annotations: { idempotentHint: true },
-  }, ({ projectId, taskId, summary, verification, ...checkpoint }) => withApp((app) => app.checkpoint(
+  }, ({ projectId, taskId, requestId, summary, verification, ...checkpoint }) => withApp((app) => app.checkpoint(
     projectId,
     taskId,
     {
@@ -382,6 +383,7 @@ export function createMcpServer(): McpServer {
         ...(item.summary ? { summary: item.summary } : {}),
       })),
     },
+    { source: "mcp", ...(requestId ? { requestId } : {}) },
   )));
 
   server.registerTool("task_list", {
@@ -395,6 +397,24 @@ export function createMcpServer(): McpServer {
     annotations: { readOnlyHint: true, idempotentHint: true },
   }, ({ projectId, status, limit }) => withApp((app) => app.tasks(projectId, status, limit)));
 
+  server.registerTool("task_query", {
+    description: "Page through all recorded tasks in one or all projects, including completed and cancelled tasks. Returns project provenance and partial-read warnings; archived projects are excluded by default.",
+    outputSchema,
+    inputSchema: taskQuerySchema.shape,
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, (input) => withApp((app) => app.queryTasks(input)));
+
+  server.registerTool("task_history", {
+    description: "Read recorded task checkpoints and lifecycle events with pagination. Legacy migration snapshots do not reconstruct past history.",
+    outputSchema,
+    inputSchema: {
+      projectId: z.string().min(1), taskId: z.string().min(1),
+      limit: z.number().int().min(1).max(100).default(20),
+      offset: z.number().int().min(0).max(100_000).default(0),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId, taskId, limit, offset }) => withApp((app) => app.taskHistory(projectId, taskId, { limit, offset })));
+
   server.registerTool("task_complete", {
     description: "Flush managed project changes, then complete a persistent task while retaining its checkpoint.",
     outputSchema,
@@ -402,7 +422,7 @@ export function createMcpServer(): McpServer {
     annotations: { idempotentHint: true },
   }, ({ projectId, taskId }) => withApp(async (app) => {
     await app.watchFlush(projectId);
-    return app.completeTask(projectId, taskId);
+    return app.completeTask(projectId, taskId, undefined, { source: "mcp" });
   }));
 
   server.registerTool("task_cancel", {
@@ -412,7 +432,7 @@ export function createMcpServer(): McpServer {
     annotations: { destructiveHint: true, idempotentHint: true },
   }, ({ projectId, taskId }) => withApp(async (app) => {
     await app.watchFlush(projectId);
-    return app.cancelTask(projectId, taskId);
+    return app.cancelTask(projectId, taskId, { source: "mcp" });
   }));
 
   server.registerTool("project_health", {

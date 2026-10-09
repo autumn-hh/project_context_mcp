@@ -1,6 +1,6 @@
 import { basename, dirname, join, normalize, resolve } from "node:path";
 import { access, copyFile, mkdir, readdir, realpath, rename, rm, rmdir, stat } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import Database from "better-sqlite3";
 import type { SqliteDatabase } from "../storage/database.js";
 import { openDatabase } from "../storage/database.js";
@@ -290,6 +290,41 @@ export class ProjectService {
     await removeEmptyDirectory(dirname(databasePath));
     this.registry.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
     return { projectId, deleted: true, purged: true, backupDestination, deletedAt: nowIso() };
+  }
+
+  assertMissingRegistration(projectId: string, confirmProjectId: string): ProjectRecord {
+    const project = this.get(projectId);
+    if (confirmProjectId !== projectId) {
+      throw new ProjectContextError("PROJECT_UNREGISTER_CONFIRMATION_MISMATCH", "confirmProjectId must exactly match projectId.");
+    }
+    assertMigrationAccess(project.rootPath);
+    // Check both layouts: a moved/migrating database must never be mistaken for a stale registration.
+    const paths = new Set([
+      this.projectDatabasePath(projectId),
+      this.projectDatabasePathForRoot(project.rootPath),
+      this.legacyProjectDatabasePath(projectId),
+    ]);
+    for (const path of paths) {
+      for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+        try {
+          statSync(path + suffix);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw new ProjectContextError("PROJECT_DATABASE_STATE_UNREADABLE", "无法确认数据库是否缺失；请检查路径权限后重试。", { path: path + suffix });
+        }
+        throw new ProjectContextError("PROJECT_DATABASE_PRESENT", "数据库或 SQLite 辅助文件仍存在，不能仅移除项目登记。", { path: path + suffix });
+      }
+    }
+    return project;
+  }
+
+  unregisterMissing(projectId: string, confirmProjectId: string) {
+    return this.registry.transaction(() => {
+      const project = this.assertMissingRegistration(projectId, confirmProjectId);
+      // User rules deliberately keep their project provenance; no source or backup files are touched.
+      this.registry.prepare("DELETE FROM projects WHERE id = ?").run(projectId);
+      return { projectId, projectName: project.name, unregistered: true as const, filesDeleted: false as const, unregisteredAt: nowIso() };
+    }).immediate();
   }
 
   async restore(input: {

@@ -106,13 +106,15 @@ export async function exportProject(
     throw new ProjectContextError("OUTPUT_NOT_EMPTY", `Export directory is not empty: ${target}`);
   }
   await mkdir(target, { recursive: true });
-  const files: Record<string, unknown[]> = {
+  const { files, schemaVersion } = db.transaction(() => ({ files: {
     "memories.jsonl": db.prepare("SELECT * FROM memories ORDER BY created_at").all(),
     "memory-candidates.jsonl": db.prepare("SELECT * FROM memory_candidates ORDER BY created_at").all(),
     "tasks.jsonl": db.prepare("SELECT * FROM tasks ORDER BY created_at").all(),
+    "task-events.jsonl": db.prepare("SELECT * FROM task_events ORDER BY sequence").all(),
+    "task-checkpoint-requests.jsonl": db.prepare("SELECT * FROM task_checkpoint_requests ORDER BY task_id, request_id").all(),
     "symbols.jsonl": db.prepare("SELECT * FROM symbols ORDER BY source_path, start_line").all(),
     "relations.jsonl": db.prepare("SELECT * FROM relations ORDER BY source_path, start_line").all(),
-  };
+  } as Record<string, unknown[]>, schemaVersion: db.pragma("user_version", { simple: true }) }))();
   for (const [name, rows] of Object.entries(files)) {
     await writeFile(join(target, name), rows.map((row) => JSON.stringify(row)).join("\n") + (rows.length ? "\n" : ""), "utf8");
   }
@@ -120,7 +122,7 @@ export async function exportProject(
     version: 1,
     exportedAt: nowIso(),
     project,
-    schemaVersion: db.pragma("user_version", { simple: true }),
+    schemaVersion,
     files: Object.fromEntries(Object.entries(files).map(([name, rows]) => [name, rows.length])),
   };
   await writeFile(join(target, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

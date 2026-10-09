@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "./database.js";
 
 export const REGISTRY_SCHEMA_VERSION = 3;
-export const PROJECT_SCHEMA_VERSION = 7;
+export const PROJECT_SCHEMA_VERSION = 8;
 
 export function migrateRegistry(db: SqliteDatabase): void {
   migrate(db, "projects", [{ version: 1, sql: `
@@ -226,6 +226,39 @@ export function migrateProject(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS index_runs_started_idx ON index_runs(started_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS index_runs_status_started_idx ON index_runs(status, started_at DESC, id DESC);
     ` },
+    { version: 8, sql: `
+    CREATE INDEX IF NOT EXISTS tasks_updated_id_idx ON tasks(updated_at DESC, id COLLATE BINARY ASC);
+    CREATE INDEX IF NOT EXISTS tasks_created_id_idx ON tasks(created_at DESC, id COLLATE BINARY ASC);
+    CREATE INDEX IF NOT EXISTS tasks_completed_id_idx ON tasks(completed_at DESC, id COLLATE BINARY ASC);
+    CREATE INDEX IF NOT EXISTS tasks_status_updated_id_idx ON tasks(status, updated_at DESC, id COLLATE BINARY ASC);
+    CREATE INDEX IF NOT EXISTS tasks_status_created_id_idx ON tasks(status, created_at DESC, id COLLATE BINARY ASC);
+    CREATE INDEX IF NOT EXISTS tasks_status_completed_id_idx ON tasks(status, completed_at DESC, id COLLATE BINARY ASC);
+    CREATE TABLE IF NOT EXISTS task_events (
+      sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      kind TEXT NOT NULL CHECK (kind IN ('created', 'checkpoint', 'completed', 'cancelled', 'migration_snapshot')),
+      recorded_at TEXT NOT NULL,
+      source TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL CHECK (json_valid(snapshot_json))
+    );
+    CREATE INDEX IF NOT EXISTS task_events_task_sequence_idx ON task_events(task_id, sequence DESC);
+    CREATE TABLE IF NOT EXISTS task_checkpoint_requests (
+      task_id TEXT NOT NULL REFERENCES tasks(id),
+      request_id TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      PRIMARY KEY (task_id, request_id)
+    ) WITHOUT ROWID;
+    INSERT INTO task_events (task_id, kind, recorded_at, source, snapshot_json)
+      SELECT tasks.id, 'migration_snapshot', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), 'migration:v8',
+        json_object('id', tasks.id, 'goal', goal, 'status', status,
+          'checkpoint', json(checkpoint_json), 'createdAt', created_at,
+          'updatedAt', updated_at, 'completedAt', completed_at)
+      FROM tasks WHERE NOT EXISTS (SELECT 1 FROM task_events WHERE task_id = tasks.id);
+    CREATE TRIGGER IF NOT EXISTS task_events_no_update BEFORE UPDATE ON task_events
+      BEGIN SELECT RAISE(ABORT, 'Task history is append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS task_events_no_delete BEFORE DELETE ON task_events
+      BEGIN SELECT RAISE(ABORT, 'Task history is append-only'); END;
+    ` },
   ]);
 }
 
@@ -238,15 +271,21 @@ function migrate(db: SqliteDatabase, legacyTable: string, migrations: Migration[
   let current = db.pragma("user_version", { simple: true }) as number;
   if (current === 0 && tableExists(db, legacyTable)) {
     current = 1;
-    db.pragma("user_version = 1");
   }
   for (const migration of migrations) {
     if (migration.version <= current) continue;
-    db.transaction(() => {
+    current = db.transaction(() => {
+      // Another process may have migrated while this connection waited for the write lock.
+      let lockedVersion = db.pragma("user_version", { simple: true }) as number;
+      if (lockedVersion === 0 && tableExists(db, legacyTable)) {
+        lockedVersion = 1;
+        db.pragma("user_version = 1");
+      }
+      if (migration.version <= lockedVersion) return lockedVersion;
       db.exec(migration.sql);
       db.pragma(`user_version = ${migration.version}`);
-    })();
-    current = migration.version;
+      return migration.version;
+    }).immediate();
   }
 }
 
