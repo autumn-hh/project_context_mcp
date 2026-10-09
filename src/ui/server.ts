@@ -13,6 +13,7 @@ import { WORKSPACE_THEME_CSS } from "./workspace-theme.js";
 import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
+import { IndexPreviewJobs } from "./index-preview-jobs.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
@@ -73,9 +74,10 @@ export async function startUiServer(options: {
 } = {}): Promise<UiServerHandle> {
   const sessionToken = randomBytes(32).toString("base64url");
   const migrationJobs = new MigrationJobs();
+  const indexPreviews = new IndexPreviewJobs();
   let expectedOrigin = "";
   const server = createServer((request, response) => {
-    void routeRequest(request, response, sessionToken, expectedOrigin, migrationJobs);
+    void routeRequest(request, response, sessionToken, expectedOrigin, migrationJobs, indexPreviews);
   });
   await new Promise<void>((resolve, reject) => {
     server.once("error", reject);
@@ -96,7 +98,7 @@ export async function startUiServer(options: {
     url: expectedOrigin,
     launchUrl,
     port: address.port,
-    close: async () => { await migrationJobs.wait(); return new Promise<void>((resolve, reject) => {
+    close: async () => { await indexPreviews.close(); await migrationJobs.wait(); return new Promise<void>((resolve, reject) => {
       server.close((error) => error ? reject(error) : resolve());
       server.closeAllConnections();
     }); },
@@ -109,6 +111,7 @@ async function routeRequest(
   sessionToken: string,
   expectedOrigin: string,
   migrationJobs: MigrationJobs,
+  indexPreviews: IndexPreviewJobs,
 ): Promise<void> {
   setSecurityHeaders(response);
   try {
@@ -177,13 +180,14 @@ async function routeRequest(
     }
 
     if (request.method === "GET" && url.pathname === "/api/bootstrap") {
+      const lightweight = url.searchParams.get("view") === "tasks";
       await withApp(response, async (app) => {
-        await app.reconcileMovedProjects();
+        if (!lightweight) await app.reconcileMovedProjects();
         return {
           projects: app.projects.list(true),
-          memories: app.allUserMemories(),
+          ...(lightweight ? {} : { memories: app.allUserMemories() }),
         };
-      });
+      }, !lightweight);
       return;
     }
     const projectMatch = url.pathname.match(/^\/api\/projects\/([^/]+)$/);
@@ -317,7 +321,7 @@ async function routeRequest(
     }
     if (request.method === "GET" && optimizeIndexMatch) {
       const projectId = decodeSegment(optimizeIndexMatch[1]!);
-      await withApp(response, (app) => app.indexMigrationPreview(projectId));
+      sendJson(response, 200, await indexPreviews.run(projectId));
       return;
     }
     if (request.method === "POST" && optimizeIndexMatch) {
@@ -361,7 +365,8 @@ async function routeRequest(
         offset: url.searchParams.has("offset") ? Number(url.searchParams.get("offset")) : undefined,
         includeArchived: z.enum(["true", "false"]).parse(url.searchParams.get("includeArchived") ?? "false") === "true",
       });
-      await withApp(response, (app) => app.queryTasks(input));
+      const summary = url.searchParams.get("view") === "summary";
+      await withApp(response, (app) => summary ? app.queryTaskSummaries(input) : app.queryTasks(input), false);
       return;
     }
     const taskReadMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)(\/history)?$/);
@@ -372,7 +377,7 @@ async function routeRequest(
         limit: z.coerce.number().int().min(1).max(100).parse(url.searchParams.get("limit") ?? "20"),
         offset: z.coerce.number().int().min(0).max(100_000).parse(url.searchParams.get("offset") ?? "0"),
       };
-      await withApp(response, (app) => taskReadMatch[3] ? app.taskHistory(projectId, taskId, options) : app.task(projectId, taskId));
+      await withApp(response, (app) => taskReadMatch[3] ? app.taskHistory(projectId, taskId, options) : app.task(projectId, taskId), false);
       return;
     }
     const taskActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(complete|cancel)$/);
@@ -469,8 +474,9 @@ async function routeRequest(
 async function withApp(
   response: ServerResponse,
   callback: (app: ProjectContextApp) => unknown | Promise<unknown>,
+  initializeProjects = true,
 ): Promise<void> {
-  const app = await ProjectContextApp.create();
+  const app = await ProjectContextApp.create({ initializeProjects });
   try {
     sendJson(response, 200, await callback(app));
   } finally {
@@ -560,6 +566,8 @@ function decodeSegment(value: string): string {
 }
 
 function projectErrorStatus(code: string): number {
+  if (code === "INDEX_PREVIEW_BUSY" || code === "INDEX_PREVIEW_CLOSED") return 503;
+  if (code.startsWith("INDEX_PREVIEW_")) return 500;
   if (code.includes("NOT_FOUND")) return 404;
   if (code.includes("NOT_AUTHORIZED") || code.includes("NOT_ALLOWED")) return 403;
   if (code === "REQUEST_TOO_LARGE") return 413;

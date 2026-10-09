@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { queryTasks, queryWorkspaceTasks, taskQuerySchema } from "../src/tasks/task-query.js";
+import { queryTasks, queryTaskSummaries, queryWorkspaceTasks, queryWorkspaceTaskSummaries, taskQuerySchema } from "../src/tasks/task-query.js";
 import type { ProjectRecord } from "../src/projects/project-service.js";
 import { ProjectContextError } from "../src/shared/errors.js";
 
@@ -8,7 +8,9 @@ const databases: Database.Database[] = [];
 function fixture() {
   const db = new Database(":memory:"); databases.push(db);
   db.exec(`CREATE TABLE tasks (id TEXT PRIMARY KEY, goal TEXT, status TEXT, checkpoint_json TEXT,
-    created_at TEXT, updated_at TEXT, completed_at TEXT)`);
+    created_at TEXT, updated_at TEXT, completed_at TEXT);
+    CREATE TABLE task_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT);
+    CREATE INDEX task_events_task_sequence_idx ON task_events(task_id, sequence DESC)`);
   const insert = db.prepare("INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?)");
   for (let i = 0; i < 23; i++) {
     const status = i < 12 ? "in_progress" : i < 20 ? "completed" : "cancelled";
@@ -25,6 +27,44 @@ function project(id: string, archived = false): ProjectRecord {
 afterEach(() => { for (const db of databases.splice(0)) if (db.open) db.close(); });
 
 describe("complete task queries", () => {
+  it("returns bounded summaries without parsing or transferring large checkpoints and preserves full queries", () => {
+    const db = fixture();
+    const checkpoint = { summary: "摘要".repeat(1000), completed: ["x".repeat(2_000_000)], next: [], blockers: ["blocked"] };
+    db.prepare("UPDATE tasks SET checkpoint_json = ? WHERE id = 'task_00'").run(JSON.stringify(checkpoint));
+    const parse = vi.spyOn(JSON, "parse");
+    let summary;
+    try {
+      summary = queryTaskSummaries(db, { limit: 1 }).items[0]!;
+      expect(parse).not.toHaveBeenCalled();
+    } finally { parse.mockRestore(); }
+    expect(summary).toMatchObject({ id: "task_00", summary: checkpoint.summary.slice(0, 500), hasBlockers: true, revision: 0 });
+    expect(summary).not.toHaveProperty("checkpoint");
+    expect(summary).not.toHaveProperty("completed");
+    expect(Buffer.byteLength(JSON.stringify(summary))).toBeLessThan(3000);
+    expect(queryTasks(db, { limit: 1 }).items[0]!.checkpoint).toEqual(checkpoint);
+    expect(queryTaskSummaries(db, { offset: 1, limit: 1 }).items[0]!.hasBlockers).toBe(false);
+  });
+  it("changes the revision when history changes within the same timestamp", () => {
+    const db = fixture();
+    db.prepare("INSERT INTO task_events(task_id) VALUES (?)").run("task_00");
+    const before = queryTaskSummaries(db, { limit: 1 }).items[0]!;
+    db.prepare("INSERT INTO task_events(task_id) VALUES (?)").run("task_00");
+    const after = queryTaskSummaries(db, { limit: 1 }).items[0]!;
+    expect(after.updatedAt).toBe(before.updatedAt);
+    expect(after.revision).toBeGreaterThan(before.revision);
+    const plan = db.prepare("EXPLAIN QUERY PLAN SELECT MAX(sequence) FROM task_events WHERE task_id = ?").all("task_00");
+    expect(JSON.stringify(plan)).toContain("task_events_task_sequence_idx");
+  });
+  it("keeps summary filtering, cross-project pagination and archive semantics aligned with full queries", () => {
+    const projects = [project("b"), project("a"), project("archive", true)];
+    for (const options of [{ offset: 19, limit: 10 }, { q: "中文", includeArchived: true }, { status: "completed" as const, sort: "completed" as const }]) {
+      const full = queryWorkspaceTasks(projects, fixture, options);
+      const summaries = queryWorkspaceTaskSummaries(projects, fixture, options);
+      expect(summaries.total).toBe(full.total);
+      expect(summaries.items.map(item => `${item.projectId}/${item.id}`)).toEqual(full.items.map(item => `${item.projectId}/${item.id}`));
+      expect(summaries.items.every(item => !("checkpoint" in item))).toBe(true);
+    }
+  });
   it("returns every status beyond the former six/four limits with stable pages", () => {
     const db = fixture();
     expect(queryTasks(db, { status: "in_progress" }).total).toBe(12);

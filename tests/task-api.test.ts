@@ -6,6 +6,7 @@ import { ProjectContextApp } from "../src/core/app.js";
 import { startUiServer, type UiServerHandle } from "../src/ui/server.js";
 import type { TaskCheckpoint } from "../src/tasks/task-service.js";
 import { exportProject } from "../src/maintenance/maintenance-service.js";
+import { ProjectService } from "../src/projects/project-service.js";
 
 describe("complete task browsing and history API", () => {
   let root: string;
@@ -50,6 +51,34 @@ describe("complete task browsing and history API", () => {
   function request(path: string, method = "GET") {
     return fetch(`${ui.url}${path}`, { method, headers: { Cookie: cookie, Origin: ui.url, "X-Project-Context-UI": "1" } });
   }
+
+  it("starts task browsing without global maintenance or rules and returns bounded summaries with separate full details", async () => {
+    const target = await project("large-checkpoint");
+    const task = app.startTask(target.id, "Large task");
+    const completed = Array.from({ length: 5000 }, (_, index) => `completed-${index}-${"x".repeat(100)}`);
+    app.checkpoint(target.id, task.id, { summary: "S".repeat(3000), completed, next: [], changedFiles: [], verification: [], blockers: ["blocked"], risks: [] });
+    const maintenance = vi.spyOn(ProjectService.prototype, "migrateLegacyDatabases");
+    const discovery = vi.spyOn(ProjectService.prototype, "reconcileMovedProjects");
+    const memories = vi.spyOn(ProjectContextApp.prototype, "allUserMemories");
+    const bootstrap = await (await request("/api/bootstrap?view=tasks")).json();
+    expect(bootstrap.projects.some((item: { id: string }) => item.id === target.id)).toBe(true);
+    expect(bootstrap).not.toHaveProperty("memories");
+    const summaryResponse = await request(`/api/tasks?view=summary&projectId=${target.id}`);
+    const summaryText = await summaryResponse.text();
+    expect(summaryText.length).toBeLessThan(3000);
+    const summary = JSON.parse(summaryText).items[0];
+    expect(summary).not.toHaveProperty("checkpoint");
+    expect(summary.summary).toHaveLength(500);
+    expect(summary.hasBlockers).toBe(true);
+    const full = await (await request(`/api/projects/${target.id}/tasks/${task.id}`)).json();
+    expect(full.checkpoint.completed).toEqual(completed);
+    const history = await (await request(`/api/projects/${target.id}/tasks/${task.id}/history`)).json();
+    expect(history.items[0].snapshot.checkpoint.completed).toEqual(completed);
+    expect(maintenance).not.toHaveBeenCalled();
+    expect(discovery).not.toHaveBeenCalled();
+    expect(memories).not.toHaveBeenCalled();
+    expect((await fetch(`${ui.url}/api/tasks?view=summary`, { headers: { Origin: ui.url, "X-Project-Context-UI": "1" } })).status).toBe(401);
+  });
 
   it("authenticates missing-registration removal and refuses healthy databases or wrong confirmation", async () => {
     const target = await project("missing-registration");

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { analyzeIndexRecommendations } from "../src/maintenance/index-recommendations.js";
 
 describe("analyzeIndexRecommendations", () => {
@@ -84,4 +84,68 @@ describe("analyzeIndexRecommendations", () => {
     expect(result.recommendations["dotnet/bin"].recommended).toBe(false);
     expect(result.recommendations["native/build"].recommended).toBe(false);
   });
+
+  it("requires CMakeFiles evidence and protects sources outside the immediate generated subtree", () => {
+    const result = analyzeIndexRecommendations([
+      "cache-only/CMakeCache.txt", "cache-only/generated.o",
+      "generated/CMakeCache.txt", "generated/CMakeFiles/3.1/CompilerIdC/main.c",
+      "mixed/CMakeCache.txt", "mixed/CMakeFiles/CompilerIdC/main.c", "mixed/nested/main.h",
+      "nested/CMakeCache.txt", "nested/other/CMakeFiles/generated.o",
+      "cmake-build-debug/CMakeCache.txt", "cmake-build-debug/CMakeFiles/main.c", "cmake-build-debug/src/api.h",
+    ], ["cache-only", "generated", "mixed", "nested", "cmake-build-debug"]);
+    expect(result.recommendations.generated.recommended).toBe(true);
+    for (const directory of ["cache-only", "mixed", "nested", "cmake-build-debug"]) {
+      expect(result.recommendations[directory].recommended).toBe(false);
+    }
+  });
+
+  it("normalizes Windows paths once while retaining evidence spelling and directory boundaries", () => {
+    const result = analyzeIndexRecommendations([
+      String.raw`C:\Repo\Build\CMakeCache.TXT`,
+      String.raw`c:\repo\build\CMAKEFILES\CompilerIdC\main.C`,
+      String.raw`C:\Repo\Builder\main.C`,
+      String.raw`.\Web\PACKAGE.JSON`,
+      String.raw`.\Web\Dist\App.MIN.JS`,
+      String.raw`.\Web\DistExtra\App.TS`,
+    ], [String.raw`C:\REPO\BUILD/`, String.raw`.\Web\Dist/`, "Web/DistExtra"]);
+    expect(result.recommendations["C:/REPO/BUILD"].recommended).toBe(true);
+    expect(result.recommendations["Web/Dist"].recommended).toBe(true);
+    expect(result.recommendations["Web/DistExtra"].recommended).toBe(false);
+    expect(result.projectTypes.find(type => type.name === "JavaScript/TypeScript")?.evidence[0]).toBe("Web/PACKAGE.JSON");
+  });
+
+  it("only suppresses genuine descendants, including case-insensitive parent paths", () => {
+    const result = analyzeIndexRecommendations([], [
+      "ROOT/node_modules", "root/node_modules/pkg/.venv", "root/node_modules-extra/.venv", "other/.venv",
+    ]);
+    expect(result.recommendations["ROOT/node_modules"].recommended).toBe(true);
+    expect(result.recommendations["root/node_modules/pkg/.venv"].recommended).toBe(false);
+    expect(result.recommendations["root/node_modules-extra/.venv"].recommended).toBe(true);
+    expect(result.recommendations["other/.venv"].recommended).toBe(true);
+  });
+
+  it("keeps normalization linear for a large CMake cache without CMakeFiles and thousands of directories", () => {
+    // Missing CMakeFiles used to trigger a complete file scan for every unique
+    // basename; candidate directories and recommended siblings added two more
+    // quadratic scans. Count actual string normalization, not wall-clock time.
+    const files = ["native/CMakeCache.txt", ...Array.from({ length: 20_000 }, (_, i) => `native/generated-${i}.o`)];
+    const directories = ["native", ...Array.from({ length: 4_000 }, (_, i) => `packages/module-${i}/node_modules`)];
+    const original = String.prototype.toLowerCase;
+    const limit = 2 * (files.length + directories.length);
+    let normalizations = 0;
+    const spy = vi.spyOn(String.prototype, "toLowerCase").mockImplementation(function (this: string) {
+      if (++normalizations > limit) throw new Error("Repeated whole-tree normalization exceeded the linear budget");
+      return original.call(this);
+    });
+    let result;
+    try {
+      result = analyzeIndexRecommendations(files, directories);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(normalizations).toBeLessThanOrEqual(limit);
+    expect(result.recommendations.native.recommended).toBe(false);
+    expect(Object.values(result.recommendations).filter(item => item.recommended)).toHaveLength(4_000);
+  });
+
 });

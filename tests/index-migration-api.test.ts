@@ -65,6 +65,10 @@ describe("index migration API", () => {
   }
 
   it("requires authentication and returns a read-only directory preview", async () => {
+    // A main-thread implementation would hit this spy. Worker computation must
+    // still return real persisted data and preserve the existing auth/errors.
+    const mainThreadPreview = vi.spyOn(ProjectContextApp.prototype, "indexMigrationPreview")
+      .mockImplementation(() => { throw new Error("Preview must not execute on the HTTP thread"); });
     for (const method of ["GET", "POST"]) {
       const denied = await request(route(), { method, authenticated: false, ...(method === "POST" ? { body: {} } : {}) });
       expect(denied.response.status).toBe(401);
@@ -80,6 +84,7 @@ describe("index migration API", () => {
     });
     await expect(readFile(join(projectRoot, ".project-context-ignore"))).rejects.toMatchObject({ code: "ENOENT" });
     expect((await request("/api/projects/missing/optimize-index")).response.status).toBe(404);
+    expect(mainThreadPreview).not.toHaveBeenCalled();
   });
 
   it("validates project confirmation and directory exclusions before mutation", async () => {

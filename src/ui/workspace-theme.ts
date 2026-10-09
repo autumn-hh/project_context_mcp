@@ -387,6 +387,10 @@ dialog h2, dialog p { overflow-wrap: anywhere; }
   .graph-workspace { height: 65dvh; min-height: 300px; }
 }
 /* A compact illustrated track, always visible in the task's main reading area. */
+.task-item-pagination { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 11px; }
+.task-item-text { min-width: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.task-item-text > button { display: block; margin-top: 8px; }
+.task-items-paged { max-height: 420px; overflow-y: auto; scrollbar-width: thin; }
 .missing-project-state { max-width: 720px; width: 100%; margin: 0 auto; padding: 24px; border: 1px solid var(--line); border-radius: 12px; background: #fff; text-align: left; }
 .missing-project-state > strong { font-size: 18px; }
 .missing-project-state p { overflow-wrap: anywhere; line-height: 1.8; margin-top: 10px; }

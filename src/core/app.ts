@@ -47,7 +47,7 @@ import {
   type TaskCheckpoint,
   type TaskRecord,
 } from "../tasks/task-service.js";
-import { queryWorkspaceTasks, type TaskQueryInput } from "../tasks/task-query.js";
+import { queryWorkspaceTasks, queryWorkspaceTaskSummaries, type TaskQueryInput } from "../tasks/task-query.js";
 import {
   buildProjectContext,
   DEFAULT_CONTEXT_BUDGET_TOKENS,
@@ -100,10 +100,10 @@ export class ProjectContextApp {
 
   readonly storageRoot: string;
 
-  static async create(): Promise<ProjectContextApp> {
+  static async create(options: { initializeProjects?: boolean } = {}): Promise<ProjectContextApp> {
     const app = new ProjectContextApp(await loadGlobalConfig());
     try {
-      await app.projects.migrateLegacyDatabases();
+      if (options.initializeProjects !== false) await app.projects.migrateLegacyDatabases();
       return app;
     } catch (error) {
       app.close();
@@ -443,6 +443,10 @@ export class ProjectContextApp {
 
   queryTasks(input: TaskQueryInput = {}) {
     return queryWorkspaceTasks(this.projects.list(true), (projectId) => this.projects.projectDatabase(projectId), input);
+  }
+
+  queryTaskSummaries(input: TaskQueryInput = {}) {
+    return queryWorkspaceTaskSummaries(this.projects.list(true), (projectId) => this.projects.projectDatabase(projectId), input);
   }
 
   taskHistory(projectId: string, taskId: string, options: { limit?: number; offset?: number } = {}) {

@@ -25,6 +25,10 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 
 This is the first work-memory increment. Tasks still belong to projects. Cross-project reads do not constitute a workspace-wide snapshot; live changes may shift offset-based pages, and deep pages across many projects still need performance evaluation. A dedicated personal overview, task-resume flow, rule applicability explanations, and personal memory portraits remain later stages.
 
+Task startup loads project choices and bounded task summaries first, then fetches the selected task in full. Unchanged details are reused. Detail sections show 30 entries per page, long entries can be expanded, and reading pauses polling until refresh. Rules and project-location recovery load when entering the relevant views.
+
+Directory recommendations accumulate evidence from each file into its ancestor directories, avoiding repeated CMake checks and full file scans per directory. Web index-upgrade previews run in a background worker; concurrent requests for the same project share one computation to reduce blocking of other page requests.
+
 ## Index Upgrades and Space Reclamation
 
 Run `node dist/cli.js ui --no-open`, open the printed **`launchUrl` (including its session token)**, and choose **Project portrait → Index & storage → Upgrade index and reclaim space**.

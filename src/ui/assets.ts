@@ -922,7 +922,7 @@ export const UI_JS = String.raw`(function () {
     graphSelectedId: null, graphSearchResults: [], graphSearchSequence: 0, graphSearchTimer: null,
     portraitLoading: false, ignoreProjectId: null, taskProjectId: null, taskPortrait: null,
     taskMutating: false, taskOffset: 0, taskSequence: 0, taskHistorySequence: 0, taskHistoryOffset: 0, taskDetailMode: "current", taskSearchTimer: null, taskQueryKey: null,
-    taskLoading: false, selectedTaskId: null, taskSignature: null, taskProjectActiveIndex: -1
+    taskDetailSequence: 0, taskDetailController: null, taskDetailCache: null, rulesLoaded: false, deferredRefresh: null, taskReadingMore: false, taskLoading: false, selectedTaskId: null, taskSignature: null, taskProjectActiveIndex: -1
   };
   var scopes = [
     ["all", "全部规则"], ["user", "全局"], ["workspace", "工作区"],
@@ -942,7 +942,7 @@ export const UI_JS = String.raw`(function () {
     populateStaticOptions();
     try {
       await establishSession();
-      await refresh();
+      await refresh(true);
       newRule(false);
       await loadTaskView(false, false);
       window.setInterval(refreshWatchedPortrait, 1500);
@@ -1030,7 +1030,7 @@ export const UI_JS = String.raw`(function () {
     });
     els["task-prev"].addEventListener("click", function () { state.taskOffset = Math.max(0, state.taskOffset - Number(els["task-limit"].value)); loadTaskView(true, false); });
     els["task-next"].addEventListener("click", function () { state.taskOffset += Number(els["task-limit"].value); loadTaskView(true, false); });
-    els["refresh-tasks"].addEventListener("click", function () { loadTaskView(true, false); });
+    els["refresh-tasks"].addEventListener("click", function () { state.taskReadingMore = false; state.taskDetailCache = null; loadTaskView(true, false); });
     els["portrait-all-tasks"].addEventListener("click", function () {
       var projectId = els["portrait-project"].value;
       if (!projectId) return;
@@ -1121,10 +1121,10 @@ export const UI_JS = String.raw`(function () {
     }
   }
 
-  async function refresh() {
-    var data = await fetchJson("/api/bootstrap");
+  async function refresh(lightweight) {
+    var data = await fetchJson("/api/bootstrap" + (lightweight ? "?view=tasks" : ""));
     state.projects = data.projects;
-    state.memories = data.memories;
+    if (data.memories) { state.memories = data.memories; state.rulesLoaded = true; }
     renderProjectOptions();
     renderScopeNav();
     renderRules();
@@ -1929,7 +1929,7 @@ export const UI_JS = String.raw`(function () {
   function taskKey(task) { return task.projectId + ":" + task.id; }
 
   function taskQuery() {
-    var query = new URLSearchParams({ status: els["task-status"].value, q: els["task-query"].value.trim(), sort: els["task-sort"].value, limit: els["task-limit"].value, offset: String(state.taskOffset), includeArchived: String(els["task-archived"].checked) });
+    var query = new URLSearchParams({ view: "summary", status: els["task-status"].value, q: els["task-query"].value.trim(), sort: els["task-sort"].value, limit: els["task-limit"].value, offset: String(state.taskOffset), includeArchived: String(els["task-archived"].checked) });
     if (els["task-project"].value) query.set("projectId", els["task-project"].value);
     return query.toString();
   }
@@ -1943,6 +1943,9 @@ export const UI_JS = String.raw`(function () {
     var sequence = ++state.taskSequence;
     state.taskLoading = true;
     if (!silent) {
+      state.taskReadingMore = false; state.taskDetailMode = "current";
+      state.taskHistoryOffset = 0; state.taskHistorySequence++;
+      els["task-detail"].dataset.loadedKey = "";
       els["task-loading"].replaceChildren(element("strong", "", "正在读取任务动态"));
       els["task-loading"].hidden = false;
       els["task-workspace"].hidden = true;
@@ -1960,7 +1963,7 @@ export const UI_JS = String.raw`(function () {
       var unchanged = state.taskQueryKey === query && state.taskSignature === signature;
       var changed = Boolean(state.taskSignature && !unchanged);
       state.taskPortrait = page; state.taskQueryKey = query; state.taskSignature = signature;
-      if (silent && unchanged && els["task-warnings"].hidden) return;
+      if (silent && unchanged) return;
       renderTaskView(page, changed);
     } catch (error) {
       if (sequence !== state.taskSequence) return;
@@ -1977,7 +1980,7 @@ export const UI_JS = String.raw`(function () {
   }
 
   function refreshTaskActivity() {
-    if (document.hidden || document.getElementById("task-view").hidden || state.taskSearchTimer || state.taskMutating || state.taskDetailMode === "history") return;
+    if (document.hidden || document.getElementById("task-view").hidden || state.taskSearchTimer || state.taskMutating || state.taskReadingMore || state.taskDetailMode === "history") return;
     loadTaskView(true, true);
   }
 
@@ -2007,15 +2010,15 @@ export const UI_JS = String.raw`(function () {
       var copy = element("span", "task-list-copy");
       var title = element("span", "task-list-title");
       var goal = element("strong", "", task.goal); goal.title = task.goal;
-      var blocked = task.status === "in_progress" && task.checkpoint.blockers.length > 0;
+      var blocked = task.status === "in_progress" && task.hasBlockers;
       title.append(goal, element("span", "task-state-badge " + (blocked ? "blocked" : task.status), blocked ? "有阻塞" : statusLabel(task.status)));
-      var summary = element("span", "task-list-summary", task.checkpoint.summary || "尚未记录摘要"); summary.title = task.checkpoint.summary || "尚未记录摘要";
+      var summary = element("span", "task-list-summary", task.summary || "尚未记录摘要"); summary.title = task.summary || "尚未记录摘要";
       var metadata = element("span", "task-list-metadata");
       metadata.append(element("small", "", task.projectName + (task.projectArchived ? "（已归档）" : "")), element("small", "", formatRelativeTime(task.updatedAt)));
       copy.append(title, summary, metadata);
       button.append(element("span", "task-list-indicator"), copy);
       button.addEventListener("click", function () {
-        state.selectedTaskId = taskKey(task); state.taskDetailMode = "current"; state.taskHistoryOffset = 0; state.taskHistorySequence++;
+        els["task-detail"].dataset.loadedKey = ""; state.taskReadingMore = false; state.selectedTaskId = taskKey(task); state.taskDetailMode = "current"; state.taskHistoryOffset = 0; state.taskHistorySequence++;
         renderTaskView(state.taskPortrait, false);
       });
       els["task-list"].append(button);
@@ -2024,19 +2027,51 @@ export const UI_JS = String.raw`(function () {
       var empty = element("div", "task-detail-empty");
       var copy = element("div");
       copy.append(element("strong", "", "没有匹配的任务"), element("span", "", "可以调整项目、状态或搜索条件。默认不包含归档项目。"));
+      state.taskDetailSequence++; if (state.taskDetailController) state.taskDetailController.abort(); state.taskDetailCache = null;
       empty.append(copy); els["task-detail"].replaceChildren(empty); return;
     }
-    renderTaskDetail(allTasks.find(function (task) { return taskKey(task) === state.selectedTaskId; }), changed);
+    loadSelectedTask(allTasks.find(function (task) { return taskKey(task) === state.selectedTaskId; }), changed);
+  }
+
+  async function loadSelectedTask(summary, changed) {
+    var key = taskKey(summary);
+    var revision = JSON.stringify([summary.revision, summary.updatedAt, summary.status, summary.goal, summary.summary, summary.hasBlockers]);
+    var cache = state.taskDetailCache;
+    if (cache && cache.key === key && cache.revision === revision) {
+      if (els["task-detail"].dataset.loadedKey !== key) renderTaskDetail(cache.task, false);
+      return;
+    }
+    var sequence = ++state.taskDetailSequence;
+    if (state.taskDetailController) state.taskDetailController.abort();
+    var controller = new AbortController(); state.taskDetailController = controller;
+    if (!cache || cache.key !== key) {
+      els["task-detail"].dataset.loadedKey = "";
+      els["task-detail"].replaceChildren(element("p", "empty-state", "正在读取任务详情…"));
+    }
+    try {
+      var task = await fetchJson("/api/projects/" + encodeURIComponent(summary.projectId) + "/tasks/" + encodeURIComponent(summary.id), { signal: controller.signal });
+      if (sequence !== state.taskDetailSequence || state.selectedTaskId !== key) return;
+      task = Object.assign({}, summary, task);
+      state.taskDetailCache = { key: key, revision: revision, task: task };
+      renderTaskDetail(task, changed);
+    } catch (error) {
+      if (error.name === "AbortError" || sequence !== state.taskDetailSequence || state.selectedTaskId !== key) return;
+      els["task-detail"].dataset.loadedKey = "";
+      var retry = element("button", "secondary-button", "重试读取详情"); retry.type = "button";
+      retry.addEventListener("click", function () { state.taskDetailCache = null; loadSelectedTask(summary, false); });
+      els["task-detail"].replaceChildren(errorState(error.message, error.httpStatus), retry);
+    }
   }
 
   function syncTaskLiveState() {
     var live = document.querySelector(".task-live-state");
-    live.replaceChildren(element("span"), document.createTextNode(state.taskDetailMode === "history" ? "历史阅读中" : "实时更新"));
-    live.setAttribute("aria-label", state.taskDetailMode === "history" ? "查看历史时暂停自动刷新，点击刷新可获取最新数据" : "自动刷新已开启");
-    live.classList.toggle("paused", state.taskDetailMode === "history");
+    live.replaceChildren(element("span"), document.createTextNode(state.taskDetailMode === "history" ? "历史阅读中" : state.taskReadingMore ? "明细阅读中" : "实时更新"));
+    live.setAttribute("aria-label", state.taskDetailMode === "history" || state.taskReadingMore ? "阅读时暂停自动刷新，点击刷新可获取最新数据" : "自动刷新已开启");
+    live.classList.toggle("paused", state.taskDetailMode === "history" || state.taskReadingMore);
   }
 
   function renderTaskDetail(task, changed) {
+    els["task-detail"].dataset.loadedKey = taskKey(task);
     syncTaskLiveState();
     var checkpoint = task.checkpoint;
     var focusBand = element("section", "task-focus");
@@ -2054,7 +2089,8 @@ export const UI_JS = String.raw`(function () {
       element("span", "", "任务 ID " + task.id)
     );
     var processDetail = element("details", "task-process-detail");
-    processDetail.append(element("summary", "", "查看流程示意"), element("p", "", "根据当前检查点展示阶段，不代表后台正在自动执行。"), taskProgress(task));
+    processDetail.append(element("summary", "", "查看流程示意"));
+    processDetail.addEventListener("toggle", function () { if (processDetail.open && processDetail.children.length === 1) processDetail.append(element("p", "", "根据当前检查点展示阶段，不代表后台正在自动执行。"), taskProgress(task)); });
     var recordDetail = element("details", "task-record-detail");
     recordDetail.append(element("summary", "", "任务记录信息与流程说明"), meta, processDetail);
     focusBand.append(heading, taskStepper(task));
@@ -2115,12 +2151,16 @@ export const UI_JS = String.raw`(function () {
       page.items.forEach(function (event) {
         var record = element("details", "task-history-record");
         record.append(element("summary", "", "#" + event.sequence + " · " + (kinds[event.kind] || event.kind) + " · " + formatDate(event.recordedAt)));
+        record.addEventListener("toggle", function () {
+        if (!record.open || record.dataset.rendered) return; record.dataset.rendered = "true";
         var snapshot = event.snapshot, checkpoint = snapshot.checkpoint;
         record.append(element("p", "", "状态：" + statusLabel(snapshot.status) + " · 来源：" + event.source), element("p", "", "目标：" + snapshot.goal));
         if (event.kind === "migration_snapshot") record.append(element("p", "task-history-note", "这是迁移时保存的现存状态，不代表此前的完整历史。"));
         var grid = element("div", "task-detail-grid");
         grid.append(taskDetailSection("工作摘要", checkpoint.summary ? [checkpoint.summary] : [], "未记录摘要", ""), taskDetailSection("已完成事项", checkpoint.completed, "未记录完成事项", "success"), taskDetailSection("下一步", checkpoint.next, "未记录下一步", ""), taskDetailSection("修改文件", checkpoint.changedFiles || [], "未记录修改文件", ""), verificationSection(checkpoint.verification), taskIssuesSection(checkpoint.blockers, checkpoint.risks));
-        record.append(grid); container.append(record);
+        record.append(grid);
+        });
+        container.append(record);
       });
       var navigation = element("div", "task-pagination");
       navigation.append(element("span", "", "共 " + page.total + " 条 · 第 " + (Math.floor(page.offset / page.limit) + 1) + " 页"));
@@ -2252,40 +2292,71 @@ export const UI_JS = String.raw`(function () {
     return metric;
   }
 
+  function readableTaskText(value) {
+    var text = String(value || "");
+    var node = element("div", "task-item-text");
+    if (text.length <= 2000) { node.textContent = text; return node; }
+    node.append(document.createTextNode(text.slice(0, 2000) + "…"));
+    var toggle = element("button", "secondary-button", "展开完整内容（" + text.length + " 字符）"); toggle.type = "button";
+    var expanded = false;
+    toggle.addEventListener("click", function () {
+      expanded = !expanded; state.taskReadingMore = true; syncTaskLiveState();
+      node.firstChild.textContent = expanded ? text : text.slice(0, 2000) + "…";
+      toggle.textContent = expanded ? "收起完整内容" : "展开完整内容（" + text.length + " 字符）";
+    });
+    node.append(toggle); return node;
+  }
+
+  function pagedTaskItems(container, count, renderItem) {
+    var offset = 0, size = 30;
+    var rows = element("div", "task-item-page" + (count > size ? " task-items-paged" : "")); container.append(rows);
+    var footer = element("nav", "task-item-pagination"); footer.setAttribute("aria-label", "明细分页");
+    var previous = element("button", "secondary-button", "上一页"); previous.type = "button";
+    var label = element("span");
+    var next = element("button", "secondary-button", "下一页"); next.type = "button";
+    function draw() {
+      rows.replaceChildren();
+      for (var i = offset; i < Math.min(count, offset + size); i++) rows.append(renderItem(i));
+      label.textContent = "共 " + count + " 条 · " + (offset + 1) + "–" + Math.min(count, offset + size);
+      previous.disabled = offset === 0; next.disabled = offset + size >= count;
+    }
+    function turn(direction) { offset = Math.max(0, Math.min(Math.floor((count - 1) / size) * size, offset + direction * size)); state.taskReadingMore = true; syncTaskLiveState(); draw(); }
+    previous.addEventListener("click", function () { turn(-1); }); next.addEventListener("click", function () { turn(1); });
+    if (count > size) { footer.append(previous, label, next); container.append(footer); }
+    draw();
+  }
+
   function taskDetailSection(title, items, emptyText, tone) {
     var section = element("section", "task-detail-section");
     section.append(element("h3", "", title));
     var list = element("div", "task-activity-list");
     if (!items.length) list.append(element("div", "task-activity", emptyText));
-    items.forEach(function (item) { list.append(element("div", "task-activity " + tone, item)); });
-    section.append(list);
-    return section;
+    else pagedTaskItems(list, items.length, function (i) { var row = element("div", "task-activity " + tone); row.append(readableTaskText(items[i])); return row; });
+    section.append(list); return section;
   }
 
   function verificationSection(items) {
-    var section = element("section", "task-detail-section");
-    section.append(element("h3", "", "验证状态"));
+    var section = element("section", "task-detail-section"); section.append(element("h3", "", "验证状态"));
     var list = element("div", "task-activity-list");
     if (!items.length) list.append(element("div", "task-activity", "尚未记录验证结果"));
-    items.forEach(function (item) {
-      var passing = /pass|success|complete|ok/i.test(item.status);
-      var entry = element("div", "task-activity " + (passing ? "success" : "warning"), item.command);
-      entry.append(element("small", "", item.status + (item.summary ? " · " + item.summary : "")));
-      list.append(entry);
+    else pagedTaskItems(list, items.length, function (i) {
+      var item = items[i]; var passing = /pass|success|complete|ok/i.test(item.status);
+      var entry = element("div", "task-activity " + (passing ? "success" : "warning"));
+      entry.append(readableTaskText(item.command));
+      var note = element("small"); note.append(readableTaskText(item.status + (item.summary ? " · " + item.summary : ""))); entry.append(note); return entry;
     });
-    section.append(list);
-    return section;
+    section.append(list); return section;
   }
 
   function taskIssuesSection(blockers, risks) {
-    var section = element("section", "task-detail-section");
-    section.append(element("h3", "", "阻塞与风险"));
+    var section = element("section", "task-detail-section"); section.append(element("h3", "", "阻塞与风险"));
     var list = element("div", "task-activity-list");
     if (!blockers.length && !risks.length) list.append(element("div", "task-activity success", "当前没有记录的阻塞或风险"));
-    blockers.forEach(function (item) { list.append(element("div", "task-activity danger", item)); });
-    risks.forEach(function (item) { list.append(element("div", "task-activity warning", item)); });
-    section.append(list);
-    return section;
+    else pagedTaskItems(list, blockers.length + risks.length, function (i) {
+      var row = element("div", "task-activity " + (i < blockers.length ? "danger" : "warning"));
+      row.append(readableTaskText(i < blockers.length ? blockers[i] : risks[i - blockers.length])); return row;
+    });
+    section.append(list); return section;
   }
 
   async function updateTaskFromActivity(task, action, control) {
@@ -3034,7 +3105,10 @@ export const UI_JS = String.raw`(function () {
   function switchView(view) {
     ["portrait", "task", "rules", "context"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });
     document.querySelectorAll(".tab").forEach(function (button) { var selected = button.dataset.view === view; button.classList.toggle("active", selected); button.setAttribute("aria-pressed", String(selected)); });
-    if (view === "portrait") loadPortrait(false);
+    if ((view === "portrait" || view === "rules" || view === "context") && !state.rulesLoaded) {
+      if (!state.deferredRefresh) state.deferredRefresh = refresh(false).finally(function () { state.deferredRefresh = null; });
+      state.deferredRefresh.then(function () { if (view === "portrait" && !document.getElementById("portrait-view").hidden) loadPortrait(false); }).catch(function (error) { toast(error.message || String(error), true); });
+    } else if (view === "portrait") loadPortrait(false);
     if (view === "task") loadTaskView(false, false);
   }
 

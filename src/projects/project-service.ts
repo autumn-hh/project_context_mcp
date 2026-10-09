@@ -355,7 +355,22 @@ export class ProjectService {
       throw new ProjectContextError("PROJECT_DATABASE_NOT_FOUND", `Project database does not exist: ${databasePath}`);
     }
     const db = openDatabase(databasePath);
-    try { migrateProject(db); return db; }
+    try {
+      // Lightweight callers skip the global identity backfill. Still reject a misplaced
+      // database before schema migration, without running integrity scans on every read.
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'metadata'").get()) {
+        const identity = db.prepare("SELECT value FROM metadata WHERE key = ?")
+          .get(PROJECT_ID_METADATA_KEY) as { value: string } | undefined;
+        if (identity?.value && identity.value !== projectId) {
+          throw new ProjectContextError(
+            "PROJECT_DATABASE_IDENTITY_MISMATCH",
+            "Project database identity does not match its registry entry.",
+          );
+        }
+      }
+      migrateProject(db);
+      return db;
+    }
     catch (error) { db.close(); throw error; }
   }
 
