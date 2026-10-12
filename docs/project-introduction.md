@@ -62,7 +62,7 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 
 ## MCP 工具链
 
-项目当前提供 35 个 MCP 工具。
+项目当前提供 40 个 MCP 工具。
 
 ### 存储与项目管理
 

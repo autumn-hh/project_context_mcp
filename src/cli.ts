@@ -12,11 +12,12 @@ import type { TaskCheckpoint } from "./tasks/task-service.js";
 import { taskQuerySchema } from "./tasks/task-query.js";
 import { startUiServer } from "./ui/server.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "./indexing/watch-service.js";
+import { PACKAGE_VERSION } from "./shared/version.js";
 
 const program = new Command()
   .name("project-context")
   .description("Cross-session project intelligence and memory")
-  .version("0.9.3")
+  .version(PACKAGE_VERSION)
   .showHelpAfterError();
 
 program.command("init")
@@ -208,6 +209,28 @@ memory.command("list")
   .action(withApp((app, projectId: string, options: { status: string; limit: number }) => {
     print(app.memories(projectId, options.status, options.limit));
   }));
+memory.command("normalize-task-titles")
+  .description("Preview legacy task-summary titles; apply the reviewed snapshot or cancel without changes")
+  .argument("<project-id>")
+  .option("--apply", "apply title changes after preview", false)
+  .option("--preview-hash <hash>", "apply an explicitly reviewed preview without interactive confirmation")
+  .option("--cancel", "cancel without changing titles", false)
+  .action(withApp(async (app, projectId: string, options: { apply: boolean; previewHash?: string; cancel: boolean }) => {
+    const preview = app.previewTaskSummaryTitles(projectId);
+    if (options.cancel) { print({ cancelled: true, changed: 0 }); return; }
+    if (!options.apply) { print(preview); return; }
+    if (options.previewHash) { print(app.normalizeTaskSummaryTitles(projectId, options.previewHash)); return; }
+    print(preview);
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new ProjectContextError("TITLE_PREVIEW_REQUIRED", "Review the preview and pass --preview-hash to apply non-interactively.");
+    }
+    const rl = createInterface({ input, output });
+    try {
+      const answer = (await rl.question("Apply these title changes? [y/N]: ")).trim().toLowerCase();
+      if (answer !== "y" && answer !== "yes") { print({ cancelled: true, changed: 0 }); return; }
+      print(app.normalizeTaskSummaryTitles(projectId, preview.previewHash));
+    } finally { rl.close(); }
+  }));
 memory.command("status")
   .argument("<project-id>")
   .argument("<memory-id>")
@@ -225,8 +248,15 @@ memory.command("candidates")
 memory.command("accept")
   .argument("<project-id>")
   .argument("<candidate-id>")
-  .action(withApp((app, projectId: string, candidateId: string) => {
-    print(app.acceptCandidate(projectId, candidateId));
+  .option("--type <type>", "reviewed memory type")
+  .option("--title <title>", "stable memory title")
+  .option("--content <content>", "reviewed conclusion")
+  .action(withApp((app, projectId: string, candidateId: string, options: { type?: string; title?: string; content?: string }) => {
+    print(app.acceptCandidate(projectId, candidateId, {
+      ...(options.type ? { type: memoryTypeSchema.parse(options.type) } : {}),
+      ...(options.title !== undefined ? { title: options.title } : {}),
+      ...(options.content !== undefined ? { content: options.content } : {}),
+    }));
   }));
 memory.command("reject")
   .argument("<project-id>")

@@ -4,6 +4,7 @@ import { containsLikelySecret } from "../indexing/file-policy.js";
 import { createId, nowIso, sha256 } from "../shared/ids.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { remember, type MemoryRecord, memoryTypeSchema } from "./memory-service.js";
+import { z } from "zod/v4";
 import type { TaskRecord } from "../tasks/task-service.js";
 
 export interface MemoryCandidate {
@@ -142,18 +143,31 @@ export function generateTaskCandidates(db: SqliteDatabase, task: TaskRecord): Me
   return created;
 }
 
-export function listCandidates(db: SqliteDatabase, status = "pending", limit = 50): MemoryCandidate[] {
-  return (db.prepare("SELECT * FROM memory_candidates WHERE status = ? ORDER BY created_at DESC LIMIT ?")
+export function listCandidates(
+  db: SqliteDatabase, status = "pending", limit = 50, summaries: "include" | "exclude" | "only" = "include",
+): MemoryCandidate[] {
+  const typeFilter = summaries === "exclude" ? " AND type <> 'task-summary'"
+    : summaries === "only" ? " AND type = 'task-summary'" : "";
+  return (db.prepare(`SELECT * FROM memory_candidates WHERE status = ?${typeFilter} ORDER BY created_at DESC LIMIT ?`)
     .all(status, limit) as CandidateRow[]).map(mapCandidate);
 }
 
-export function acceptCandidate(db: SqliteDatabase, candidateId: string): MemoryRecord {
+export const candidateReviewSchema = z.object({
+  type: memoryTypeSchema.optional(),
+  title: z.string().trim().min(1).max(160).optional(),
+  content: z.string().trim().min(1).max(8_000).optional(),
+}).strict();
+export type CandidateReview = z.infer<typeof candidateReviewSchema>;
+
+export function acceptCandidate(db: SqliteDatabase, candidateId: string, review: CandidateReview = {}): MemoryRecord {
+  const reviewed = candidateReviewSchema.parse(review);
   return db.transaction(() => {
     const candidate = getPendingCandidate(db, candidateId);
+    const content = reviewed.content ?? candidate.content;
     const memory = remember(db, {
-      type: memoryTypeSchema.parse(candidate.type),
-      title: candidate.title,
-      content: candidate.content,
+      type: reviewed.type ?? memoryTypeSchema.parse(candidate.type),
+      title: reviewed.title ?? acceptedTitle(candidate, content),
+      content,
       status: "active",
       confidence: candidate.confidence,
       scope: candidate.scope,
@@ -165,6 +179,15 @@ export function acceptCandidate(db: SqliteDatabase, candidateId: string): Memory
       .run(nowIso(), candidateId);
     return memory;
   })();
+}
+
+function acceptedTitle(candidate: MemoryCandidate, content: string): string {
+  if (!/^Review\s/i.test(candidate.title)) return candidate.title;
+  // The audit candidate keeps its review label; the active memory describes its conclusion.
+  const firstLine = content.split(/\r?\n/u).find((line) => line.trim()) ?? content;
+  const conclusion = firstLine.trim().replace(/^(?:#{1,6}\s+|[-*+]\s+)/u, "")
+    .replace(/^(?:decision|constraint|lesson|issue|risk)\s*:\s*/iu, "");
+  return (conclusion.split(/(?<=[。！？])\s*|(?<=[.!?])\s+/u)[0] || conclusion).slice(0, 160);
 }
 
 export function rejectCandidate(db: SqliteDatabase, candidateId: string): MemoryCandidate {

@@ -2,8 +2,10 @@ import { indexMigrationPreview } from "../maintenance/index-migration-preview.js
 import { checkMigrationSpace, migrationFailureMessage, type MigrationMode, type MigrationSpaceCheck } from "../maintenance/migration-space.js";
 import type { SqliteDatabase } from "../storage/database.js";
 import { loadGlobalConfig } from "../config/paths.js";
+import { normalizeTaskSummaryTitles, previewTaskSummaryTitles } from "../memory/title-normalization.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
 import { indexProject, type IndexOptions, type IndexResult } from "../indexing/indexer.js";
+import { readContentProtection } from "../indexing/content-protection.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import { readSearchRanking, readSearchRankingSync, writeSearchRanking, type SearchRankingSettings } from "../search/search-ranking.js";
 import {
@@ -25,6 +27,7 @@ import {
   rejectCandidate,
   type IndexedSourceChange,
   type MemoryCandidate,
+  type CandidateReview,
 } from "../memory/candidate-service.js";
 import type { GitSnapshot } from "../git/git-service.js";
 import {
@@ -405,8 +408,18 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => listCandidates(db, status, limit));
   }
 
-  acceptCandidate(projectId: string, candidateId: string): MemoryRecord {
-    return this.withDb(projectId, (db) => acceptCandidate(db, candidateId));
+  previewTaskSummaryTitles(projectId: string): ReturnType<typeof previewTaskSummaryTitles> {
+    return this.withDb(projectId, (db) => previewTaskSummaryTitles(db));
+  }
+
+  normalizeTaskSummaryTitles(
+    projectId: string, previewHash: string, options: { signal?: AbortSignal } = {},
+  ): ReturnType<typeof normalizeTaskSummaryTitles> {
+    return this.withDb(projectId, (db) => normalizeTaskSummaryTitles(db, previewHash, options));
+  }
+
+  acceptCandidate(projectId: string, candidateId: string, review: CandidateReview = {}): MemoryRecord {
+    return this.withDb(projectId, (db) => acceptCandidate(db, candidateId, review));
   }
 
   rejectCandidate(projectId: string, candidateId: string): MemoryCandidate {
@@ -485,6 +498,7 @@ export class ProjectContextApp {
         schemaVersion: db.pragma("user_version", { simple: true }),
         vcsState,
         gitState: vcsState,
+        contentProtection: readContentProtection(db),
         lastIndexRun: db.prepare("SELECT * FROM index_runs ORDER BY started_at DESC LIMIT 1").get() ?? null,
       };
     });
@@ -515,6 +529,7 @@ export class ProjectContextApp {
           symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
           relations: scalar(db, "SELECT COUNT(*) FROM relations"),
           schemaVersion: db.pragma("user_version", { simple: true }),
+          contentProtection: readContentProtection(db),
           lastIndexRun: db.prepare("SELECT * FROM index_runs ORDER BY started_at DESC LIMIT 1").get() ?? null,
         },
         statuses: {
@@ -531,11 +546,14 @@ export class ProjectContextApp {
           .sort((left, right) => right.count - left.count || right.bytes - left.bytes)
           .slice(0, 10),
         primarySources: sources.slice(0, 8),
-        recentMemories: listMemories(db, "active", 6),
+        recentMemories: listMemories(db, "active", 6, "exclude"),
+        taskSummaries: listMemories(db, "active", 6, "only"),
         staleMemories: listMemories(db, "stale", 6),
         activeTasks: listTasks(db, "in_progress", 6),
         completedTasks: listTasks(db, "completed", 4),
         pendingCandidates: listCandidates(db, "pending", 6),
+        knowledgeCandidates: listCandidates(db, "pending", 6, "exclude"),
+        taskSummaryCandidates: listCandidates(db, "pending", 6, "only"),
         watch: this.watchList().find((item) => item.projectId === projectId) ?? null,
       };
     });

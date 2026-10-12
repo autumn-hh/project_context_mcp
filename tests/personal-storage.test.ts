@@ -226,14 +226,16 @@ describe("personal storage lifecycle", () => {
         scopeRef: "authentication",
       });
 
-      const firstContext = app.context(first.id, "change authentication", 4_000);
+      const firstContext = app.context(first.id, "change authentication, run typecheck and Vitest", 4_000);
       expect(firstContext.userMemories.map((memory) => memory.id)).toEqual(expect.arrayContaining([
         global.id, scoped.id, module.id,
       ]));
-      const secondContext = app.context(second.id, "change authentication", 4_000);
+      const secondContext = app.context(second.id, "change authentication, run typecheck and Vitest", 4_000);
       expect(secondContext.userMemories.map((memory) => memory.id)).toContain(global.id);
       expect(secondContext.userMemories.map((memory) => memory.id)).not.toContain(scoped.id);
       expect(secondContext.userMemories.map((memory) => memory.id)).not.toContain(module.id);
+      const unrelatedContext = app.context(first.id, "database backup retention", 4_000);
+      expect(unrelatedContext.userMemories).toEqual([]);
     } finally {
       app.close();
     }

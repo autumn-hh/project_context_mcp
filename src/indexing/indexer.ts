@@ -6,7 +6,7 @@ import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
 import { createId, nowIso, sha256 } from "../shared/ids.js";
 import {
-  containsLikelySecret,
+  redactLikelySecretLines,
   defaultIgnorePatterns,
   detectKind,
   isCandidateTextFile,
@@ -14,10 +14,12 @@ import {
   isLowRelevanceSourcePath,
   isSensitivePath,
 } from "./file-policy.js";
-import { analyzeCode, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
+import { analyzeCode, CODE_ANALYSIS_VERSION, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
+import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js";
 import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { createRunLogger } from "./run-log.js";
+import { saveContentProtection, safeReportPath, type ContentProtectionReport } from "./content-protection.js";
 
 const MAX_FILE_SIZE = 1_000_000;
 const CHUNK_CHAR_LIMIT = 4_000;
@@ -81,7 +83,12 @@ export async function indexProject(
   const result: IndexResult = {
     runId, scanned: 0, indexed: 0, skipped: 0, removed: 0, errors: [], visited: 0, prunedDirectories: 0,
   };
+  const contentProtection: ContentProtectionReport = {
+    runId, completed: false, checkedAt: startedAt, skipped: [], redacted: [],
+  };
   try {
+    const analysisChanged = db.prepare("SELECT value FROM metadata WHERE key = 'code_analysis_version'").pluck().get()
+      !== CODE_ANALYSIS_VERSION;
     const matcher = ignore().add(defaultIgnorePatterns(project.rootPath));
     for (const fileName of [".gitignore", ".project-context-ignore"]) {
       try {
@@ -98,7 +105,14 @@ export async function indexProject(
     for await (const absolutePath of walk(project.rootPath, matcher, result, options)) {
       throwIfCancelled(options.signal);
       const relativePath = relative(project.rootPath, absolutePath).split(sep).join("/");
-      if (matcher.ignores(relativePath) || isSensitivePath(relativePath) || !isCandidateTextFile(relativePath)) continue;
+      if (matcher.ignores(relativePath)) continue;
+      if (isSensitivePath(relativePath) || !isCandidateTextFile(relativePath)) {
+        contentProtection.skipped.push({
+          path: safeReportPath(relativePath),
+          reason: isSensitivePath(relativePath) ? "sensitive-path" : "unsupported-file",
+        });
+        continue;
+      }
       result.scanned += 1;
       seen.add(relativePath);
       try {
@@ -107,6 +121,7 @@ export async function indexProject(
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
           log.record("文件超过大小限制，跳过。", relativePath);
+          contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "file-too-large" });
           continue;
         }
         const buffer = await readFile(absolutePath);
@@ -114,26 +129,35 @@ export async function indexProject(
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
           log.record("检测到二进制内容，跳过。", relativePath);
+          contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "binary-content" });
           continue;
         }
-        const content = buffer.toString("utf8");
-        if (isGeneratedTextArtifact(relativePath, content)) {
+        const originalContent = buffer.toString("utf8");
+        if (isGeneratedTextArtifact(relativePath, originalContent)) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
           log.record("检测到生成文件，跳过。", relativePath);
+          contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "generated-artifact" });
           continue;
         }
-        if (containsLikelySecret(content)) {
+        const { content, redactedLines } = redactLikelySecretLines(originalContent);
+        if (redactedLines.length > 0) {
+          contentProtection.redacted.push({ path: safeReportPath(relativePath), lines: redactedLines });
+          log.record(`已遮蔽 ${redactedLines.length} 行疑似敏感内容，保留其余内容。`, relativePath, "warn");
+        }
+        if (redactedLines.length > 0 && !content.trim()) {
           if (existingByPath.has(relativePath)) deleteSource(db, existingByPath.get(relativePath)!.id);
           result.skipped += 1;
-          log.record("检测到疑似敏感内容，跳过；未保存文件内容。", relativePath, "warn");
+          contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "no-safe-content" });
+          log.record("遮蔽后无可索引内容，跳过；未保存文件内容。", relativePath, "warn");
           continue;
         }
-        const contentHash = sha256(buffer);
+        const contentHash = sha256(content);
         const existing = existingByPath.get(relativePath);
         const fullIndex = !isLowRelevanceSourcePath(relativePath);
         const tierChanged = existing ? sourceNeedsTierRefresh(db, existing.id, fullIndex) : false;
-        if (existing?.content_hash === contentHash && !tierChanged) {
+        const refreshCode = analysisChanged && fullIndex && /\.(?:[cm]?js|jsx|ts|tsx)$/iu.test(relativePath);
+        if (existing?.content_hash === contentHash && !tierChanged && !refreshCode) {
           result.skipped += 1;
           log.record("内容未变化，复用已有索引。", relativePath);
           continue;
@@ -153,6 +177,7 @@ export async function indexProject(
         await reportProgress(options, result, "indexing", relativePath);
       } catch (error) {
         result.errors.push({ path: relativePath, message: error instanceof Error ? error.message : String(error) });
+        contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "file-processing-error" });
         log.record("文件处理失败，详情见错误记录。", relativePath, "error");
       }
     }
@@ -181,12 +206,25 @@ export async function indexProject(
       ...(options.signal ? { signal: options.signal } : {}),
       onBatch: () => reportProgress(options, result, "finalizing", "search index"),
     });
+    await rebuildRelationTargets(db, result.indexed > 0 || result.removed > 0, {
+      ...(options.signal ? { signal: options.signal } : {}),
+      onBatch: () => reportProgress(options, result, "finalizing", "relation targets"),
+    });
+    if (result.errors.length === 0) {
+      db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('code_analysis_version', ?)")
+        .run(CODE_ANALYSIS_VERSION);
+    }
 
+    contentProtection.completed = result.errors.length === 0;
+    contentProtection.checkedAt = nowIso();
+    saveContentProtection(db, contentProtection);
     finishRun(db, result, "completed");
     log.record(`索引完成：扫描 ${result.scanned}，更新 ${result.indexed}，跳过 ${result.skipped}，移除索引 ${result.removed}，错误 ${result.errors.length}。`, undefined, result.errors.length ? "warn" : "info", true);
     return result;
   } catch (error) {
     result.errors.push({ path: "<index>", message: error instanceof Error ? error.message : String(error) });
+    contentProtection.checkedAt = nowIso();
+    saveContentProtection(db, contentProtection);
     finishRun(db, result, "failed");
     log.record(error instanceof Error && error.name === "AbortError" ? "索引已取消，已保存当前进度和错误记录。" : "索引失败，详情见错误记录。", undefined, "error", true);
     if (error instanceof Error && error.name === "AbortError") {
@@ -202,6 +240,7 @@ function deleteSource(db: SqliteDatabase, sourceId: string): void {
 
 function deleteSources(db: SqliteDatabase, sourceIds: string[], deleteFts: boolean): void {
   if (sourceIds.length === 0) return;
+  db.prepare("DELETE FROM metadata WHERE key = 'relation_targets_version'").run();
   const sourcePlaceholders = sourceIds.map(() => "?").join(", ");
   const chunkIds = db.prepare(`SELECT id FROM chunks WHERE source_id IN (${sourcePlaceholders})`)
     .pluck().all(...sourceIds) as string[];
@@ -277,6 +316,7 @@ function replaceSource(db: SqliteDatabase, input: {
 }): void {
   const chunks = chunkText(input.content);
   const transaction = db.transaction(() => {
+    db.prepare("DELETE FROM metadata WHERE key = 'relation_targets_version'").run();
     db.prepare("DELETE FROM chunks_fts WHERE chunk_id IN (SELECT id FROM chunks WHERE source_id = ?)")
       .run(input.sourceId);
     for (const id of db.prepare("SELECT id FROM chunks WHERE source_id = ?").pluck().all(input.sourceId) as string[]) {

@@ -1,9 +1,10 @@
 import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
-import { getMemory, listMemories, type MemoryRecord } from "../memory/memory-service.js";
+import { getMemory, type MemoryRecord } from "../memory/memory-service.js";
 import { listTasks, type TaskRecord } from "../tasks/task-service.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import type { UserMemoryRecord } from "../memory/user-memory-service.js";
+import { taskOverlap, taskTokens as tokens } from "../shared/task-relevance.js";
 
 export interface ProjectContext {
   project: Pick<ProjectRecord, "id" | "name" | "rootPath" | "remoteUrl">;
@@ -45,14 +46,31 @@ export function buildProjectContext(
 ): ProjectContext {
   // Search first so older but task-relevant memories are not hidden by a recent,
   // unrelated history page. The bounded recent list only fills project-wide gaps.
-  const relevant = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT);
+  const recallSummaries = /task_[a-z0-9]+|(?:回顾|复盘|恢复|继续).{0,30}(?:任务|工作)|(?:review|recap|resume|continue)\s+(?:the\s+)?(?:task|work)/iu.test(task);
+  const relevant = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT, undefined, {
+    excludeTaskSummaries: !recallSummaries,
+  }).filter((hit) => {
+    if (hit.kind !== "memory" || !recallSummaries) return true;
+    const memory = getMemory(db, hit.id);
+    return memory.type !== "task-summary" || summaryMatches(memory, task);
+  });
   const relevantMemoryIds = new Set(relevant.filter((hit) => hit.kind === "memory").map((hit) => hit.id));
-  const memories = memoryCandidates(db, relevantMemoryIds);
+  for (const taskId of task.match(/task_[a-z0-9]+/giu) ?? []) {
+    const ids = db.prepare(`
+      SELECT id FROM memories WHERE status = 'active' AND type = 'task-summary' AND source_ref = ?
+      ORDER BY updated_at DESC LIMIT 4
+    `).all(`task:${taskId}`) as Array<{ id: string }>;
+    for (const { id } of ids) relevantMemoryIds.add(id);
+  }
+  const memories = memoryCandidates(db, relevantMemoryIds, recallSummaries);
   const taskTokens = tokens(task);
   const rankMemory = (memory: MemoryRecord): number => {
+    if (memory.type === "task-summary") {
+      return recallSummaries && summaryMatches(memory, task) ? 100 : Number.NEGATIVE_INFINITY;
+    }
     if (!scopeMatches(memory, task, relevant)) return Number.NEGATIVE_INFINITY;
     return (relevantMemoryIds.has(memory.id) ? 100 : 0)
-      + taskTokens.filter((token) => `${memory.title} ${memory.content} ${memory.scope.join(" ")}`.toLowerCase().includes(token)).length;
+      + taskOverlap(taskTokens, `${memory.title} ${memory.content} ${memory.scope.join(" ")}`);
   };
   const ranked = [...memories].sort((a, b) => rankMemory(b) - rankMemory(a));
   const staleCount = count(db, "SELECT COUNT(*) AS count FROM memories WHERE status IN ('stale', 'conflicted')");
@@ -69,7 +87,9 @@ export function buildProjectContext(
     )).slice(0, 20),
     decisions: ranked.filter((memory) => memory.type === "decision" && rankMemory(memory) > 0).slice(0, 15),
     lessons: ranked.filter(
-      (memory) => (memory.type === "lesson" || memory.type === "issue") && rankMemory(memory) > 0,
+      (memory) => (memory.type === "lesson" || memory.type === "issue"
+        || (memory.type === "task-summary" && recallSummaries && summaryMatches(memory, task)))
+        && rankMemory(memory) > 0,
     ).slice(0, 10),
     userMemories: rankUserMemories(userMemories, task).slice(0, 50),
     activeTasks: rankTasks(listTasks(db, "in_progress", TASK_CANDIDATE_LIMIT), taskTokens).slice(0, TASK_CONTEXT_LIMIT),
@@ -83,14 +103,31 @@ export function buildProjectContext(
 
 function fitBudget(context: ProjectContext): ProjectContext {
   const copy: ProjectContext = structuredClone(context);
+  // Personal rules must not consume the budget reserved for project knowledge.
+  const userBudget = Math.floor(copy.budget.requestedTokens * 0.2);
+  const selectedUserMemories: UserMemoryRecord[] = [];
+  for (const memory of copy.userMemories) {
+    if (estimateTokens(JSON.stringify([...selectedUserMemories, memory])) <= userBudget) {
+      selectedUserMemories.push(memory);
+    } else {
+      copy.budget.truncated = true;
+    }
+  }
+  copy.userMemories = selectedUserMemories;
   copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
   if (copy.budget.usedTokens <= copy.budget.requestedTokens) return copy;
   copy.budget.truncated = true;
-  for (const items of [
-    copy.relevant, copy.codeRelations, copy.lessons, copy.decisions,
-    copy.constraints, copy.userMemories, copy.activeTasks,
-  ]) {
-    while (copy.budget.usedTokens > copy.budget.requestedTokens && items.length > 1) {
+  const groups = [
+    { items: copy.activeTasks, reserve: 0 },
+    { items: copy.userMemories, reserve: 0 },
+    { items: copy.lessons, reserve: 1 },
+    { items: copy.relevant, reserve: 2 },
+    { items: copy.codeRelations, reserve: 2 },
+    { items: copy.decisions, reserve: 2 },
+    { items: copy.constraints, reserve: 2 },
+  ];
+  for (const { items, reserve } of groups) {
+    while (copy.budget.usedTokens > copy.budget.requestedTokens && items.length > reserve) {
       items.pop();
       copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
     }
@@ -101,16 +138,13 @@ function fitBudget(context: ProjectContext): ProjectContext {
     target.set(`${target.value.slice(0, Math.max(16, Math.floor(target.value.length * 0.7)))}...`);
     copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
   }
-  if (copy.budget.usedTokens > copy.budget.requestedTokens) {
-    copy.relevant = [];
-    copy.codeRelations = [];
-    copy.lessons = [];
-    copy.decisions = [];
-    copy.constraints = [];
-    copy.userMemories = [];
-    copy.activeTasks = [];
-    copy.warnings.push("Context details were removed to satisfy the requested token budget.");
-    copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
+  // Tiny explicit budgets can be smaller than record metadata alone. Keep project
+  // decisions/constraints until other categories have been exhausted.
+  for (const { items } of groups) {
+    while (copy.budget.usedTokens > copy.budget.requestedTokens && items.length) {
+      items.pop();
+      copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
+    }
   }
   return copy;
 }
@@ -173,19 +207,32 @@ function relatedCode(db: SqliteDatabase, hits: SearchHit[]): ProjectContext["cod
   });
 }
 
-function memoryCandidates(db: SqliteDatabase, relevantMemoryIds: Set<string>): MemoryRecord[] {
+function memoryCandidates(db: SqliteDatabase, relevantMemoryIds: Set<string>, recallSummaries: boolean): MemoryRecord[] {
   const candidates = new Map<string, MemoryRecord>();
   for (const memoryId of relevantMemoryIds) {
     try {
       const memory = getMemory(db, memoryId);
-      if (memory.status === "active") candidates.set(memoryId, memory);
+      if (memory.status === "active" && (memory.type !== "task-summary" || recallSummaries)) {
+        candidates.set(memoryId, memory);
+      }
     } catch {
       // A concurrent status update can remove a search hit before it is read.
     }
   }
-  for (const memory of listMemories(db, "active", MEMORY_CANDIDATE_LIMIT)) {
-    if (candidates.size >= MEMORY_CANDIDATE_LIMIT) break;
-    candidates.set(memory.id, memory);
+  // Reserve candidates by type before LIMIT so recent execution summaries cannot
+  // hide older project-wide decisions or constraints. Search fills relevant gaps.
+  for (const [types, limit] of [
+    [["constraint"], 16], [["decision"], 16], [["lesson", "issue"], 8],
+  ] as const) {
+    const ids = db.prepare(`
+      SELECT id FROM memories WHERE status = 'active'
+        AND type IN (${types.map(() => "?").join(", ")})
+      ORDER BY updated_at DESC, id LIMIT ?
+    `).all(...types, limit) as Array<{ id: string }>;
+    for (const { id } of ids) {
+      if (candidates.size >= MEMORY_CANDIDATE_LIMIT) break;
+      candidates.set(id, getMemory(db, id));
+    }
   }
   return [...candidates.values()];
 }
@@ -233,20 +280,29 @@ function rankTasks(tasks: TaskRecord[], taskTokens: string[]): TaskRecord[] {
   return tasks.sort((a, b) => score(b) - score(a) || b.updatedAt.localeCompare(a.updatedAt));
 }
 
-function tokens(value: string): string[] {
-  return value.toLowerCase().split(/[^\p{L}\p{N}_-]+/u).filter((token) => token.length >= 2);
+function summaryMatches(memory: MemoryRecord, task: string): boolean {
+  const explicitIds = task.match(/task_[a-z0-9]+/giu) ?? [];
+  if (explicitIds.length) return explicitIds.some((id) => memory.sourceRef === `task:${id}`);
+  const title = memory.title.replace(/^Review task-summary from task:\s*/iu, "").toLowerCase();
+  if (title.length >= 12 && task.toLowerCase().includes(title)) return true;
+  const text = `${memory.title} ${memory.content}`.toLowerCase();
+  return taskOverlap(tokens(task), text) >= 2;
 }
 
 function rankUserMemories(memories: UserMemoryRecord[], task: string): UserMemoryRecord[] {
   const taskTokens = tokens(task);
   const score = (memory: UserMemoryRecord): number => {
     const text = `${memory.title} ${memory.content} ${memory.scopeRef ?? ""}`.toLowerCase();
-    const relevance = taskTokens.filter((token) => text.includes(token)).length;
+    const relevance = taskOverlap(taskTokens, text);
     const scopeWeight = memory.scopeLevel === "user" ? 1 : 10;
     const constraintWeight = memory.type === "constraint" ? 5 : 0;
     return relevance * 100 + scopeWeight + constraintWeight;
   };
-  return [...memories].sort((a, b) => score(b) - score(a));
+  return memories.filter((memory) => {
+    const text = `${memory.title} ${memory.content} ${memory.scopeRef ?? ""}`.normalize("NFKC").toLowerCase();
+    return memory.status === "active" && memory.type !== "task-summary"
+      && taskOverlap(taskTokens, text) > 0;
+  }).sort((a, b) => score(b) - score(a));
 }
 
 function count(db: SqliteDatabase, sql: string): number {

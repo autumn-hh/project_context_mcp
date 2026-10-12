@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { migrateProject } from "../src/storage/schema.js";
+import { migrateProject, PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import {
   cancelTask, checkpointTask, completeTask, getTask, listTaskHistory, startTask, type TaskCheckpoint,
@@ -52,7 +52,7 @@ describe("persistent task history", () => {
     downgradeToVersion7(db);
     const startedAt = new Date().toISOString();
     migrateProject(db);
-    expect(db.pragma("user_version", { simple: true })).toBe(8);
+    expect(db.pragma("user_version", { simple: true })).toBe(PROJECT_SCHEMA_VERSION);
     expect(db.prepare("SELECT * FROM tasks ORDER BY id").all()).toEqual(before);
     for (const task of [active, done, cancelled]) {
       const history = listTaskHistory(db, task.id);
@@ -126,7 +126,7 @@ describe("persistent task history", () => {
     }) as typeof first.transaction);
     expect(() => migrateProject(first)).not.toThrow();
     expect(competingMigrationRan).toBe(true);
-    expect(first.pragma("user_version", { simple: true })).toBe(8);
+    expect(first.pragma("user_version", { simple: true })).toBe(PROJECT_SCHEMA_VERSION);
     expect(first.pragma("quick_check", { simple: true })).toBe("ok");
   });
 

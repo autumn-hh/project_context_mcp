@@ -134,8 +134,35 @@ export function isLowRelevanceSourcePath(relativePath: string): boolean {
   return /\.(svg|eot|ttf|otf|woff2?|map|min\.(?:js|css))$/u.test(normalized);
 }
 
+const PRIVATE_KEY_BEGIN = /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/;
+const CREDENTIAL_ASSIGNMENT = /(?:api[_-]?key|access[_-]?token|client[_-]?secret|private[_-]?key|password)\s*[:=]\s*["']?[A-Za-z0-9_\-/.+=]{16,}/i;
+
 export function containsLikelySecret(content: string): boolean {
-  if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(content)) return true;
-  return /(?:api[_-]?key|access[_-]?token|client[_-]?secret|private[_-]?key|password)\s*[:=]\s*["']?[A-Za-z0-9_\-/.+=]{16,}/i
-    .test(content);
+  return PRIVATE_KEY_BEGIN.test(content) || CREDENTIAL_ASSIGNMENT.test(content);
+}
+
+/** Mask entire matching lines before any text or code analysis, preserving source positions. */
+export function redactLikelySecretLines(content: string): { content: string; redactedLines: number[] } {
+  const ranges: Array<{ start: number; end: number }> = [];
+  const credentials = new RegExp(CREDENTIAL_ASSIGNMENT.source, "gi");
+  const privateKeys = /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|$)/g;
+  for (const pattern of [credentials, privateKeys]) {
+    for (const match of content.matchAll(pattern)) {
+      ranges.push({ start: match.index, end: match.index + match[0].length });
+    }
+  }
+  if (ranges.length === 0) return { content, redactedLines: [] };
+  ranges.sort((left, right) => left.start - right.start);
+  const redactedLines: number[] = [];
+  let offset = 0;
+  let rangeIndex = 0;
+  const lines = content.split("\n").map((line, index) => {
+    const start = offset;
+    offset += line.length + 1;
+    while (rangeIndex < ranges.length && ranges[rangeIndex]!.end <= start) rangeIndex++;
+    if (rangeIndex >= ranges.length || ranges[rangeIndex]!.start >= offset) return line;
+    redactedLines.push(index + 1);
+    return line.replace(/[^\r]/g, " ");
+  });
+  return { content: lines.join("\n"), redactedLines };
 }

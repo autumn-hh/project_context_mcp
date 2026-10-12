@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import type { SqliteDatabase } from "../storage/database.js";
 import { openDatabase } from "../storage/database.js";
 import { assertMigrationAccess } from "../storage/migration-guard.js";
+import { databaseOccupancy } from "../storage/connection-occupancy.js";
 import { migrateProject, migrateRegistry, PROJECT_SCHEMA_VERSION } from "../storage/schema.js";
 import { createId, nowIso } from "../shared/ids.js";
 import { ProjectContextError } from "../shared/errors.js";
@@ -346,6 +347,10 @@ export class ProjectService {
       throw new ProjectContextError("RESTORE_ROOT_REQUIRED", "A project root is required when restoring a new project.");
     }
     return this.restoreNew(source, input.root, input.name);
+  }
+
+  connectionOccupancy(projectId: string) {
+    return databaseOccupancy(this.projectDatabasePath(projectId));
   }
 
   projectDatabase(projectId: string): SqliteDatabase {

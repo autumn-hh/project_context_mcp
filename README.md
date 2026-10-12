@@ -64,6 +64,9 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 根据项目根目录识别并排除 Codex 运行会话、缓存、日志、附件和本地密钥存储
 - 为已索引文本块建立外键索引，保证大型数据库中的来源清理行为可预期
 - 默认排除 `.env`、凭据、私钥、数据库、二进制文件、生成目录和大文件
+- 普通文本和源码中的疑似敏感内容只遮蔽命中物理行，PEM 私钥遮蔽完整块；保留其他片段及原行号，源文件不修改。`project_health`、项目画像健康数据和 `project_doctor` 的 `contentProtection` 返回最近检查的遮蔽行号与跳过路径，未完成检查有明确标记；忽略目录不在覆盖范围内。
+- 升级前显示数据库连接占用 PID、角色、版本及重启建议。新版连接使用项目外临时登记；Windows 查询数据库/WAL/SHM 文件句柄，也能发现未登记旧进程。其他平台或系统探测失败时明确提示覆盖不足；不会强制断开连接。
+- 本机真实大库邻居查询测量与消歧抽查见 [图查询验证](docs/graph-query-benchmark-2026-10-12.md)，结果仅代表邻居扩展成本。
 - 默认排除 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、字节码、编译缓存和覆盖率/性能分析产物
 - 使用 Tree-sitter 索引 TypeScript、TSX、JavaScript、JSX、MJS 和 CJS 符号
 - 搜索与任务上下文包含导入、调用、继承和实现关系
@@ -78,6 +81,18 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 本地工作台支持候选接受/拒绝、过期记忆清理、任务完成/取消以及索引监听控制
 - `project_context` 按任务相关性组装上下文，包含关联代码符号并严格执行 Token 预算
 - 选择与任务相关的作用域约束，同时保留作用域为空的项目级约束
+- 个人记忆仅在任务词命中时进入上下文，最多使用请求 Token 预算的 20%；项目决策、约束按类型保留候选名额。任务摘要默认排除，回顾相关任务或指定任务 ID 时才召回；极小预算可能不足以保留完整记录。
+- 工作台分别展示长期知识、任务摘要及两类待审核候选；“整理并接受”允许明确编辑标题、结论与类型，原候选保留为审核证据。MCP `memory_candidate_accept` 可选传入 `review: { title, content, type }`，原调用仍兼容。
+- Schema v9 保存解析后的代码关系目标；旧项目在下一次索引时补齐，搜索按种子符号查询邻居，不再全量读取符号和导入。解析仍限于静态可确定的关系；不确定的调用保持未解析。更新后需构建并重启 MCP/Web 服务。
+
+历史任务摘要标题可单独规范化，正文、来源和时间戳保持不变，FTS 与 n-gram 同步更新。默认只预览；应用时可交互取消，或用已审阅预览的哈希非交互执行。预览后记录有变化会拒绝应用。
+
+```powershell
+node dist/cli.js memory normalize-task-titles <project-id>
+node dist/cli.js memory normalize-task-titles <project-id> --cancel
+node dist/cli.js memory normalize-task-titles <project-id> --apply
+node dist/cli.js memory normalize-task-titles <project-id> --apply --preview-hash <previewHash>
+```
 - 本地确定性质量评估覆盖检索、上下文选择、记忆候选和延迟
 - 项目根目录和输出根目录使用显式允许列表，并校验符号链接后的真实输出路径
 - MCP 工具提供结构化结果、输出 Schema、资源、资源模板和工作流提示词
@@ -416,7 +431,7 @@ project_context
 
 客户端配置细节可参考对应官方文档：Codex 的 [MCP](https://developers.openai.com/codex/mcp/) 与 [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/)，以及 Claude Code 的 [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) 文档。
 
-## MCP 工具（35 个）
+## MCP 工具（40 个）
 
 - `storage_status`
 - `project_open`、`project_list`、`project_update`、`project_archive`、`project_unarchive`、`project_relocate`

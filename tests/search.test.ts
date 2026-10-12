@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ProjectContextApp } from "../src/core/app.js";
 import { matchingNgramItems } from "../src/search/ngram-index.js";
 import { rrfMerge } from "../src/search/rank-fusion.js";
+import { searchProject } from "../src/search/search-service.js";
+import { rebuildRelationTargets } from "../src/code-intelligence/relation-targets.js";
 
 describe("search ranking and recall", () => {
   it("fuses ranked lists without comparing heterogeneous raw scores", () => {
@@ -175,6 +177,108 @@ describe("project graph recall", () => {
     }
   });
 
+  it("persists ESM import targets and resolves method receivers and aliases without same-name collisions", async () => {
+    await writeFile(join(projectRoot, "src", "receivers.ts"), [
+      "import { helper as renamed } from './helper.js';",
+      "import * as tools from './helper.js';",
+      "class First { run() { return this.finish(); } finish() { return renamed(); } }",
+      "class Second { finish() { return tools.helper(); } }",
+      "export function receiverEntry() { return First.run(); }",
+      "export function unknownReceiver(value: any) { return value.finish(); }",
+    ].join("\n"), "utf8");
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      const db = app.projects.projectDatabase(project.id);
+      try {
+        const resolved = db.prepare("SELECT relation.to_name AS name, symbol.qualified_name AS target " +
+          "FROM relations relation JOIN relation_targets resolved ON resolved.relation_id = relation.id " +
+          "JOIN symbols symbol ON symbol.id = resolved.to_symbol_id " +
+          "WHERE relation.source_path = 'src/receivers.ts' ORDER BY relation.start_line").all();
+        expect(resolved).toEqual(expect.arrayContaining([
+          { name: "this.finish", target: "src/receivers.ts#First#finish" },
+          { name: "renamed", target: "src/helper.ts#helper" },
+          { name: "tools.helper", target: "src/helper.ts#helper" },
+          { name: "First.run", target: "src/receivers.ts#First#run" },
+        ]));
+        expect(resolved).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "value.finish" })]));
+        expect(db.prepare("SELECT to_source_path FROM relation_targets target JOIN relations relation " +
+          "ON relation.id = target.relation_id WHERE relation.source_path = 'src/receivers.ts' " +
+          "AND relation.relation_type = 'IMPORTS'").pluck().all()).toEqual(["src/helper.ts", "src/helper.ts"]);
+      } finally { db.close(); }
+    } finally { app.close(); }
+  });
+
+  it("refreshes relation targets when only the imported file changes or disappears", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await writeFile(join(projectRoot, "src", "config.ts"), "export function replacementConfig() { return true; }\n", "utf8");
+      await app.index(project.id);
+      expect(app.search(project.id, "consumer", 8)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ title: "function src/config.ts#replacementConfig" }),
+      ]));
+      await rm(join(projectRoot, "src", "config.ts"));
+      await app.index(project.id);
+      expect(app.search(project.id, "consumer", 8).some(hit => hit.source === "src/config.ts")).toBe(false);
+      const db = app.projects.projectDatabase(project.id);
+      try {
+        expect(db.prepare("SELECT * FROM relation_targets WHERE to_source_path = 'src/config.ts'").all()).toEqual([]);
+      } finally { db.close(); }
+    } finally { app.close(); }
+  });
+
+  it("backfills migrated targets once and traverses indexed neighbors without full graph scans", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      const db = app.projects.projectDatabase(project.id);
+      try {
+        db.exec("DELETE FROM relation_targets; DELETE FROM metadata WHERE key = 'relation_targets_version'");
+        await rebuildRelationTargets(db, false);
+        expect(db.prepare("SELECT count(*) FROM relation_targets").pluck().get()).toBeGreaterThan(0);
+        // A large unrelated graph must not become part of each frontier lookup.
+        const sourceId = db.prepare("SELECT id FROM sources WHERE path = 'src/business.ts'").pluck().get() as string;
+        db.transaction(() => {
+          const symbol = db.prepare("INSERT INTO symbols (id, source_id, source_path, name, qualified_name, kind, start_line, end_line, content_hash) VALUES (?, ?, ?, ?, ?, 'function', 1, 1, 'fixture')");
+          const relation = db.prepare("INSERT INTO relations (id, source_id, source_path, from_symbol_id, from_name, to_name, relation_type, start_line) VALUES (?, ?, ?, ?, ?, ?, 'CALLS', 1)");
+          const target = db.prepare("INSERT INTO relation_targets (relation_id, to_symbol_id, to_source_path) VALUES (?, ?, ?)");
+          for (let index = 0; index < 10_000; index += 1) {
+            const id = "unrelated-symbol-" + index;
+            const path = "unrelated/" + index + ".ts";
+            symbol.run(id, sourceId, path, "unrelated", path + "#unrelated");
+            relation.run("unrelated-relation-" + index, sourceId, path, id, path + "#unrelated", "unrelated");
+            target.run("unrelated-relation-" + index, id, path);
+          }
+        }).immediate();
+        const prepared: string[] = [];
+        const prepare = db.prepare.bind(db);
+        const spy = vi.spyOn(db, "prepare").mockImplementation((sql: string) => {
+          prepared.push(sql);
+          return prepare(sql);
+        });
+        await rebuildRelationTargets(db, false);
+        expect(prepared).toHaveLength(1);
+        prepared.length = 0;
+        const hits = searchProject(db, "entryPoint", 12);
+        expect(hits.some(hit => hit.title === "function src/helper.ts#helper")).toBe(true);
+        spy.mockRestore();
+        const queries = [...new Set(prepared.filter(sql => sql.includes("JOIN relation_targets")))];
+        expect(queries).toHaveLength(2);
+        const seed = db.prepare("SELECT id FROM symbols WHERE name = 'entryPoint'").pluck().get() as string;
+        for (const query of queries) {
+          const parameters = Array.from({ length: query.split("?").length - 1 }, () => seed);
+          const plan = prepare("EXPLAIN QUERY PLAN " + query).all(...parameters) as Array<{ detail: string }>;
+          const details = plan.map(row => row.detail).join("\n");
+          expect(details).not.toMatch(/SCAN (?:relation|resolved|source|target)(?:\s|$)/u);
+          expect(details).toContain("USING INDEX");
+        }
+      } finally { db.close(); }
+    } finally { app.close(); }
+  });
+
   it("filters inactive n-gram rows before applying the candidate limit", async () => {
     const app = await ProjectContextApp.create();
     try {
@@ -209,5 +313,30 @@ describe("project graph recall", () => {
     } finally {
       app.close();
     }
+  });
+
+  it("filters task summaries before FTS and fuzzy limits when assembling task context", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const summaryIds: string[] = [];
+      for (let index = 0; index < 70; index += 1) {
+        summaryIds.push(app.remember(project.id, {
+          type: "task-summary", title: "History recap " + index,
+          content: "ledgerexceptionpolicy", sourceKind: "user",
+        }).id);
+      }
+      const decision = app.remember(project.id, {
+        type: "decision", title: "Stable ledger policy",
+        content: "ledgerexceptionpolicy", sourceKind: "user",
+      });
+      const db = app.projects.projectDatabase(project.id);
+      try {
+        const options = { excludeTaskSummaries: true };
+        expect(matchingNgramItems(db, "ledgerexceptionpolicy", 2, options).map(item => item.id)).toEqual([decision.id]);
+        expect(searchProject(db, "ledgerexceptionpolicy", 4, undefined, options).map(hit => hit.id)).toEqual([decision.id]);
+        expect(searchProject(db, "ledgerexceptionpolicy", 4).some(hit => summaryIds.includes(hit.id))).toBe(true);
+      } finally { db.close(); }
+    } finally { app.close(); }
   });
 });

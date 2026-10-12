@@ -56,10 +56,12 @@ export const UI_HTML = String.raw`<!doctype html>
           <section class="portrait-section"><header><div><span class="panel-label">INDEXED SOURCES</span><h2>主要来源</h2></div></header><div id="portrait-sources" class="portrait-list source-list"></div></section>
           </div>
           <div class="portrait-column">
-          <section class="portrait-section"><header><div><span class="panel-label">RECENT MEMORY</span><h2>近期记忆</h2></div></header><div id="portrait-memories" class="portrait-list"></div></section>
+          <section class="portrait-section"><header><div><span class="panel-label">PROJECT KNOWLEDGE</span><h2>项目知识</h2></div></header><div id="portrait-memories" class="portrait-list"></div></section>
+          <details class="portrait-section"><summary>任务摘要</summary><div id="portrait-task-summaries" class="portrait-list"></div></details>
           <section class="portrait-section"><header><div><span class="panel-label">VERSION CONTROL</span><h2>版本控制状态</h2></div></header><dl id="portrait-git" class="portrait-facts"></dl></section>
           <section class="portrait-section"><header><div><span class="panel-label">STALE MEMORY</span><h2>待处理记忆</h2></div></header><div id="portrait-stale-memories" class="portrait-list"></div></section>
           <section class="portrait-section"><header><div><span class="panel-label">REVIEW QUEUE</span><h2>待审核候选</h2></div></header><div id="portrait-candidates" class="portrait-list"></div></section>
+          <details class="portrait-section"><summary>待审核任务摘要</summary><div id="portrait-task-summary-candidates" class="portrait-list"></div></details>
           </div>
         </div>
         <div id="portrait-maintenance" class="portrait-grid" hidden>
@@ -271,7 +273,8 @@ export const UI_HTML = String.raw`<!doctype html>
       <p id="migration-project"></p>
       <p>可勾选不需要搜索的目录，保存为项目忽略规则。默认全部保留，源文件不会删除。随后备份、更新索引并回收空间；全部成功且完整性检查通过后，自动删除本次备份。失败时保留用于恢复。</p>
       <p id="migration-note" role="status"></p>
-      <details class="storage-inspect"><summary>升级前磁盘空间检查</summary><pre id="migration-space" role="status">正在检查…</pre><button id="migration-space-refresh" class="secondary-button" type="button">重新检查空间</button></details>
+      <details class="storage-inspect"><summary>升级前磁盘空间检查</summary><pre id="migration-space" role="status">正在检查…</pre><button id="migration-space-refresh" class="secondary-button" type="button">重新检查空间与占用</button></details>
+      <details class="storage-inspect" open><summary>数据库连接占用与重启提示</summary><pre id="migration-connections" role="status">正在检查…</pre></details>
       <div class="migration-filters"><div class="field"><label for="migration-search">搜索文件夹路径</label><input id="migration-search" type="search" placeholder="输入文件夹名称或路径" maxlength="2000"></div><div class="field"><label for="migration-page-size">每页文件夹数</label><select id="migration-page-size"><option value="10">10 个</option><option value="20">20 个</option><option value="50">50 个</option><option value="100">100 个</option></select></div></div>
       <div class="dialog-actions"><button id="migration-recommend" class="secondary-button" type="button" disabled>勾选推荐目录</button></div>
       <p id="migration-recommendation" role="status">推荐会结合项目语言、构建文件和目录证据；学习、示例和业务目录由你判断。</p>
@@ -296,6 +299,11 @@ export const UI_HTML = String.raw`<!doctype html>
       <div class="dialog-actions"><button id="cancel-project" class="secondary-button" type="button">取消</button><button id="save-project" class="primary-button" type="submit">保存</button></div>
     </form>
   </dialog>
+  <dialog id="candidate-dialog" aria-labelledby="candidate-title"><form id="candidate-form">
+    <h2 id="candidate-title">整理记忆结论</h2><p>保存稳定标题与结论。任务过程记录可保留为任务摘要；原候选与来源继续保留。</p>
+    <div class="project-dialog-fields"><label>记忆类型<select id="candidate-type"></select></label><label>标题<input id="candidate-memory-title" maxlength="160" required></label><label>结论<textarea id="candidate-content" rows="8" maxlength="8000" required></textarea></label></div>
+    <p id="candidate-error" role="alert"></p><div class="dialog-actions"><button id="candidate-cancel" class="secondary-button" type="button">取消</button><button id="candidate-save" class="primary-button" type="submit">接受并保存</button></div>
+  </form></dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>
 </html>`;
@@ -773,6 +781,10 @@ dialog p { color: var(--muted); line-height: 1.5; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
 .project-dialog-fields { display: grid; gap: 14px; margin-top: 18px; }
 #project-dialog { width: min(560px, calc(100vw - 32px)); }
+#candidate-dialog { width: min(560px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow: auto; }
+#candidate-dialog label { display: grid; gap: 6px; min-width: 0; }
+#candidate-dialog p, #candidate-dialog h2 { overflow-wrap: anywhere; }
+#candidate-dialog .dialog-actions { flex-wrap: wrap; }
 #migration-dialog { width: min(800px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: auto; }
 .migration-body { padding: 20px; min-width: 0; }
 .migration-body p, #migration-result { overflow-wrap: anywhere; }
@@ -782,7 +794,7 @@ dialog p { color: var(--muted); line-height: 1.5; }
 .migration-filters { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 0; }
 .migration-filters .field:first-child { flex: 1 1 200px; min-width: 0; }
 .migration-filters input { min-width: 0; width: 100%; }
-#migration-space { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
+#migration-space, #migration-connections { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
 .migration-directory { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; padding: 10px; border: 1px solid var(--line); }
 .migration-directory input { width: 16px; height: 16px; margin-top: 3px; }
 .migration-directory:hover { border-color: var(--accent); }
@@ -969,8 +981,10 @@ export const UI_JS = String.raw`(function () {
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
       "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics", "optimize-index",
       "project-dialog", "project-form", "project-name", "project-root", "cancel-project", "save-project",
+      "candidate-dialog", "candidate-form", "candidate-type", "candidate-memory-title", "candidate-content", "candidate-cancel", "candidate-save", "candidate-error",
       "portrait-file-types", "portrait-git", "portrait-knowledge", "portrait-all-tasks", "portrait-tasks", "portrait-memories", "portrait-stale-memories",
       "portrait-sources", "portrait-candidates", "portrait-overview", "portrait-graph", "portrait-maintenance",
+      "portrait-task-summaries", "portrait-task-summary-candidates",
       "ignore-form", "ignore-content", "ignore-status", "reload-ignore", "save-ignore", "ignore-path", "add-ignore-path",
       "ignore-path-warning", "normalize-ignore", "ignore-impact-summary", "ignore-impact-paths",
       "graph-search-form", "graph-search", "graph-search-results", "graph-relations", "graph-layout",
@@ -980,6 +994,8 @@ export const UI_JS = String.raw`(function () {
   }
 
   function bindEvents() {
+    els["candidate-cancel"].addEventListener("click", function () { els["candidate-dialog"].close(); });
+    els["candidate-form"].addEventListener("submit", saveReviewedCandidate);
     document.querySelectorAll(".tab").forEach(function (button) {
       button.addEventListener("click", function () { switchView(button.dataset.view); });
     });
@@ -1837,6 +1853,9 @@ export const UI_JS = String.raw`(function () {
     renderPortraitList(els["portrait-memories"], portrait.recentMemories, "当前没有活跃项目记忆", function (item) {
       return { title: item.title, content: item.content, meta: typeLabel(item.type) + " · " + formatDate(item.updatedAt) };
     });
+    renderPortraitList(els["portrait-task-summaries"], portrait.taskSummaries || [], "当前没有活跃任务摘要", function (item) {
+      return { title: item.title, content: item.content, meta: (item.sourceRef || "无来源") + " · " + formatDate(item.updatedAt) };
+    });
     renderPortraitList(els["portrait-stale-memories"], portrait.staleMemories, "没有待处理的过期记忆", function (item) {
       return {
         title: item.title, content: item.content, meta: statusLabel(item.status) + " · " + (item.sourceRef || "无来源"),
@@ -1846,15 +1865,17 @@ export const UI_JS = String.raw`(function () {
     renderPortraitList(els["portrait-sources"], portrait.primarySources, "当前没有已索引来源", function (item) {
       return { title: item.path, content: formatBytes(item.sizeBytes), meta: "索引于 " + formatDate(item.indexedAt) };
     });
-    renderPortraitList(els["portrait-candidates"], portrait.pendingCandidates, "没有待审核候选", function (item) {
+    function candidateItem(item) {
       return {
         title: item.title, content: item.content, meta: item.sourceKind + " · 置信度 " + Math.round(item.confidence * 100) + "%",
         actions: [
-          { label: "接受", className: "secondary-button", action: function () { reviewCandidate(item.id, "accept"); } },
+          { label: "整理并接受", className: "secondary-button", action: function () { editCandidate(item, project.id); } },
           { label: "拒绝", className: "danger-button", action: function () { reviewCandidate(item.id, "reject"); } }
         ]
       };
-    });
+    }
+    renderPortraitList(els["portrait-candidates"], portrait.knowledgeCandidates || portrait.pendingCandidates, "没有待审核知识候选", candidateItem);
+    renderPortraitList(els["portrait-task-summary-candidates"], portrait.taskSummaryCandidates || [], "没有待审核任务摘要", candidateItem);
   }
 
   function renderFileTypes(items) {
@@ -2569,6 +2590,8 @@ export const UI_JS = String.raw`(function () {
     var compact = document.getElementById("migration-compact");
     var spaceBox = document.getElementById("migration-space");
     var spaceRefresh = document.getElementById("migration-space-refresh");
+    var connectionsBox = document.getElementById("migration-connections");
+    var connectionsReport = null;
     var checkJob = document.getElementById("migration-check-job");
     var pendingJob = null;
     var actionHint = document.getElementById("migration-action-hint");
@@ -2583,6 +2606,7 @@ export const UI_JS = String.raw`(function () {
     var renderMigrationPage = function () {};
     search.value = ""; search.disabled = true; sizeSelect.disabled = true;
     spaceBox.textContent = "正在检查…";
+    connectionsBox.textContent = "正在检查数据库连接占用…";
     compact.disabled = true; compact.onclick = null; close.disabled = false;
     var spaceSequence = 0;
     async function refreshSpace(mode) {
@@ -2590,13 +2614,34 @@ export const UI_JS = String.raw`(function () {
       spaceRefresh.disabled = true;
       if (mode === "upgrade") { spaceReady = false; run.disabled = true; }
       try {
-        var check = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/migration-space?mode=" + mode);
+        var results = await Promise.all([fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/migration-space?mode=" + mode), refreshConnections()]);
+        var check = results[0];
         if (sequence !== migrationPreviewSequence || requestSequence !== spaceSequence) return;
         showSpace(check);
         if (mode === "upgrade") spaceReady = check.sufficient;
         return check;
       } catch (error) { spaceBox.textContent = "无法检查空间：" + error.message; return null; }
       finally { if (requestSequence === spaceSequence && sequence === migrationPreviewSequence) { spaceRefresh.disabled = running; run.disabled = running || finished || !!pendingJob || !previewReady || !spaceReady; updateActions(); } }
+    }
+    async function refreshConnections() {
+      try {
+        var report = await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/migration-connections");
+        if (sequence !== migrationPreviewSequence || !dialog.open) return null;
+        connectionsReport = report;
+        connectionsBox.textContent = ["检查时间：" + formatDate(report.checkedAt) + " · 当前工作台 PID：" + report.currentPid + " · 版本：" + report.currentVersion,
+          report.holders.length ? "检测到 " + report.holders.length + " 个进程仍有数据库连接或文件句柄：" : "未检测到占用进程。",
+          ...report.holders.map(function (holder) {
+            return "PID " + holder.pid + " · " + holder.name + " · " + holder.roles.join(" / ") + " · 版本 " + (holder.version || "未知（旧版或外部工具）") +
+              (holder.currentProcess ? " · 当前服务" : "") + (holder.connectionCount == null ? "" : " · " + holder.connectionCount + " 个已登记连接") +
+              (holder.restartRecommended ? "\n请先结束此进程中的数据库操作，并重启对应 MCP/Web 服务或关闭外部工具后重新检查。" : "\n升级前请等待当前数据库操作结束；更新代码后重启对应服务。");
+          }), ...(report.warnings || [])].join("\n\n");
+        return report;
+      } catch (error) {
+        if (sequence !== migrationPreviewSequence || !dialog.open) return null;
+        connectionsReport = null;
+        connectionsBox.textContent = "无法检查连接占用：" + error.message + "\n升级前请结束其他数据库操作，并重启旧版 MCP/Web 进程。";
+        return null;
+      }
     }
     function showSpace(check) {
       if (!check) return;
@@ -2770,8 +2815,13 @@ export const UI_JS = String.raw`(function () {
     compact.disabled = !!pendingJob;
     run.onclick = async function () {
       if (running || finished || !spaceReady) return;
+      run.disabled = true;
+      await refreshConnections();
+      run.disabled = running || finished || !spaceReady;
+      if (!dialog.open || sequence !== migrationPreviewSequence || running || finished) return;
       var selected = Array.from(selectedDirectories);
-      var confirmed = await confirmOperation((selected.length ? "将排除全部已选 " + selected.length + " 个目录（包括其他分页和搜索结果外的选择），目录中的内容将不再参与本项目搜索。" : "当前保留全部搜索范围。") + "升级期间备份会临时占用空间；全部成功且完整性检查通过后删除本次备份，失败时保留。历史备份不自动删除。");
+      var restartPids = connectionsReport ? connectionsReport.holders.filter(function (holder) { return holder.restartRecommended; }).map(function (holder) { return holder.pid; }) : [];
+      var confirmed = await confirmOperation((selected.length ? "将排除全部已选 " + selected.length + " 个目录（包括其他分页和搜索结果外的选择），目录中的内容将不再参与本项目搜索。" : "当前保留全部搜索范围。") + "升级期间备份会临时占用空间；全部成功且完整性检查通过后删除本次备份，失败时保留。历史备份不自动删除。" + (restartPids.length ? "检测到需要重启或关闭的占用进程 PID：" + restartPids.join("、") + "。已有连接不会被强制关闭，请先结束其数据库操作；继续升级可能遇到锁等待。" : "升级后请重启全部 MCP/Web 服务以使用新查询。"));
       if (!confirmed) return;
       lockControls(true);
       resultBox.hidden = false; resultBox.textContent = "正在备份、迁移索引并回收空间，大型项目可能需要较长时间…";
@@ -2798,6 +2848,35 @@ export const UI_JS = String.raw`(function () {
     var projectId = els["portrait-project"].value;
     await mutatePortrait("/api/projects/" + encodeURIComponent(projectId) + "/candidates/" + encodeURIComponent(candidateId) + "/" + action,
       { method: "POST", body: {} }, action === "accept" ? "候选已接受" : "候选已拒绝");
+  }
+
+  function editCandidate(item, projectId) {
+    var dialog = els["candidate-dialog"];
+    dialog.dataset.projectId = projectId; dialog.dataset.candidateId = item.id;
+    els["candidate-type"].replaceChildren();
+    types.forEach(function (type) { var option = element("option", "", type[1]); option.value = type[0]; els["candidate-type"].append(option); });
+    els["candidate-type"].value = item.type;
+    var firstLine = item.content.trim().split(/\r?\n/)[0].replace(/^(?:#{1,6}\s+|[-*+]\s+)/, "").replace(/^(?:decision|constraint|lesson|issue|risk)\s*:\s*/i, "");
+    els["candidate-memory-title"].value = /^Review\s/i.test(item.title) ? firstLine.slice(0, 160) : item.title;
+    els["candidate-content"].value = item.content;
+    els["candidate-error"].textContent = "";
+    dialog.showModal();
+  }
+
+  async function saveReviewedCandidate(event) {
+    event.preventDefault();
+    var dialog = els["candidate-dialog"];
+    var projectId = dialog.dataset.projectId, candidateId = dialog.dataset.candidateId;
+    els["candidate-save"].disabled = true; els["candidate-cancel"].disabled = true;
+    try {
+      await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/candidates/" + encodeURIComponent(candidateId) + "/accept", {
+        method: "POST", body: { type: els["candidate-type"].value, title: els["candidate-memory-title"].value.trim(), content: els["candidate-content"].value.trim() }
+      });
+      dialog.close();
+      if (els["portrait-project"].value === projectId) await loadPortrait(true, true);
+      toast("候选结论已保存");
+    } catch (error) { els["candidate-error"].textContent = error.message || String(error); }
+    finally { els["candidate-save"].disabled = false; els["candidate-cancel"].disabled = false; }
   }
 
   async function deleteStaleMemory(memoryId) {

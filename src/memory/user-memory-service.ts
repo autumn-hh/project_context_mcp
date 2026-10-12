@@ -9,6 +9,7 @@ import { ProjectContextError } from "../shared/errors.js";
 import { isWithinRoot } from "../security/path-policy.js";
 import { memoryStatusSchema, memoryTypeSchema } from "./memory-service.js";
 import type { ProjectRecord } from "../projects/project-service.js";
+import { taskOverlap, taskTokens } from "../shared/task-relevance.js";
 
 export const userMemoryScopeSchema = z.enum(["user", "workspace", "project", "module", "task"]);
 export const userMemorySourceKindSchema = z.enum(["user", "tool", "inference", "import"]);
@@ -148,7 +149,10 @@ export class UserMemoryService {
 
   applicable(project: ProjectRecord, task: string, limit = 100): UserMemoryRecord[] {
     const loweredTask = task.toLowerCase();
+    const terms = taskTokens(task);
     return this.list("active", 500).filter((memory) => {
+      const text = `${memory.title} ${memory.content} ${memory.scopeRef ?? ""}`.normalize("NFKC").toLowerCase();
+      if (memory.type === "task-summary" || taskOverlap(terms, text) === 0) return false;
       if (memory.scopeLevel === "user") return true;
       if (memory.scopeLevel === "workspace") {
         return memory.scopeRef !== null && isWithinRoot(memory.scopeRef, project.rootPath);

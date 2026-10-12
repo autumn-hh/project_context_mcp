@@ -44,6 +44,38 @@ describe("localhost rule manager", () => {
     await rm(tempRoot, { recursive: true, force: true });
   });
 
+  it("keeps older project knowledge visible when task summaries fill the recent queue", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const decision = app.remember(project.id, {
+        type: "decision", title: "Durable policy", content: "Memory acceptance requires review.", sourceKind: "user",
+      });
+      const knowledgeTask = app.startTask(project.id, "Record durable policy");
+      app.completeTask(project.id, knowledgeTask.id, {
+        completed: ["Decision: source evidence remains available."], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
+      });
+      for (let index = 0; index < 8; index += 1) {
+        const task = app.startTask(project.id, `Task summary ${index}`);
+        app.completeTask(project.id, task.id, {
+          summary: `Completed execution ${index}.`, completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
+        });
+        const candidate = app.candidates(project.id).find((item) => item.sourceRef === `task:${task.id}`)!;
+        if (index < 7) app.acceptCandidate(project.id, candidate.id);
+      }
+      const portrait = app.portrait(project.id) as {
+        recentMemories: Array<{ id: string; type: string }>; taskSummaries: Array<{ type: string }>;
+        knowledgeCandidates: Array<{ sourceRef: string; type: string }>; taskSummaryCandidates: Array<{ type: string }>;
+      };
+      expect(portrait.recentMemories).toEqual([expect.objectContaining({ id: decision.id, type: "decision" })]);
+      expect(portrait.taskSummaries).toHaveLength(6);
+      expect(portrait.taskSummaries.every((item) => item.type === "task-summary")).toBe(true);
+      expect(portrait.knowledgeCandidates).toEqual([expect.objectContaining({ sourceRef: `task:${knowledgeTask.id}`, type: "decision" })]);
+      expect(portrait.taskSummaryCandidates).toHaveLength(1);
+      expect(portrait.taskSummaryCandidates[0]?.type).toBe("task-summary");
+    } finally { app.close(); }
+  });
+
   it("authenticates locally and completes create, version, soft-delete, and context-preview flows", async () => {
     const app = await ProjectContextApp.create();
     const project = await app.openProject(projectRoot);
@@ -85,6 +117,9 @@ describe("localhost rule manager", () => {
     expect(pageHtml).toContain("task-project-search");
     expect(pageHtml).toContain("ranking-settings-form");
     expect(pageHtml).toContain("optimize-index");
+    expect(pageHtml).toContain("portrait-task-summaries");
+    expect(pageHtml).toContain("portrait-task-summary-candidates");
+    expect(pageHtml).toContain("candidate-form");
     const [styles, appScript] = await Promise.all([
       fetch(`${origin}/styles.css`).then((response) => response.text()),
       fetch(`${origin}/app.js`).then((response) => response.text()),
@@ -218,9 +253,9 @@ describe("localhost rule manager", () => {
 
     const candidates = (portrait.body as { pendingCandidates: Array<{ id: string }> }).pendingCandidates;
     const accepted = await api(origin, `/api/projects/${project.id}/candidates/${candidates[0]!.id}/accept`, {
-      method: "POST", cookie, body: {},
+      method: "POST", cookie, body: { type: "decision", title: "Explicit memory review", content: "Project memories require explicit review before acceptance." },
     });
-    expect(accepted.body).toMatchObject({ status: "active" });
+    expect(accepted.body).toMatchObject({ status: "active", type: "decision", title: "Explicit memory review", content: "Project memories require explicit review before acceptance." });
     const rejected = await api(origin, `/api/projects/${project.id}/candidates/${candidates[1]!.id}/reject`, {
       method: "POST", cookie, body: {},
     });

@@ -154,8 +154,12 @@ export function detectMemoryDrift(db: SqliteDatabase): string[] {
   return [...stale];
 }
 
-export function listMemories(db: SqliteDatabase, status = "active", limit = 50): MemoryRecord[] {
-  const rows = db.prepare("SELECT * FROM memories WHERE status = ? ORDER BY updated_at DESC LIMIT ?")
+export function listMemories(
+  db: SqliteDatabase, status = "active", limit = 50, summaries: "include" | "exclude" | "only" = "include",
+): MemoryRecord[] {
+  const typeFilter = summaries === "exclude" ? " AND type <> 'task-summary'"
+    : summaries === "only" ? " AND type = 'task-summary'" : "";
+  const rows = db.prepare(`SELECT * FROM memories WHERE status = ?${typeFilter} ORDER BY updated_at DESC LIMIT ?`)
     .all(status, limit) as MemoryRow[];
   return rows.map(mapMemory);
 }

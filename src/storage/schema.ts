@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "./database.js";
 
 export const REGISTRY_SCHEMA_VERSION = 3;
-export const PROJECT_SCHEMA_VERSION = 8;
+export const PROJECT_SCHEMA_VERSION = 9;
 
 export function migrateRegistry(db: SqliteDatabase): void {
   migrate(db, "projects", [{ version: 1, sql: `
@@ -258,6 +258,20 @@ export function migrateProject(db: SqliteDatabase): void {
       BEGIN SELECT RAISE(ABORT, 'Task history is append-only'); END;
     CREATE TRIGGER IF NOT EXISTS task_events_no_delete BEFORE DELETE ON task_events
       BEGIN SELECT RAISE(ABORT, 'Task history is append-only'); END;
+    ` },
+    { version: 9, sql: `
+    CREATE TABLE IF NOT EXISTS relation_targets (
+      relation_id TEXT PRIMARY KEY REFERENCES relations(id) ON DELETE CASCADE,
+      to_symbol_id TEXT REFERENCES symbols(id) ON DELETE SET NULL,
+      to_source_path TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS relation_targets_symbol_idx ON relation_targets(to_symbol_id);
+    CREATE INDEX IF NOT EXISTS relation_targets_source_idx ON relation_targets(to_source_path);
+    CREATE INDEX IF NOT EXISTS relations_from_symbol_idx ON relations(from_symbol_id);
+    CREATE INDEX IF NOT EXISTS relations_source_path_type_idx ON relations(source_path, relation_type);
+    CREATE INDEX IF NOT EXISTS symbols_source_path_idx ON symbols(source_path);
+    CREATE INDEX IF NOT EXISTS memories_status_type_updated_idx ON memories(status, type, updated_at DESC, id);
+    CREATE INDEX IF NOT EXISTS memories_source_ref_idx ON memories(source_ref);
     ` },
   ]);
 }

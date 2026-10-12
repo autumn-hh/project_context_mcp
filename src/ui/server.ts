@@ -7,6 +7,7 @@ import * as z from "zod/v4";
 import { ProjectContextApp } from "../core/app.js";
 import { ProjectContextError, errorMessage } from "../shared/errors.js";
 import { memoryTypeSchema } from "../memory/memory-service.js";
+import { candidateReviewSchema } from "../memory/candidate-service.js";
 import { userMemoryScopeSchema } from "../memory/user-memory-service.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { WORKSPACE_THEME_CSS } from "./workspace-theme.js";
@@ -305,6 +306,12 @@ async function routeRequest(
     }
     const optimizeIndexMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/optimize-index$/);
     const migrationSpaceMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-space$/);
+    const migrationConnectionsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-connections$/);
+    if (request.method === "GET" && migrationConnectionsMatch) {
+      const projectId = decodeSegment(migrationConnectionsMatch[1]!);
+      await withApp(response, (app) => app.projects.connectionOccupancy(projectId), false);
+      return;
+    }
     if (request.method === "GET" && migrationSpaceMatch) {
       const projectId = decodeSegment(migrationSpaceMatch[1]!);
       const mode = z.enum(["upgrade", "compact"]).parse(url.searchParams.get("mode") ?? "upgrade");
@@ -350,8 +357,9 @@ async function routeRequest(
       const projectId = decodeSegment(candidateActionMatch[1]!);
       const candidateId = decodeSegment(candidateActionMatch[2]!);
       const action = candidateActionMatch[3]!;
+      const review = action === "accept" ? candidateReviewSchema.parse(await readJsonBody(request)) : undefined;
       await withApp(response, (app) => action === "accept"
-        ? app.acceptCandidate(projectId, candidateId)
+        ? app.acceptCandidate(projectId, candidateId, review)
         : app.rejectCandidate(projectId, candidateId));
       return;
     }

@@ -6,6 +6,7 @@ import { ProjectContextError } from "../shared/errors.js";
 import { nowIso } from "../shared/ids.js";
 import { authorizeOutputPath, isWithinRoot } from "../security/path-policy.js";
 import { isNgramIndexCurrent, rebuildNgramIndex } from "../search/ngram-index.js";
+import { readContentProtection, type ContentProtectionReport } from "../indexing/content-protection.js";
 
 export interface DoctorResult {
   ok: boolean;
@@ -14,6 +15,7 @@ export interface DoctorResult {
   issues: string[];
   repaired: string[];
   counts: Record<string, number>;
+  contentProtection: ContentProtectionReport | null;
 }
 
 export async function doctorProject(
@@ -74,6 +76,7 @@ export async function doctorProject(
     issues,
     repaired,
     counts,
+    contentProtection: readContentProtection(db),
   };
 }
 

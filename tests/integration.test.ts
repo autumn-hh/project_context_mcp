@@ -304,6 +304,41 @@ describe("Project Context core", () => {
     }
   });
 
+  it("accepts stable conclusions while preserving the original candidate audit", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const task = app.startTask(project.id, "Implement refresh rotation");
+      app.completeTask(project.id, task.id, {
+        summary: "Decision: refresh tokens rotate after every use. Validation is complete.",
+        completed: [], next: [], changedFiles: ["src/auth.ts"], verification: [], blockers: [], risks: [],
+      });
+      const candidate = app.candidates(project.id)[0]!;
+      expect(() => app.acceptCandidate(project.id, candidate.id, { title: " " })).toThrow();
+      expect(app.candidates(project.id)[0]?.status).toBe("pending");
+      const memory = app.acceptCandidate(project.id, candidate.id);
+      expect(memory).toMatchObject({
+        title: "refresh tokens rotate after every use.", content: candidate.content,
+        sourceRef: `task:${task.id}`, scope: ["src/auth.ts"],
+      });
+      expect(memory.title).not.toMatch(/^Review /);
+      expect(app.candidates(project.id, "accepted")[0]).toMatchObject({ title: candidate.title, content: candidate.content });
+
+      const reviewedTask = app.startTask(project.id, "Review durable rotation policy");
+      app.completeTask(project.id, reviewedTask.id, {
+        summary: "Added token implementation and verification.",
+        completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
+      });
+      const reviewedCandidate = app.candidates(project.id)[0]!;
+      const reviewed = app.acceptCandidate(project.id, reviewedCandidate.id, {
+        type: "decision", title: "Refresh token rotation", content: "Refresh tokens rotate after every successful use.",
+      });
+      expect(reviewed).toMatchObject({ type: "decision", title: "Refresh token rotation", content: "Refresh tokens rotate after every successful use." });
+      expect(app.candidates(project.id, "accepted").find((item) => item.id === reviewedCandidate.id)?.content)
+        .toBe(reviewedCandidate.content);
+    } finally { app.close(); }
+  });
+
   it("falls back from task summary to one risk or one durable completed item", async () => {
     const app = await ProjectContextApp.create();
     try {
@@ -711,6 +746,79 @@ describe("Project Context core", () => {
     } finally {
       app.close();
     }
+  });
+
+  it("preserves project knowledge under unrelated personal rules and recent task summaries", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      const decision = app.remember(project.id, {
+        type: "decision", title: "Refresh token architecture",
+        content: "refreshToken rotates tokens after use.", sourceKind: "user",
+      });
+      const constraint = app.remember(project.id, {
+        type: "constraint", title: "Local storage boundary",
+        content: "Project data must remain local.", sourceKind: "user",
+      });
+      for (let index = 0; index < 80; index += 1) {
+        app.remember(project.id, {
+          type: "task-summary", title: `Review task-summary from task: Refresh token rollout ${index}`,
+          content: "refreshToken architecture audit completed. ".repeat(20),
+          sourceKind: "tool", sourceRef: `task:task_history${index}`,
+        });
+      }
+      for (let index = 0; index < 110; index += 1) {
+        app.rememberUser({
+          type: "constraint", title: `Global typography rule ${index}`,
+          content: "UI typography and Git commit conventions. ".repeat(20), sourceKind: "user",
+        });
+      }
+      const personal = app.rememberUser({
+        type: "preference", title: "Refresh token review",
+        content: "refreshToken must be reviewed carefully.", sourceKind: "user",
+      });
+      for (let index = 0; index < 6; index += 1) {
+        app.rememberUser({
+          type: "constraint", title: `Refresh token detail ${index}`,
+          content: "refreshToken technical detail. ".repeat(100), sourceKind: "user",
+        });
+      }
+      const context = app.context(project.id, "refreshToken architecture", 3_000);
+      expect(context.decisions.map((memory) => memory.id)).toContain(decision.id);
+      expect(context.constraints.map((memory) => memory.id)).toContain(constraint.id);
+      expect(context.userMemories.every((memory) => memory.title.startsWith("Refresh token"))).toBe(true);
+      expect(context.userMemories.map((memory) => memory.id)).toContain(personal.id);
+      expect(context.budget.usedTokens).toBeLessThanOrEqual(3_000);
+      expect(JSON.stringify(context)).not.toContain("Review task-summary");
+      expect(context.relevant.some((hit) => hit.kind === "symbol")).toBe(true);
+      expect(context.codeRelations.length).toBeGreaterThan(0);
+      // A long newer page of unrelated rules must not hide relevant personal memory.
+      const applicable = app.userMemoryService.applicable(project, "refreshToken architecture");
+      expect(applicable.map((memory) => memory.id)).toContain(personal.id);
+      const recalled = app.context(project.id, "回顾任务 task_history79", 3_000);
+      expect(recalled.lessons.some((memory) => memory.sourceRef === "task:task_history79")).toBe(true);
+    } finally { app.close(); }
+  });
+
+  it("matches Chinese task terms and excludes unrelated global UI rules", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const relevant = app.rememberUser({
+        type: "constraint", title: "数据库备份", content: "备份保留七天。", sourceKind: "user",
+      });
+      app.rememberUser({
+        type: "constraint", title: "全局 UI 验收", content: "所有项目修改时检查按钮边界。", sourceKind: "user",
+      });
+      expect(app.context(project.id, "修改数据库备份保留策略").userMemories.map((memory) => memory.id))
+        .toEqual([relevant.id]);
+      const uiRule = app.rememberUser({
+        type: "constraint", title: "UI Git rules", content: "UI and Git conventions.", sourceKind: "user",
+      });
+      expect(app.context(project.id, "build digit parser").userMemories.map((memory) => memory.id))
+        .not.toContain(uiRule.id);
+    } finally { app.close(); }
   });
 
   it("retrieves relevant memories before bounded assembly under large active history", async () => {

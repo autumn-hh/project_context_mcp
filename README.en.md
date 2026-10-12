@@ -1,5 +1,17 @@
 # Project Context MCP
 
+Task context includes personal memories only when their text matches task terms and caps them at 20% of the requested token budget. Project decisions and constraints have separate candidate quotas and are retained ahead of optional context; very small budgets may still require removing records. Task summaries are excluded by default and recalled for explicit task reviews or task IDs.
+
+The workbench separates durable knowledge from task summaries and provides an explicit review editor for candidate titles, conclusions, and types. MCP `memory_candidate_accept` optionally accepts `review: { title, content, type }`; existing calls remain compatible and the original candidate is retained for auditing.
+
+Schema v9 persists resolved relation targets. Existing projects backfill these targets on their next index run; search traverses indexed neighbors of seed symbols rather than loading all symbols and imports. Uncertain calls remain unresolved. Rebuild and restart MCP/Web services after updating.
+
+Preview legacy task-summary titles with `node dist/cli.js memory normalize-task-titles <project-id>`. `--cancel` makes no changes; `--apply` previews and asks for confirmation, while `--apply --preview-hash <previewHash>` applies an explicitly reviewed snapshot non-interactively. Changed records invalidate the preview. Only titles and their derived search indexes change; contents, sources, and timestamps stay intact.
+
+Ordinary source/text files retain safe content while matching secret lines and complete PEM private-key blocks are masked before indexing. Source bytes and line positions remain unchanged. Health, portrait health, and doctor return `contentProtection` paths and line numbers from the latest check, with incomplete-run markers; ignored directories remain outside coverage. Sensitive paths remain excluded.
+
+Index upgrade preflight shows database-holder PIDs, roles, versions, and restart guidance. Cooperative connections register outside watched projects; Windows file-handle discovery also finds unregistered processes. Other platforms and failed probes report incomplete coverage. Connections are not forcibly drained. See [local real-project graph measurements](docs/graph-query-benchmark-2026-10-12.md) for neighbor-query performance and resolution checks.
+
 **English** | [中文](README.md)
 
 Project Context MCP is a local-first, cross-session project intelligence and memory server for coding agents. It incrementally indexes project text and code, stores sourced decisions and constraints, persists task checkpoints, and assembles task-focused context through MCP.
@@ -399,7 +411,7 @@ The client starts the server from its MCP configuration and follows its global i
 
 For client-specific configuration, see the official Codex documentation for [MCP](https://developers.openai.com/codex/mcp/) and [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/), or the Claude Code [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) documentation.
 
-## MCP Tools (35)
+## MCP Tools (40)
 
 - `storage_status`
 - `project_open`, `project_list`, `project_update`, `project_archive`, `project_unarchive`, `project_relocate`

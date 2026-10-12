@@ -7,6 +7,8 @@ import { ProjectContextApp, stopAllProjectWatches } from "../core/app.js";
 import { loadGlobalConfig } from "../config/paths.js";
 import { ProjectContextError, errorMessage } from "../shared/errors.js";
 import { memoryStatusSchema, memoryTypeSchema } from "../memory/memory-service.js";
+import { candidateReviewSchema } from "../memory/candidate-service.js";
+import { PACKAGE_VERSION } from "../shared/version.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/user-memory-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
@@ -30,7 +32,7 @@ const outputSchema = { result: z.unknown() };
 const MAX_TEXT_CONTENT_CHARS = 2_000;
 
 export function createMcpServer(): McpServer {
-  const server = new McpServer({ name: "project-context-mcp", version: "0.9.3" });
+  const server = new McpServer({ name: "project-context-mcp", version: PACKAGE_VERSION });
 
   server.registerTool("storage_status", {
     description: "Check whether persistent Project Context storage has been configured.",
@@ -346,11 +348,11 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, status, limit }) => withApp((app) => app.candidates(projectId, status, limit)));
 
   server.registerTool("memory_candidate_accept", {
-    description: "Accept a reviewed candidate and persist it as sourced active long-term memory.",
+    description: "Accept a reviewed candidate as sourced active memory. Optionally provide a stable type, title, and conclusion in review; the original candidate remains in the audit record.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), candidateId: z.string().min(1) },
+    inputSchema: { projectId: z.string().min(1), candidateId: z.string().min(1), review: candidateReviewSchema.optional() },
     annotations: { idempotentHint: false },
-  }, ({ projectId, candidateId }) => withApp((app) => app.acceptCandidate(projectId, candidateId)));
+  }, ({ projectId, candidateId, review }) => withApp((app) => app.acceptCandidate(projectId, candidateId, review)));
 
   server.registerTool("memory_candidate_reject", {
     description: "Reject a reviewed memory candidate without deleting its audit record.",

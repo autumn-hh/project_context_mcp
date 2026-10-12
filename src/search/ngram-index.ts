@@ -31,6 +31,7 @@ export function matchingNgramItems(
   db: SqliteDatabase,
   query: string,
   limit: number,
+  options: { excludeTaskSummaries?: boolean } = {},
 ): Array<{ kind: SearchItemKind; id: string; matches: number; coverage: number }> {
   const terms = [...ngrams(query)];
   if (terms.length === 0) return [];
@@ -46,6 +47,7 @@ export function matchingNgramItems(
           SELECT 1 FROM memories
           WHERE memories.id = search_ngrams.item_id
             AND memories.status = 'active'
+            ${options.excludeTaskSummaries ? "AND memories.type <> 'task-summary'" : ""}
         )
       )
     GROUP BY item_kind, item_id

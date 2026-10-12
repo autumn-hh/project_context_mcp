@@ -1,4 +1,3 @@
-import { posix as posixPath } from "node:path";
 import type { SqliteDatabase } from "../storage/database.js";
 import { matchingNgramItems, type SearchItemKind } from "./ngram-index.js";
 import { rrfMerge, type FusedItem } from "./rank-fusion.js";
@@ -13,6 +12,10 @@ export interface SearchHit {
   startLine: number | null;
   score: number;
   status: string | null;
+}
+
+export interface SearchOptions {
+  excludeTaskSummaries?: boolean;
 }
 
 interface ScoredHit {
@@ -38,6 +41,7 @@ export function searchProject(
   query: string,
   limit = 20,
   ranking: SearchRankingSettings = DEFAULT_SEARCH_RANKING,
+  options: SearchOptions = {},
 ): SearchHit[] {
   if (!Number.isFinite(limit) || limit <= 0) return [];
   const ftsQuery = toFtsQuery(query);
@@ -57,6 +61,7 @@ export function searchProject(
     FROM memories_fts
     JOIN memories m ON m.id = memories_fts.memory_id
     WHERE memories_fts MATCH ? AND m.status = 'active'
+      ${options.excludeTaskSummaries ? "AND m.type <> 'task-summary'" : ""}
     ORDER BY rank, m.id LIMIT ?
   `).all(ftsQuery, perKind) as Array<{
     id: string; title: string; content: string; source_ref: string | null; status: string; rank: number;
@@ -88,7 +93,7 @@ export function searchProject(
       source: row.source_ref, startLine: null, score: normalizeRank(row.rank), status: row.status,
     })),
   ].sort((a, b) => b.score - a.score);
-  const fuzzy = matchingNgramItems(db, query, Math.max(limit * 4, 20))
+  const fuzzy = matchingNgramItems(db, query, Math.max(limit * 4, 20), options)
     .map((item) => ngramHit(db, item.kind, item.id, item.coverage, query))
     .filter((hit): hit is SearchHit => hit !== null);
   const symbolExact = exact.filter((hit) => isExactSymbolMatch(hit, query));
@@ -179,89 +184,45 @@ function graphNeighbors(db: SqliteDatabase, symbolIds: string[]): GraphNeighbor[
   if (symbolIds.length === 0) return [];
   const placeholders = symbolIds.map(() => "?").join(", ");
   const direct = db.prepare(`
-    SELECT target.id AS id, relation.relation_type AS relationType,
-           source.id AS fromId, target.id AS toId
+    SELECT target.to_symbol_id AS id, relation.relation_type AS relationType,
+           relation.from_symbol_id AS fromId, target.to_symbol_id AS toId
     FROM relations relation
-    JOIN symbols source ON source.id = relation.from_symbol_id
-    JOIN symbols target ON target.name = relation.to_name
-    WHERE relation.relation_type <> 'IMPORTS'
-      AND source.id IN (${placeholders})
-      AND (
-        target.source_path = source.source_path
-        OR NOT EXISTS (
-          SELECT 1 FROM symbols duplicate
-          WHERE duplicate.name = target.name AND duplicate.id <> target.id
-        )
-      )
+    JOIN relation_targets target ON target.relation_id = relation.id
+    WHERE relation.from_symbol_id IN (${placeholders}) AND target.to_symbol_id IS NOT NULL
     UNION ALL
-    SELECT source.id AS id, relation.relation_type AS relationType,
-           source.id AS fromId, target.id AS toId
-    FROM relations relation
-    JOIN symbols source ON source.id = relation.from_symbol_id
-    JOIN symbols target ON target.name = relation.to_name
-    WHERE relation.relation_type <> 'IMPORTS'
-      AND target.id IN (${placeholders})
-      AND (
-        target.source_path = source.source_path
-        OR NOT EXISTS (
-          SELECT 1 FROM symbols duplicate
-          WHERE duplicate.name = target.name AND duplicate.id <> target.id
-        )
-      )
-    ORDER BY id, relationType, fromId, toId
+    SELECT relation.from_symbol_id AS id, relation.relation_type AS relationType,
+           relation.from_symbol_id AS fromId, target.to_symbol_id AS toId
+    FROM relation_targets target
+    JOIN relations relation ON relation.id = target.relation_id
+    WHERE target.to_symbol_id IN (${placeholders}) AND relation.from_symbol_id IS NOT NULL
+    ORDER BY id, relationType, fromId, toId LIMIT ${GRAPH_MAX_NODES * 4}
   `).all(...symbolIds, ...symbolIds) as GraphNeighbor[];
 
-  const symbolRows = db.prepare("SELECT id, source_path AS sourcePath FROM symbols")
-    .all() as Array<{ id: string; sourcePath: string }>;
-  const symbolsBySource = new Map<string, string[]>();
-  for (const row of symbolRows) {
-    const ids = symbolsBySource.get(row.sourcePath) ?? [];
-    ids.push(row.id);
-    symbolsBySource.set(row.sourcePath, ids);
-  }
-  const sourcePaths = new Set(symbolsBySource.keys());
+  // IMPORTS connects file-level scopes. Start from frontier IDs in both directions
+  // so indexed source/target lookups never materialize the whole symbol graph.
   const imports = db.prepare(`
-    SELECT relation.source_path AS sourcePath, relation.to_name AS targetName,
-           relation.from_symbol_id AS fromId
-    FROM relations relation
-    WHERE relation.relation_type = 'IMPORTS'
-  `).all() as Array<{ sourcePath: string; targetName: string; fromId: string | null }>;
-  const seeds = new Set(symbolIds);
-  const resolvedImports: GraphNeighbor[] = [];
-  for (const relation of imports) {
-    const targetPath = resolveImportPath(relation.sourcePath, relation.targetName, sourcePaths);
-    if (!targetPath) continue;
-    const targetIds = symbolsBySource.get(targetPath) ?? [];
-    const importerIds = relation.fromId
-      ? [relation.fromId]
-      : (symbolsBySource.get(relation.sourcePath) ?? []);
-    for (const fromId of importerIds) {
-      for (const toId of targetIds) {
-        if (seeds.has(fromId)) {
-          resolvedImports.push({ id: toId, relationType: "IMPORTS", fromId, toId });
-        }
-        if (seeds.has(toId)) {
-          resolvedImports.push({ id: fromId, relationType: "IMPORTS", fromId, toId });
-        }
-      }
-    }
-  }
-  return [...direct, ...resolvedImports]
+    SELECT target.id AS id, 'IMPORTS' AS relationType, source.id AS fromId, target.id AS toId
+    FROM symbols source
+    JOIN relations relation ON relation.source_path = source.source_path AND relation.relation_type = 'IMPORTS'
+    JOIN relation_targets resolved ON resolved.relation_id = relation.id
+    JOIN symbols target ON target.source_path = resolved.to_source_path
+    WHERE source.id IN (${placeholders})
+      AND (relation.from_symbol_id IS NULL OR relation.from_symbol_id = source.id)
+    UNION ALL
+    SELECT source.id AS id, 'IMPORTS' AS relationType, source.id AS fromId, target.id AS toId
+    FROM symbols target
+    JOIN relation_targets resolved ON resolved.to_source_path = target.source_path
+    JOIN relations relation ON relation.id = resolved.relation_id AND relation.relation_type = 'IMPORTS'
+    JOIN symbols source ON source.source_path = relation.source_path
+    WHERE target.id IN (${placeholders})
+      AND (relation.from_symbol_id IS NULL OR relation.from_symbol_id = source.id)
+    ORDER BY id, fromId, toId LIMIT ${GRAPH_MAX_NODES * 4}
+  `).all(...symbolIds, ...symbolIds) as GraphNeighbor[];
+  return [...direct, ...imports]
     .sort((a, b) => a.id.localeCompare(b.id)
       || a.relationType.localeCompare(b.relationType)
       || a.fromId.localeCompare(b.fromId)
       || a.toId.localeCompare(b.toId));
-}
-
-function resolveImportPath(sourcePath: string, targetName: string, sourcePaths: Set<string>): string | null {
-  if (!targetName.startsWith(".")) return null;
-  const base = posixPath.normalize(posixPath.join(posixPath.dirname(sourcePath), targetName));
-  const candidates = [
-    base,
-    `${base}.ts`, `${base}.tsx`, `${base}.js`, `${base}.jsx`,
-    `${base}/index.ts`, `${base}/index.tsx`, `${base}/index.js`, `${base}/index.jsx`,
-  ];
-  return candidates.find((candidate) => sourcePaths.has(candidate)) ?? null;
 }
 
 function ngramHit(

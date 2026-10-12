@@ -34,6 +34,9 @@ export interface CodeAnalysis {
 const parser = new Parser();
 const DIRECT_PARSE_LIMIT = 32_768;
 const PARSE_CHUNK_SIZE = 8_192;
+export const CODE_ANALYSIS_VERSION = "2";
+// Per-source frequency keeps indexing deterministic and avoids a project-wide scan.
+const HIGH_FREQUENCY_CALLEE_LIMIT = 64;
 
 export function analyzeCode(sourcePath: string, content: string): CodeAnalysis | null {
   const language = languageForPath(sourcePath);
@@ -45,8 +48,36 @@ export function analyzeCode(sourcePath: string, content: string): CodeAnalysis |
     : parser.parse((index) => content.slice(index, index + PARSE_CHUNK_SIZE));
   const symbols: CodeSymbol[] = [];
   const relations: CodeRelation[] = [];
-  visit(tree.rootNode, null, [], sourcePath, symbols, relations, `${sourcePath}#module`);
-  return { language: language.name, symbols, relations };
+  const callTargets = new Map<CodeRelation, string>();
+  visit(tree.rootNode, null, [], sourcePath, symbols, relations, `${sourcePath}#module`, callTargets);
+  const counts = new Map<string, number>();
+  for (const target of callTargets.values()) counts.set(target, (counts.get(target) ?? 0) + 1);
+  const localNames = new Set(symbols.map((symbol) => symbol.name));
+  for (const statement of tree.rootNode.descendantsOfType("import_statement")) {
+    const source = statement.childForFieldName("source")?.text.replace(/^['"]|['"]$/g, "");
+    if (!source?.startsWith(".")) continue;
+    const clause = statement.namedChildren.find((child) => child.type === "import_clause");
+    if (!clause) continue;
+    for (const child of clause.namedChildren) {
+      if (child.type === "identifier") localNames.add(child.text);
+      if (child.type === "namespace_import") {
+        const name = child.namedChildren.find((item) => item.type === "identifier");
+        if (name) localNames.add(name.text);
+      }
+    }
+    for (const specifier of clause.descendantsOfType("import_specifier")) {
+      const name = specifier.childForFieldName("alias") ?? specifier.childForFieldName("name");
+      if (name) localNames.add(name.text);
+    }
+  }
+  const filteredRelations = relations.filter((item) => {
+    const target = callTargets.get(item);
+    if (!target || (counts.get(target) ?? 0) < HIGH_FREQUENCY_CALLEE_LIMIT) return true;
+    // Frequent local/project functions and instance methods still describe business flow.
+    return localNames.has(target) || target.startsWith("this.")
+      || localNames.has(target.split(".", 1)[0]!);
+  });
+  return { language: language.name, symbols, relations: filteredRelations };
 }
 
 function visit(
@@ -57,6 +88,7 @@ function visit(
   symbols: CodeSymbol[],
   relations: CodeRelation[],
   moduleName: string,
+  callTargets: Map<CodeRelation, string>,
 ): void {
   const created = symbolFromNode(node, sourcePath, containers);
   let nextSymbol = currentSymbol;
@@ -73,13 +105,39 @@ function visit(
     if (target) relations.push(relation(sourcePath, nextSymbol, moduleName, target, "IMPORTS", node));
   }
   if (node.type === "call_expression") {
-    const target = node.childForFieldName("function")?.text;
-    if (target) relations.push(relation(sourcePath, nextSymbol, moduleName, target, "CALLS", node));
+    const callee = node.childForFieldName("function");
+    if (callee) {
+      const target = normalizedCallee(callee);
+      if (!/^(?:globalThis\.)?(?:console|JSON|Math)\./.test(target)) {
+        const item = relation(sourcePath, nextSymbol, moduleName, callee.text, "CALLS", node);
+        relations.push(item);
+        callTargets.set(item, target);
+      }
+    }
   }
 
   for (const child of node.namedChildren) {
-    visit(child, nextSymbol, nextContainers, sourcePath, symbols, relations, moduleName);
+    visit(child, nextSymbol, nextContainers, sourcePath, symbols, relations, moduleName, callTargets);
   }
+}
+
+function normalizedCallee(node: Parser.SyntaxNode): string {
+  if (node.type === "parenthesized_expression") {
+    const expression = node.namedChildren[0];
+    if (expression) return normalizedCallee(expression);
+  }
+  if (node.type === "call_expression") {
+    const callee = node.childForFieldName("function");
+    if (callee) return `${normalizedCallee(callee)}()`;
+  }
+  if (node.type === "member_expression" || node.type === "subscript_expression") {
+    const object = node.childForFieldName("object");
+    const property = node.childForFieldName("property") ?? node.childForFieldName("index");
+    if (object && property && (node.type === "member_expression" || property.type === "string")) {
+      return `${normalizedCallee(object)}.${property.text.replace(/^['"]|['"]$/g, "")}`;
+    }
+  }
+  return node.text.replace(/\s+/g, "").slice(0, 500);
 }
 
 function symbolFromNode(node: Parser.SyntaxNode, sourcePath: string, containers: string[]): CodeSymbol | null {
