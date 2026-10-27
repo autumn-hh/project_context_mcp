@@ -1,3 +1,5 @@
+import { REMOTE_BACKUP_HTML, REMOTE_BACKUP_CSS, REMOTE_BACKUP_JS } from "./remote-backup-assets.js";
+
 export const UI_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -47,7 +49,9 @@ export const UI_HTML = String.raw`<!doctype html>
           <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
           <button class="portrait-mode" data-portrait-mode="graph" aria-pressed="false" type="button">代码关系</button>
           <button class="portrait-mode" data-portrait-mode="maintenance" aria-pressed="false" type="button">索引与存储</button>
+          <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">远程备份</button>
         </nav>
+        ${REMOTE_BACKUP_HTML}
         <div id="portrait-overview" class="portrait-grid">
           <div class="portrait-column">
           <section class="portrait-section"><header><div><span class="panel-label">ACTIVE WORK</span><h2>进行中的任务</h2></div><button id="portrait-all-tasks" class="secondary-button" type="button">查看全部任务</button></header><div id="portrait-tasks" class="portrait-list"></div></section>
@@ -924,6 +928,7 @@ dialog p { color: var(--muted); line-height: 1.5; }
   .factory-unit, .factory-worker { transition: none; }
   .toast, .graph-details { transition: none; }
 }
+${REMOTE_BACKUP_CSS}
 `;
 
 export const UI_JS = String.raw`(function () {
@@ -994,6 +999,7 @@ export const UI_JS = String.raw`(function () {
   }
 
   function bindEvents() {
+    bindRemoteBackupEvents();
     els["candidate-cancel"].addEventListener("click", function () { els["candidate-dialog"].close(); });
     els["candidate-form"].addEventListener("submit", saveReviewedCandidate);
     document.querySelectorAll(".tab").forEach(function (button) {
@@ -1762,6 +1768,7 @@ export const UI_JS = String.raw`(function () {
       renderPortrait(portrait);
       state.portrait = portrait;
       state.portraitProjectId = projectId;
+      if (els["portrait-content"].dataset.mode === "backup" && !silent) loadRemoteBackups();
       if (state.ignoreProjectId !== projectId) await loadIgnoreRules(projectId, silent);
       if (maintenanceProjectId !== projectId || (!silent && force)) await loadMaintenance(projectId);
     } catch (error) {
@@ -2905,11 +2912,13 @@ export const UI_JS = String.raw`(function () {
   }
 
   function setPortraitMode(mode) {
-    if (["overview", "graph", "maintenance"].indexOf(mode) < 0) return;
+    if (["overview", "graph", "maintenance", "backup"].indexOf(mode) < 0) return;
     els["portrait-content"].dataset.mode = mode;
     els["portrait-overview"].hidden = mode !== "overview";
     els["portrait-graph"].hidden = mode !== "graph";
     els["portrait-maintenance"].hidden = mode !== "maintenance";
+    document.getElementById("portrait-backup").hidden = mode !== "backup";
+    if (mode === "backup") loadRemoteBackups();
     document.querySelectorAll(".portrait-mode").forEach(function (button) {
       button.classList.toggle("active", button.dataset.portraitMode === mode);
       button.setAttribute("aria-pressed", String(button.dataset.portraitMode === mode));
@@ -3180,6 +3189,8 @@ export const UI_JS = String.raw`(function () {
   function selectedGraphRelations() { return [].filter.call(els["graph-relations"].querySelectorAll("input"), function (input) { return input.checked; }).map(function (input) { return input.value; }); }
   function relationLabel(type) { return { IMPORTS: "导入", CALLS: "调用", EXTENDS: "继承", IMPLEMENTS: "实现" }[type] || type; }
   function symbolKindLabel(kind) { return { class: "类", interface: "接口", method: "方法", function: "函数", type: "类型", enum: "枚举" }[kind] || kind || "符号"; }
+
+  ${REMOTE_BACKUP_JS}
 
   function switchView(view) {
     ["portrait", "task", "rules", "context"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });

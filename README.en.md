@@ -1,5 +1,11 @@
 # Project Context MCP
 
+Optional encrypted remote knowledge backups are available through path-style S3-compatible storage, CLI, MCP, and the local workbench's project backup tab. Knowledge snapshots exclude code indexes and source excerpts by default; personal rules require explicit selection. Downloads restore into a new directory, and rule import is a separate preview/apply operation with scope mapping. Existing local database backups remain compatible.
+
+Configure a target using `remote add <name> --endpoint <https-origin> --region <region> --bucket <bucket> --access-key-env <name> --secret-key-env <name> --passphrase-env <name>`. Supply credential values through the process environment, never command arguments. Use `backup push-remote <project-id> --remote <name>`, then `backup pull-remote <object-key> <new-absolute-directory> --remote <name>`. Register the restored `project.db` using `project restore`; preview selected rules using `pack import-rules <project-id> <rules.db>` before adding `--apply`. Global rules require `--allow-global`, and workspace rules require `--workspace-root`.
+
+Remote transfers use authenticated AES-256-GCM encryption, immutable keys, conditional creation, size limits and SHA-256 checks. Tests use an isolated S3 fixture with Signature V4 verification; actual cloud-provider interoperability has not been verified. Requests time out after 30 seconds; multipart/resume and automatic retention are not implemented. Optional incremental sync, team ACL, embedding plugins and LSP definitions are available. See [backup details](docs/remote-backup.md) and [execution plan](docs/remote-storage-team-sync-execution-plan.md).
+
 Task context includes personal memories only when their text matches task terms and caps them at 20% of the requested token budget. Project decisions and constraints have separate candidate quotas and are retained ahead of optional context; very small budgets may still require removing records. Task summaries are excluded by default and recalled for explicit task reviews or task IDs.
 
 The workbench separates durable knowledge from task summaries and provides an explicit review editor for candidate titles, conclusions, and types. MCP `memory_candidate_accept` optionally accepts `review: { title, content, type }`; existing calls remain compatible and the original candidate is retained for auditing.
@@ -100,7 +106,7 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Secure localhost project workspace with project portraits, scoped user rules, and assembled-context preview
 - CLI and stdio MCP server built on the same Core
 
-LSP, embeddings, a management UI, remote storage, and team synchronization remain deferred.
+Optional [incremental sync](docs/sync-protocol.md), [self-hosted team permissions and review](docs/team-service.md), and [embedding plugins, Python/Go/Rust and LSP definitions](docs/search-extensions.md) are available. Team HTTP uses Bearer credentials; OIDC is not implemented. Cloud storage, production TLS proxies and real model/language-server compatibility require deployment-specific validation.
 
 ## Requirements
 
@@ -411,7 +417,11 @@ The client starts the server from its MCP configuration and follows its global i
 
 For client-specific configuration, see the official Codex documentation for [MCP](https://developers.openai.com/codex/mcp/) and [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/), or the Claude Code [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) documentation.
 
-## MCP Tools (40)
+## MCP Tools (49, local stdio)
+
+- project_backup_remote, project_restore_remote
+- sync_status, sync_push, sync_pull, sync_conflicts, sync_resolve
+- project_search_enhanced, project_definition (explicit local configuration required)
 
 - `storage_status`
 - `project_open`, `project_list`, `project_update`, `project_archive`, `project_unarchive`, `project_relocate`

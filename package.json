@@ -1,6 +1,6 @@
 {
   "name": "project-context-mcp",
-  "version": "0.9.10",
+  "version": "0.10.0",
   "description": "Local-first, cross-session project intelligence and memory MCP server",
   "type": "module",
   "bin": {
@@ -9,9 +9,19 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "README.en.md",
+    "PATCH_NOTES.md",
+    "docs/remote-backup.md",
+    "docs/remote-pack-format.md",
+    "docs/sync-protocol.md",
+    "docs/team-service.md",
+    "docs/search-extensions.md",
+    "docs/remote-storage-team-sync-roadmap.md",
+    "docs/remote-storage-team-sync-execution-plan.md"
   ],
   "scripts": {
+    "prepack": "npm run build",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -31,7 +41,10 @@
     "cytoscape": "^3.34.0",
     "ignore": "^7.0.0",
     "tree-sitter": "^0.21.1",
+    "tree-sitter-go": "0.21.2",
     "tree-sitter-javascript": "^0.23.1",
+    "tree-sitter-python": "0.21.0",
+    "tree-sitter-rust": "0.21.0",
     "tree-sitter-typescript": "^0.23.2",
     "zod": "^4.0.0"
   },

@@ -123,6 +123,22 @@ async function encryptFile(source: string, destination: string, passphrase: stri
   await appendFile(destination, cipher.getAuthTag());
 }
 
+/** Encrypt an already-created portable snapshot using the existing authenticated envelope. */
+export async function encryptPortableFile(
+  source: string, destination: string, allowedOutputRoots: string[], passphrase: string,
+): Promise<{ destination: string; bytes: number }> {
+  const input = await authorizeExistingPath(source, allowedOutputRoots, "BACKUP_SOURCE_NOT_AUTHORIZED", "Portable snapshot");
+  const target = await authorizeOutputPath(destination, allowedOutputRoots);
+  await ensureAbsent(target, "OUTPUT_EXISTS");
+  await mkdir(dirname(target), { recursive: true });
+  const temporary = join(dirname(target), `.${basename(target)}.${randomBytes(16).toString("hex")}.tmp`);
+  try {
+    await encryptFile(input, temporary, passphrase);
+    await link(temporary, target);
+    return { destination: target, bytes: (await stat(target)).size };
+  } finally { await rm(temporary, { force: true }); }
+}
+
 async function decryptFile(source: string, destination: string, passphrase: string): Promise<void> {
   const metadata = await readEncryptedHeader(source);
   const file = await stat(source);

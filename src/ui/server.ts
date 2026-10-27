@@ -16,6 +16,8 @@ import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
 import { IndexPreviewJobs } from "./index-preview-jobs.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
+import { SYNC_TABLES } from "../storage/sync/event-store.js";
+import { TeamService } from "../team/team-service.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const retentionDaysSchema = z.number().int().min(1).max(3650);
@@ -151,6 +153,67 @@ async function routeRequest(
     }
 
     const jobsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-jobs(?:\/([^/]+))?$/);
+    const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/(candidates|conflicts|accept|resolve|audit|graph))?$/);
+    if (teamMatch && (request.method === "GET" || request.method === "POST")) {
+      const input = request.method === "POST" ? await readJsonBody(request) : undefined;
+      await withApp(response, async app => {
+        const credential = process.env.PROJECT_CONTEXT_TEAM_UI_TOKEN;
+        if (!credential) throw new ProjectContextError("TEAM_UI_NOT_CONFIGURED", "Set PROJECT_CONTEXT_TEAM_UI_TOKEN in the local service environment to use the team review view.");
+        const team = new TeamService(app);
+        try {
+          const principal = team.authenticate(credential);
+          if (!teamMatch[1] && request.method === "GET") return team.listShares(principal);
+          const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
+          if (request.method === "GET" && action === "candidates") return team.candidates(principal, shareId);
+          if (request.method === "GET" && action === "conflicts") return team.conflicts(principal, shareId);
+          if (request.method === "GET" && action === "audit") return team.auditLog(principal, shareId);
+          if (request.method === "GET" && action === "graph") return team.codeGraph(principal, shareId);
+          if (request.method === "POST" && action === "accept") {
+            const args = z.object({ candidateId: z.string().min(1) }).strict().parse(input); return team.accept(principal, shareId, args.candidateId);
+          }
+          if (request.method === "POST" && action === "resolve") {
+            const args = z.object({ entity: z.string().min(1), eventId: z.string().min(1) }).strict().parse(input); return await team.resolve(principal, shareId, args.entity, args.eventId);
+          }
+          throw new ProjectContextError("TEAM_INVALID_ACTION", "Unsupported team action.");
+        } finally { team.close(); }
+      }); return;
+    }
+    if (request.method === "GET" && url.pathname === "/api/remote-targets") {
+      await withApp(response, app => app.remoteTargets());
+      return;
+    }
+    const syncMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/sync(?:\/(push|pull|conflicts|resolve))?$/);
+    if (syncMatch) {
+      const projectId = decodeSegment(syncMatch[1]!); const action = syncMatch[2];
+      if (request.method === "GET" && !action) { await withApp(response, app => app.syncStatus(projectId)); return; }
+      if (request.method === "GET" && action === "conflicts") { await withApp(response, app => app.syncConflicts(projectId)); return; }
+      if (request.method === "POST" && (action === "push" || action === "pull")) {
+        z.object({}).strict().parse(await readJsonBody(request));
+        await withApp(response, app => action === "push" ? app.syncPush(projectId) : app.syncPull(projectId)); return;
+      }
+      if (request.method === "POST" && action === "resolve") {
+        const input = z.object({ table: z.enum(SYNC_TABLES), entity: z.string().min(1), chosenEventId: z.string().min(1) }).strict().parse(await readJsonBody(request));
+        await withApp(response, app => app.resolveSyncConflict(projectId, input.table, input.entity, input.chosenEventId)); return;
+      }
+    }
+    const remoteMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/remote-backups$/);
+    if (remoteMatch && request.method === "GET") {
+      await withApp(response, app => app.remoteBackupHistory(decodeSegment(remoteMatch[1]!)));
+      return;
+    }
+    if (remoteMatch && request.method === "POST") {
+      const projectId = decodeSegment(remoteMatch[1]!);
+      const input = z.object({ remoteName: z.string().min(1).max(64), confirmProjectId: z.string() }).strict().parse(await readJsonBody(request));
+      if (input.confirmProjectId !== projectId) throw new ProjectContextError("REMOTE_CONFIRMATION_REQUIRED", "Confirm the selected project before uploading knowledge.");
+      await withApp(response, app => app.backupRemote(projectId, input.remoteName));
+      return;
+    }
+    if (url.pathname === "/api/remote-restore" && request.method === "POST") {
+      const input = z.object({ remoteName: z.string().min(1).max(64), key: z.string().min(1).max(512),
+        directory: z.string().min(1).max(4000) }).strict().parse(await readJsonBody(request));
+      await withApp(response, app => app.restoreRemote(input.remoteName, input.key, input.directory));
+      return;
+    }
     if (jobsMatch && (request.method === "GET" || request.method === "POST")) {
       const projectId = decodeSegment(jobsMatch[1]!);
       const app = await ProjectContextApp.create();

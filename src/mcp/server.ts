@@ -14,6 +14,9 @@ import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
 import { maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
+import { SYNC_TABLES } from "../storage/sync/event-store.js";
+import { searchWithEmbeddings } from "../search/embeddings.js";
+import { lspDefinition } from "../lsp/bridge.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -33,6 +36,14 @@ const MAX_TEXT_CONTENT_CHARS = 2_000;
 
 export function createMcpServer(): McpServer {
   const server = new McpServer({ name: "project-context-mcp", version: PACKAGE_VERSION });
+  server.registerTool("project_search_enhanced", {
+    description:"Search with an explicitly configured embedding plugin; fall back to local search when unavailable.",outputSchema,
+    inputSchema:{projectId:z.string(),query:z.string().max(8000),limit:z.number().int().min(1).max(100).default(20)},
+  },({projectId,query,limit})=>withApp(async app=>{await app.watchFlush(projectId);return searchWithEmbeddings(app,projectId,query,limit);}));
+  server.registerTool("project_definition", {
+    description:"Use a CLI-configured trusted local LSP server to find definitions within indexed project files. Coordinates are zero-based UTF-16.",outputSchema,
+    inputSchema:{projectId:z.string(),path:z.string().min(1).max(2000),line:z.number().int().min(0),character:z.number().int().min(0)},
+  },({projectId,path,line,character})=>withApp(app=>lspDefinition(app,projectId,path,line,character)));
 
   server.registerTool("storage_status", {
     description: "Check whether persistent Project Context storage has been configured.",
@@ -506,6 +517,40 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, outputDirectory }) => withApp((app) => app.export(projectId, outputDirectory)));
 
   registerResources(server);
+  server.registerTool("sync_status", {
+    description: "Inspect local sync identity, pending events, rule outbox and unresolved conflicts.", outputSchema,
+    inputSchema: { projectId: z.string().min(1) }, annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId }) => withApp(app => app.syncStatus(projectId)));
+  server.registerTool("sync_push", {
+    description: "Encrypt and push pending events to the configured sync space; local edits remain queued on failure.", outputSchema,
+    inputSchema: { projectId: z.string().min(1) }, annotations: { openWorldHint: true, idempotentHint: true },
+  }, ({ projectId }) => withApp(app => app.syncPush(projectId)));
+  server.registerTool("sync_pull", {
+    description: "Authenticate and replay remote events into the configured project, preserving concurrent conflicts.", outputSchema,
+    inputSchema: { projectId: z.string().min(1) }, annotations: { openWorldHint: true, idempotentHint: true },
+  }, ({ projectId }) => withApp(app => app.syncPull(projectId)));
+  server.registerTool("sync_conflicts", {
+    description: "List unresolved local sync conflicts with all competing event versions.", outputSchema,
+    inputSchema: { projectId: z.string().min(1) }, annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId }) => withApp(app => app.syncConflicts(projectId)));
+  server.registerTool("sync_resolve", {
+    description: "Resolve a sync conflict by explicitly choosing an event; records a new event descending from all current versions.", outputSchema,
+    inputSchema: { projectId: z.string().min(1), table: z.enum(SYNC_TABLES), entity: z.string().min(1), chosenEventId: z.string().min(1) },
+    annotations: { readOnlyHint: false, idempotentHint: false },
+  }, ({ projectId, table, entity, chosenEventId }) => withApp(app => app.resolveSyncConflict(projectId, table, entity, chosenEventId)));
+  server.registerTool("project_backup_remote", {
+    description: "Encrypt and upload a knowledge snapshot to an explicitly configured S3 target. Code indexes excluded; selected user rules only.",
+    outputSchema, inputSchema: { projectId: z.string().min(1), remoteName: z.string().min(1),
+      userMemoryIds: z.array(z.string().min(1)).max(1000).optional(), includeSourceExcerpts: z.boolean().default(false) },
+    annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+  }, ({ projectId, remoteName, userMemoryIds, includeSourceExcerpts }) => withApp(app => app.backupRemote(projectId, remoteName, {
+    includeSourceExcerpts, ...(userMemoryIds ? { userMemoryIds } : {}),
+  })));
+  server.registerTool("project_restore_remote", {
+    description: "Download, authenticate and stage a remote knowledge snapshot in a new allowed directory. Does not replace registered projects or apply personal rules.",
+    outputSchema, inputSchema: { remoteName: z.string().min(1), key: z.string().min(1), directory: z.string().min(1) },
+    annotations: { readOnlyHint: false, idempotentHint: false, openWorldHint: true },
+  }, ({ remoteName, key, directory }) => withApp(app => app.restoreRemote(remoteName, key, directory)));
   registerPrompts(server);
   server.server.onclose = stopAllProjectWatches;
   return server;

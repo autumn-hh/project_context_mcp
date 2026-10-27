@@ -1,6 +1,14 @@
 import { indexMigrationPreview } from "../maintenance/index-migration-preview.js";
 import { checkMigrationSpace, migrationFailureMessage, type MigrationMode, type MigrationSpaceCheck } from "../maintenance/migration-space.js";
 import type { SqliteDatabase } from "../storage/database.js";
+import { openDatabase } from "../storage/database.js";
+import { exportKnowledgePack, inspectKnowledgePack, restoreKnowledgePack } from "../storage/remote-pack/pack.js";
+import { importPackRules, type ImportRuleOptions } from "../storage/remote-pack/rules.js";
+import { configureProjectSync, transferSync } from "../storage/sync/sync-service.js";
+import { syncStatus, syncConflicts, resolveSyncConflict, type SYNC_TABLES } from "../storage/sync/event-store.js";
+import { applyRuleProjection } from "../storage/sync/rule-bridge.js";
+import { backupRemote, remoteBackupHistory, restoreRemote } from "../storage/remote/backup-service.js";
+import { saveRemoteTarget, loadRemoteTarget, listRemoteTargets, type RemoteTarget } from "../storage/remote/s3.js";
 import { loadGlobalConfig } from "../config/paths.js";
 import { normalizeTaskSummaryTitles, previewTaskSummaryTitles } from "../memory/title-normalization.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
@@ -58,8 +66,9 @@ import {
 } from "../context/context-service.js";
 import type { z } from "zod/v4";
 import { ProjectContextError } from "../shared/errors.js";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { extname, join } from "node:path";
+import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { dirname, extname, join } from "node:path";
+import { authorizeOutputPath } from "../security/path-policy.js";
 import { randomUUID } from "node:crypto";
 import ignore from "ignore";
 import { defaultIgnorePatterns } from "../indexing/file-policy.js";
@@ -78,6 +87,7 @@ import {
   backupEncrypted,
   decryptBackupToTemporary,
   readPassphraseEnvironment,
+  encryptPortableFile,
 } from "../maintenance/encrypted-backup-service.js";
 import {
   graphNeighbors,
@@ -830,6 +840,87 @@ export class ProjectContextApp {
   async export(projectId: string, outputDirectory: string) {
     const project = this.projects.get(projectId);
     return this.withDbAsync(projectId, (db) => exportProject(db, project, outputDirectory, this.allowedOutputRoots));
+  }
+
+  async exportPack(projectId: string, destination: string, options: { userMemoryIds?: string[]; includeSourceExcerpts?: boolean } = {}) {
+    await this.watchFlush(projectId);
+    const project = this.projects.get(projectId);
+    const registry = openDatabase(join(this.storageRoot, "registry.db"));
+    try {
+      return await this.withDbAsync(projectId, db => exportKnowledgePack({
+        db, registry, project, destination, allowedRoots: this.allowedOutputRoots, ...options,
+      }));
+    } finally { registry.close(); }
+  }
+
+  inspectPack(source: string) { return inspectKnowledgePack(source, this.allowedOutputRoots); }
+
+  configureRemote(name: string, target: RemoteTarget) { return saveRemoteTarget(this.storageRoot, name, target); }
+  remoteTarget(name: string) { return loadRemoteTarget(this.storageRoot, name); }
+  remoteTargets() { return listRemoteTargets(this.storageRoot); }
+  configureSync(projectId: string, input: { syncId: string; remoteName: string }) { return configureProjectSync(this, projectId, input); }
+  syncStatus(projectId: string) {
+    const status = this.withDb(projectId, db => syncStatus(db));
+    if (!status.configured) return status;
+    const registry = openDatabase(join(this.storageRoot, "registry.db"));
+    try {
+      const hasOutbox = registry.prepare("SELECT 1 FROM sqlite_master WHERE name='sync_rule_outbox'").get();
+      const pendingRules = hasOutbox ? Number(registry.prepare("SELECT COUNT(*) FROM sync_rule_outbox WHERE project_id=?").pluck().get(projectId)) : 0;
+      return { ...status, pendingRules, state: status.conflicts ? "conflict" : status.pending || pendingRules ? "pending" : status.state };
+    } finally { registry.close(); }
+  }
+  syncConflicts(projectId: string) { return this.withDb(projectId, db => syncConflicts(db)); }
+  syncPush(projectId: string) { return transferSync(this, projectId, "push"); }
+  syncPull(projectId: string) { return transferSync(this, projectId, "pull"); }
+  resolveSyncConflict(projectId: string, table: typeof SYNC_TABLES[number], entity: string, chosenEventId: string) {
+    return this.withDbAsync(projectId, async db => {
+      const result = await resolveSyncConflict(db, table, entity, chosenEventId);
+      const state = syncStatus(db);
+      if (table === "user_memories" && state.configured) {
+        const registry = openDatabase(join(this.storageRoot, "registry.db"));
+        try { applyRuleProjection(registry, db, projectId, state.syncId); } finally { registry.close(); }
+      }
+      return result;
+    });
+  }
+  backupRemote(projectId: string, remoteName: string, options: { userMemoryIds?: string[]; includeSourceExcerpts?: boolean } = {}) {
+    return backupRemote(this, projectId, remoteName, options);
+  }
+  restoreRemote(remoteName: string, key: string, directory: string) { return restoreRemote(this, remoteName, key, directory); }
+  remoteBackupHistory(projectId: string) {
+    this.projects.get(projectId);
+    return remoteBackupHistory(this.storageRoot, projectId);
+  }
+
+  restorePack(source: string, directory: string) {
+    return restoreKnowledgePack(source, directory, this.allowedOutputRoots);
+  }
+
+  async importPackRules(projectId: string, source: string, options: ImportRuleOptions = {}) {
+    const registry = openDatabase(join(this.storageRoot, "registry.db"));
+    try { return await this.withDbAsync(projectId, db => importPackRules(registry, db, projectId, source, this.allowedOutputRoots, options)); }
+    finally { registry.close(); }
+  }
+
+  async exportEncryptedPack(projectId: string, destination: string, passphraseEnv: string,
+    options: { userMemoryIds?: string[]; includeSourceExcerpts?: boolean } = {}) {
+    const passphrase = readPassphraseEnvironment(passphraseEnv);
+    const target = await authorizeOutputPath(destination, this.allowedOutputRoots);
+    await mkdir(dirname(target), { recursive: true });
+    const temporary = await mkdtemp(join(dirname(target), ".encrypted-pack-"));
+    try {
+      const plaintext = join(temporary, "knowledge.pcmp");
+      const manifest = await this.exportPack(projectId, plaintext, options);
+      const result = await encryptPortableFile(plaintext, target, this.allowedOutputRoots, passphrase);
+      return { ...result, manifest, cipher: "aes-256-gcm" as const };
+    } finally { await rm(temporary, { recursive: true, force: true }); }
+  }
+
+  async restoreEncryptedPack(source: string, directory: string, passphraseEnv: string) {
+    const passphrase = readPassphraseEnvironment(passphraseEnv);
+    const decrypted = await decryptBackupToTemporary(source, this.allowedOutputRoots, passphrase);
+    try { return await this.restorePack(decrypted.temporary, directory); }
+    finally { await rm(decrypted.temporary, { force: true }); }
   }
 
   close(): void {

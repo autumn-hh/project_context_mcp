@@ -3,6 +3,7 @@ import TypeScript from "tree-sitter-typescript";
 import JavaScript from "tree-sitter-javascript";
 import { extname } from "node:path";
 import { sha256 } from "../shared/ids.js";
+import { analyzeAdditionalLanguage } from "./multilanguage-analyzer.js";
 
 export interface CodeSymbol {
   id: string;
@@ -26,7 +27,7 @@ export interface CodeRelation {
 }
 
 export interface CodeAnalysis {
-  language: "typescript" | "tsx" | "javascript" | "jsx";
+  language: "typescript" | "tsx" | "javascript" | "jsx" | "python" | "go" | "rust";
   symbols: CodeSymbol[];
   relations: CodeRelation[];
 }
@@ -34,13 +35,13 @@ export interface CodeAnalysis {
 const parser = new Parser();
 const DIRECT_PARSE_LIMIT = 32_768;
 const PARSE_CHUNK_SIZE = 8_192;
-export const CODE_ANALYSIS_VERSION = "2";
+export const CODE_ANALYSIS_VERSION = "3";
 // Per-source frequency keeps indexing deterministic and avoids a project-wide scan.
 const HIGH_FREQUENCY_CALLEE_LIMIT = 64;
 
 export function analyzeCode(sourcePath: string, content: string): CodeAnalysis | null {
   const language = languageForPath(sourcePath);
-  if (!language) return null;
+  if (!language) return analyzeAdditionalLanguage(sourcePath, content);
   parser.setLanguage(language.grammar);
   // The current Node binding rejects direct string inputs at 32,768 characters.
   const tree = content.length < DIRECT_PARSE_LIMIT

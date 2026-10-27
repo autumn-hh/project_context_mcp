@@ -13,6 +13,10 @@ import { taskQuerySchema } from "./tasks/task-query.js";
 import { startUiServer } from "./ui/server.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "./indexing/watch-service.js";
 import { PACKAGE_VERSION } from "./shared/version.js";
+import { validateRemoteTarget } from "./storage/remote/s3.js";
+import { SYNC_TABLES } from "./storage/sync/event-store.js";
+import { registerTeamCli } from "./team/cli.js";
+import { registerExtensionsCli } from "./extensions-cli.js";
 
 const program = new Command()
   .name("project-context")
@@ -413,12 +417,44 @@ program.command("maintenance")
     }));
   }));
 
-program.command("backup")
+const backupCommand = program.command("backup")
   .argument("<project-id>")
   .argument("<absolute-destination>")
   .action(withApp(async (app, projectId: string, destination: string) => {
     print(await app.backup(projectId, destination));
   }));
+backupCommand.command("push-remote").argument("<project-id>").requiredOption("--remote <name>")
+  .option("--user-memory <ids...>", "explicit user rule IDs")
+  .option("--include-source-excerpts", "include stored source excerpts", false)
+  .action(withApp(async (app, projectId: string, options: { remote: string; userMemory?: string[]; includeSourceExcerpts: boolean }) => {
+    print(await app.backupRemote(projectId, options.remote, { includeSourceExcerpts: options.includeSourceExcerpts,
+      ...(options.userMemory ? { userMemoryIds: options.userMemory } : {}) }));
+  }));
+backupCommand.command("pull-remote").argument("<object-key>").argument("<new-absolute-directory>")
+  .requiredOption("--remote <name>")
+  .action(withApp(async (app, key: string, directory: string, options: { remote: string }) => {
+    print(await app.restoreRemote(options.remote, key, directory));
+  }));
+const remote = program.command("remote").description("Explicit local configuration of encrypted remote backups");
+const sync = program.command("sync").description("Explicit encrypted multi-device synchronization");
+sync.command("configure").argument("<project-id>").requiredOption("--space <sync-id>").requiredOption("--remote <name>")
+  .action(withApp(async (app, projectId: string, options: { space: string; remote: string }) => print(await app.configureSync(projectId, { syncId: options.space, remoteName: options.remote }))));
+sync.command("status").argument("<project-id>").action(withApp((app, id: string) => print(app.syncStatus(id))));
+sync.command("push").argument("<project-id>").action(withApp(async (app, id: string) => print(await app.syncPush(id))));
+sync.command("pull").argument("<project-id>").action(withApp(async (app, id: string) => print(await app.syncPull(id))));
+sync.command("conflicts").argument("<project-id>").action(withApp((app, id: string) => print(app.syncConflicts(id))));
+sync.command("resolve").argument("<project-id>").requiredOption("--entity <id>").requiredOption("--choose <event-id>")
+  .addOption(new Option("--table <table>").choices([...SYNC_TABLES]).makeOptionMandatory())
+  .action(withApp(async (app, id: string, options: { table: typeof SYNC_TABLES[number]; entity: string; choose: string }) => print(await app.resolveSyncConflict(id, options.table, options.entity, options.choose))));
+remote.command("add").argument("<name>").requiredOption("--endpoint <url>").requiredOption("--region <region>")
+  .requiredOption("--bucket <bucket>").option("--prefix <prefix>", "object prefix", "project-context")
+  .requiredOption("--access-key-env <name>").requiredOption("--secret-key-env <name>").option("--session-token-env <name>")
+  .requiredOption("--passphrase-env <name>").option("--allow-loopback-http", "allow loopback HTTP for local testing", false)
+  .action(withApp(async (app, name: string, options: Record<string, unknown>) => {
+    print(await app.configureRemote(name, validateRemoteTarget(options)));
+  }));
+remote.command("show").argument("<name>").action(withApp(async (app, name: string) => print(await app.remoteTarget(name))));
+remote.command("history").argument("<project-id>").action(withApp(async (app, id: string) => print(await app.remoteBackupHistory(id))));
 
 program.command("backup-encrypted")
   .argument("<project-id>")
@@ -435,6 +471,43 @@ program.command("export")
     print(await app.export(projectId, outputDirectory));
   }));
 
+const pack = program.command("pack").description("Export, validate and stage portable knowledge snapshots");
+pack.command("export").argument("<project-id>").argument("<absolute-destination>")
+  .option("--user-memory <ids...>", "explicit user rule IDs, including their replacement ancestors")
+  .option("--include-source-excerpts", "include stored source excerpts (may contain code)", false)
+  .action(withApp(async (app, projectId: string, destination: string, options: { userMemory?: string[]; includeSourceExcerpts: boolean }) => {
+    print(await app.exportPack(projectId, destination, { includeSourceExcerpts: options.includeSourceExcerpts,
+      ...(options.userMemory ? { userMemoryIds: options.userMemory } : {}) }));
+  }));
+pack.command("inspect").argument("<source>")
+  .action(withApp(async (app, source: string) => print(await app.inspectPack(source))));
+pack.command("restore").argument("<source>").argument("<new-absolute-directory>")
+  .description("Stage validated databases in a new directory; does not register a project or apply personal rules")
+  .action(withApp(async (app, source: string, directory: string) => print(await app.restorePack(source, directory))));
+pack.command("export-encrypted").argument("<project-id>").argument("<absolute-destination>")
+  .requiredOption("--passphrase-env <name>", "environment variable containing the passphrase")
+  .option("--user-memory <ids...>", "explicit user rule IDs")
+  .option("--include-source-excerpts", "include stored source excerpts", false)
+  .action(withApp(async (app, projectId: string, destination: string, options: { passphraseEnv: string; userMemory?: string[]; includeSourceExcerpts: boolean }) => {
+    print(await app.exportEncryptedPack(projectId, destination, options.passphraseEnv, { includeSourceExcerpts: options.includeSourceExcerpts,
+      ...(options.userMemory ? { userMemoryIds: options.userMemory } : {}) }));
+  }));
+pack.command("restore-encrypted").argument("<source>").argument("<new-absolute-directory>")
+  .requiredOption("--passphrase-env <name>", "environment variable containing the passphrase")
+  .action(withApp(async (app, source: string, directory: string, options: { passphraseEnv: string }) => {
+    print(await app.restoreEncryptedPack(source, directory, options.passphraseEnv));
+  }));
+pack.command("import-rules").argument("<project-id>").argument("<rules-database>")
+  .option("--apply", "apply the import; default previews only", false)
+  .option("--allow-global", "explicitly include selected global rules", false)
+  .option("--workspace-root <absolute-path>", "explicit destination for workspace-scoped rules")
+  .action(withApp(async (app, projectId: string, source: string, options: { apply: boolean; allowGlobal: boolean; workspaceRoot?: string }) => {
+    print(await app.importPackRules(projectId, source, { apply: options.apply, allowGlobal: options.allowGlobal,
+      ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}) }));
+  }));
+
+registerTeamCli(program);
+registerExtensionsCli(program);
 program.parseAsync().catch((error: unknown) => {
   if (error instanceof ProjectContextError) {
     console.error(JSON.stringify({ code: error.code, message: error.message, details: error.details ?? null }, null, 2));

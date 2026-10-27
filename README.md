@@ -104,7 +104,9 @@ node dist/cli.js memory normalize-task-titles <project-id> --apply --preview-has
 - 安全的本地主机项目工作台，包含项目画像、作用域用户规则和上下文预览
 - CLI 与 stdio MCP 服务共用同一套核心实现
 
-LSP、向量嵌入、远程存储和团队同步仍属于后续规划。当前已提供本地 Web 管理工作台。
+已提供可选加密远程知识备份：S3 兼容存储、CLI/MCP 和工作台「项目画像 → 远程备份」。默认排除代码索引，个人规则明确选择；下载恢复到全新目录。配置、迁移步骤和验证限制见 [远程备份说明](docs/remote-backup.md)。原有本地备份继续兼容。
+
+已提供可选的[多机增量同步](docs/sync-protocol.md)、[自托管团队 ACL/审核与 Bearer HTTP MCP](docs/team-service.md)，以及 [Python/Go/Rust、embedding 插件和 LSP 定义桥接](docs/search-extensions.md)。默认纯本地行为保持兼容；真实云端、生产代理和第三方模型/语言服务仍需部署验证。见[执行计划](docs/remote-storage-team-sync-execution-plan.md)。
 
 ## 环境要求
 
@@ -431,7 +433,11 @@ project_context
 
 客户端配置细节可参考对应官方文档：Codex 的 [MCP](https://developers.openai.com/codex/mcp/) 与 [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/)，以及 Claude Code 的 [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) 文档。
 
-## MCP 工具（40 个）
+## MCP 工具（49 个，本地 stdio）
+
+- project_backup_remote、project_restore_remote
+- sync_status、sync_push、sync_pull、sync_conflicts、sync_resolve
+- project_search_enhanced、project_definition（明确配置插件/服务后使用）
 
 - `storage_status`
 - `project_open`、`project_list`、`project_update`、`project_archive`、`project_unarchive`、`project_relocate`

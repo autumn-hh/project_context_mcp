@@ -108,6 +108,20 @@ export function remember(db: SqliteDatabase, input: {
 }
 
 export function detectMemoryDrift(db: SqliteDatabase): string[] {
+  // Imported snapshots carry provenance but no machine-local source IDs. Reattach once
+  // after the target indexes its files, then apply the existing hash/drift rules.
+  if (db.prepare("SELECT value FROM metadata WHERE key = 'knowledge_pack_rebind'").pluck().get() === "1") {
+    db.transaction(() => {
+      const sources = db.prepare("SELECT id, source_ref FROM memory_sources WHERE source_kind = 'file' AND source_id IS NULL")
+        .all() as Array<{ id: string; source_ref: string | null }>;
+      const bind = db.prepare("UPDATE memory_sources SET source_id = ? WHERE id = ?");
+      for (const source of sources) {
+        const binding = resolveSourceBinding(db, "file", source.source_ref ?? undefined);
+        if (binding.sourceId) bind.run(binding.sourceId, source.id);
+      }
+      db.prepare("DELETE FROM metadata WHERE key = 'knowledge_pack_rebind'").run();
+    })();
+  }
   const rows = db.prepare(`
     SELECT m.id, ms.id AS binding_id, ms.source_hash, ms.source_excerpt,
            ms.source_excerpt_hash, s.content_hash, s.path
