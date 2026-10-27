@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import {readFile,writeFile,mkdtemp} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {S3RemoteStore,validateRemoteTarget} from '../dist/storage/remote/s3.js';
+const output=process.env.PCM_CLOUD_OUTPUT ?? 'output/cloud-acceptance';
+const previous=JSON.parse(await readFile(join(output,'restart-check.json'),'utf8'));
+const root=await mkdtemp(join(tmpdir(),'pcm-cloud-restart-'));
+const target=validateRemoteTarget({endpoint:process.env.PCM_CLOUD_ENDPOINT,region:process.env.PCM_CLOUD_REGION ?? 'us-east-1',bucket:process.env.PCM_CLOUD_BUCKET ?? 'project-context-acceptance',prefix:previous.prefix,accessKeyEnv:'PCM_CLOUD_ACCESS',secretKeyEnv:'PCM_CLOUD_SECRET',passphraseEnv:'PCM_CLOUD_PASSPHRASE',allowLoopbackHttp:true});
+const store=new S3RemoteStore(target);
+await store.download(previous.key,join(root,'restart.pcmb'),[root]);
+assert.equal(createHash('sha256').update(await readFile(join(root,'restart.pcmb'))).digest('hex'),previous.sha256);
+const result={passed:true,checkedAt:new Date().toISOString(),check:'container restart preserves encrypted object and restricted credentials',sha256:previous.sha256};
+await writeFile(join(output,'persistence-result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify(result));

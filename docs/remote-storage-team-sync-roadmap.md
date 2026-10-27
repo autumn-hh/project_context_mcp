@@ -33,7 +33,7 @@ P3-2 / P3-3 / P3-4 可与同步主线并行，不阻塞 P0–P2。
 | ID | 任务 | 验收 | 建议位置 | 状态 |
 | --- | --- | --- | --- | --- |
 | P0-1 | 定义同步包格式（manifest + 分片 + schema 版本） | 可导出 / 校验 / 拒绝不兼容版本 | `storage/remote-pack` | 完成（v1 知识快照） |
-| P0-2 | CLI：`backup push-remote` / `pull-remote`（对象存储或自建 URL） | 端到端上传下载 + 校验和 | `cli` + `storage` | 完成（S3 兼容首版，云端待实测） |
+| P0-2 | CLI：`backup push-remote` / `pull-remote`（对象存储或自建 URL） | 端到端上传下载 + 校验和 | `cli` + `storage` | 完成（云 VM 自托管 MinIO 实测通过） |
 | P0-3 | 复用 scrypt + AES 包；口令 / 密钥不入 DB | 密钥仅环境变量或系统钥匙串 | `security` | 完成（环境变量） |
 | P0-4 | Web：备份页显示远程目标与最近成功时间 | 失败可重试、不阻断本地 | `ui` | 完成（大包同步打包限制见文档） |
 | P0-5 | MCP：`project_backup_remote` / `project_restore_remote` | structuredContent + 错误码 | `mcp/server` | 完成 |
