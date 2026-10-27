@@ -1,26 +1,19 @@
 # Project Context MCP
 
-Optional encrypted remote knowledge backups are available through path-style S3-compatible storage, CLI, MCP, and the local workbench's project backup tab. Knowledge snapshots exclude code indexes and source excerpts by default; personal rules require explicit selection. Downloads restore into a new directory, and rule import is a separate preview/apply operation with scope mapping. Existing local database backups remain compatible.
-
-Configure a target using `remote add <name> --endpoint <https-origin> --region <region> --bucket <bucket> --access-key-env <name> --secret-key-env <name> --passphrase-env <name>`. Supply credential values through the process environment, never command arguments. Use `backup push-remote <project-id> --remote <name>`, then `backup pull-remote <object-key> <new-absolute-directory> --remote <name>`. Register the restored `project.db` using `project restore`; preview selected rules using `pack import-rules <project-id> <rules.db>` before adding `--apply`. Global rules require `--allow-global`, and workspace rules require `--workspace-root`.
-
-Remote transfers use authenticated AES-256-GCM encryption, immutable keys, conditional creation, size limits and SHA-256 checks. Tests use an isolated S3 fixture with Signature V4 verification; actual cloud-provider interoperability has not been verified. Requests time out after 30 seconds; multipart/resume and automatic retention are not implemented. Optional incremental sync, team ACL, embedding plugins and LSP definitions are available. See [backup details](docs/remote-backup.md) and [execution plan](docs/remote-storage-team-sync-execution-plan.md).
-
-Task context includes personal memories only when their text matches task terms and caps them at 20% of the requested token budget. Project decisions and constraints have separate candidate quotas and are retained ahead of optional context; very small budgets may still require removing records. Task summaries are excluded by default and recalled for explicit task reviews or task IDs.
-
-The workbench separates durable knowledge from task summaries and provides an explicit review editor for candidate titles, conclusions, and types. MCP `memory_candidate_accept` optionally accepts `review: { title, content, type }`; existing calls remain compatible and the original candidate is retained for auditing.
-
-Schema v9 persists resolved relation targets. Existing projects backfill these targets on their next index run; search traverses indexed neighbors of seed symbols rather than loading all symbols and imports. Uncertain calls remain unresolved. Rebuild and restart MCP/Web services after updating.
-
-Preview legacy task-summary titles with `node dist/cli.js memory normalize-task-titles <project-id>`. `--cancel` makes no changes; `--apply` previews and asks for confirmation, while `--apply --preview-hash <previewHash>` applies an explicitly reviewed snapshot non-interactively. Changed records invalidate the preview. Only titles and their derived search indexes change; contents, sources, and timestamps stay intact.
-
-Ordinary source/text files retain safe content while matching secret lines and complete PEM private-key blocks are masked before indexing. Source bytes and line positions remain unchanged. Health, portrait health, and doctor return `contentProtection` paths and line numbers from the latest check, with incomplete-run markers; ignored directories remain outside coverage. Sensitive paths remain excluded.
-
-Index upgrade preflight shows database-holder PIDs, roles, versions, and restart guidance. Cooperative connections register outside watched projects; Windows file-handle discovery also finds unregistered processes. Other platforms and failed probes report incomplete coverage. Connections are not forcibly drained. See [local real-project graph measurements](docs/graph-query-benchmark-2026-10-12.md) for neighbor-query performance and resolution checks.
-
 **English** | [中文](README.md)
 
-Project Context MCP is a local-first, cross-session project intelligence and memory server for coding agents. It incrementally indexes project text and code, stores sourced decisions and constraints, persists task checkpoints, and assembles task-focused context through MCP.
+Project Context MCP is a project-memory service for coding agents.
+
+Connect it to Cursor, Claude Code, Codex, or any MCP client (MCP is a standard way for agents to call tools). It keeps what matters on your machine: an index of your code and docs, decisions and constraints you approved, and checkpoints for in-progress work. Across sessions and clients, it can assemble the relevant context so the agent can continue where you left off.
+
+Local-first by default. When you need more, you can also use:
+
+- Local indexing, memory review, task checkpoints, and a web workbench
+- Encrypted remote knowledge backups (S3-compatible storage)
+- Incremental sync across machines
+- Self-hosted team access control (ACL) and Bearer HTTP MCP
+
+Remote backup, sync, and team features are optional—everyday local use works without them. Real cloud and production setups need your own validation. See [remote backup](docs/remote-backup.md), [sync protocol](docs/sync-protocol.md), and [team service](docs/team-service.md).
 
 The local web workspace includes project portraits, search-ranking settings, and index storage management. Select indexed directories, check available disk space, run an upgrade in a background worker, and recover its status after a connection loss. Successful upgrades remove their temporary backup; source files remain intact.
 
@@ -105,6 +98,24 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Streaming AES-256-GCM encrypted backup and restore with scrypt-derived keys
 - Secure localhost project workspace with project portraits, scoped user rules, and assembled-context preview
 - CLI and stdio MCP server built on the same Core
+
+Optional encrypted remote knowledge backups are available through path-style S3-compatible storage, CLI, MCP, and the local workbench project backup tab. Knowledge snapshots exclude code indexes and source excerpts by default; personal rules require explicit selection. Downloads restore into a new directory, and rule import is a separate preview/apply operation with scope mapping. Existing local database backups remain compatible.
+
+Configure a target with `remote add <name> --endpoint <https-origin> --region <region> --bucket <bucket> --access-key-env <name> --secret-key-env <name> --passphrase-env <name>`. Pass credential values through the process environment, never as command arguments. Push with `backup push-remote <project-id> --remote <name>`, then pull with `backup pull-remote <object-key> <new-absolute-directory> --remote <name>`. Register the restored `project.db` with `project restore`; preview selected rules with `pack import-rules <project-id> <rules.db>` before adding `--apply`. Global rules need `--allow-global`; workspace rules need `--workspace-root`.
+
+Remote transfers use authenticated AES-256-GCM encryption, immutable keys, conditional creation, size limits, and SHA-256 checks. Tests use an isolated S3 fixture with Signature V4 verification; actual cloud-provider interoperability has not been verified. Requests time out after 30 seconds; multipart/resume and automatic retention are not implemented. Details: [remote backup](docs/remote-backup.md).
+
+Task context includes personal memories only when their text matches task terms and caps them at 20% of the requested token budget. Project decisions and constraints have separate candidate quotas and are retained ahead of optional context; very small budgets may still require removing records. Task summaries are excluded by default and recalled for explicit task reviews or task IDs.
+
+The workbench separates durable knowledge from task summaries and provides an explicit review editor for candidate titles, conclusions, and types. MCP `memory_candidate_accept` optionally accepts `review: { title, content, type }`; existing calls remain compatible and the original candidate is retained for auditing.
+
+Schema v9 persists resolved relation targets. Existing projects backfill these targets on their next index run; search traverses indexed neighbors of seed symbols rather than loading all symbols and imports. Uncertain calls remain unresolved. Rebuild and restart MCP/Web services after updating.
+
+Preview legacy task-summary titles with `node dist/cli.js memory normalize-task-titles <project-id>`. `--cancel` makes no changes; `--apply` previews and asks for confirmation, while `--apply --preview-hash <previewHash>` applies an explicitly reviewed snapshot non-interactively. Changed records invalidate the preview. Only titles and their derived search indexes change; contents, sources, and timestamps stay intact.
+
+Ordinary source/text files retain safe content while matching secret lines and complete PEM private-key blocks are masked before indexing. Source bytes and line positions remain unchanged. Health, portrait health, and doctor return `contentProtection` paths and line numbers from the latest check, with incomplete-run markers; ignored directories remain outside coverage. Sensitive paths remain excluded.
+
+Index upgrade preflight shows database-holder PIDs, roles, versions, and restart guidance. Cooperative connections register outside watched projects; Windows file-handle discovery also finds unregistered processes. Other platforms and failed probes report incomplete coverage. Connections are not forcibly drained. See [local real-project graph measurements](docs/graph-query-benchmark-2026-10-12.md) for neighbor-query performance and resolution checks.
 
 Optional [incremental sync](docs/sync-protocol.md), [self-hosted team permissions and review](docs/team-service.md), and [embedding plugins, Python/Go/Rust and LSP definitions](docs/search-extensions.md) are available. Team HTTP uses Bearer credentials; OIDC is not implemented. Cloud storage, production TLS proxies and real model/language-server compatibility require deployment-specific validation.
 

@@ -1,7 +1,7 @@
 {
   "name": "project-context-mcp",
   "version": "0.10.0",
-  "description": "Local-first, cross-session project intelligence and memory MCP server",
+  "description": "Local-first project memory for coding agents: index and checkpoints; optional encrypted remote backup, multi-machine sync, and self-hosted team ACL",
   "type": "module",
   "bin": {
     "project-context": "dist/cli.js",
