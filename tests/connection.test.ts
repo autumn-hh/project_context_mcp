@@ -104,6 +104,11 @@ describe("opt-in remote MCP connection config", () => {
       expect(shares.response.status).toBe(200);
       expect(JSON.stringify(shares.body)).toContain(shareId);
       expect(JSON.stringify(shares.body)).not.toContain(credential.token);
+      const context = await request("/api/team/" + shareId + "/context?connectionId=" + status.body.connectionId);
+      expect(context.response.status).toBe(200);
+      expect(context.body.sourceCodeIncluded).toBe(false);
+      expect(JSON.stringify(context.body.memories)).toContain("from remote db");
+      const candidate = team.propose({ userId: "owner", clientId: "setup" }, shareId, { type: "decision", title: "Keep pending", content: "Must not write through a stale connection" });
 
       // sanity: the same remote endpoint answers MCP clients directly
       const client = new Client({ name: "fixture", version: "1" });
@@ -119,6 +124,9 @@ describe("opt-in remote MCP connection config", () => {
 
       await saveConnectionConfig({ mode: "local" });
       expect((await request("/api/connection")).body.mode).toBe("local");
+      expect((await request("/api/team/" + shareId + "/context?connectionId=" + status.body.connectionId)).response.status).toBe(409);
+      expect((await request("/api/team/" + shareId + "/accept?connectionId=" + status.body.connectionId, { candidateId: candidate.id })).response.status).toBe(409);
+      expect(team.candidates({ userId: "owner", clientId: "setup" }, shareId).map(item => item.id)).toContain(candidate.id);
     } finally {
       await ui.close();
       await endpoint.close();

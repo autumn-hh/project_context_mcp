@@ -234,7 +234,7 @@ export class TeamService {
     z.number().int().min(0).max(10000000).parse(offset);
     return this.db.prepare("SELECT * FROM team_audit WHERE workspace_id=? AND (share_id=? OR share_id IS NULL) ORDER BY created_at ASC,id ASC LIMIT 1000 OFFSET ?").all(share.workspace_id, shareId, offset);
   }
-  private audited<T>(principal: TeamPrincipal, share: Share, action: string, entity: string | null, work: () => T): T {
+  audited<T>(principal: TeamPrincipal, share: Share, action: string, entity: string | null, work: () => T): T {
     const id = this.audit(principal, share.workspace_id, share.id, action, entity, "started");
     try { const result = work(); this.finishAudit(id, "completed"); return result; }
     catch (error) { this.finishAudit(id, "failed"); throw error; }

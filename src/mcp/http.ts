@@ -7,8 +7,10 @@ import { TeamService, type TeamPrincipal } from "../team/team-service.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { PACKAGE_VERSION } from "../shared/version.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { TeamKnowledgeService } from "../team/knowledge-service.js";
+import { registerKnowledgeTools } from "../team/knowledge-tools.js";
 
-function teamMcp(service: TeamService, principal: TeamPrincipal) {
+function teamMcp(service: TeamService, knowledge: TeamKnowledgeService, principal: TeamPrincipal) {
   const server = new McpServer({ name: "project-context-team", version: PACKAGE_VERSION });
   const share = { shareId: z.string().min(1).max(256) }; const outputSchema = { result: z.unknown() };
   const invoke = async (work: () => unknown) => {
@@ -45,6 +47,7 @@ function teamMcp(service: TeamService, principal: TeamPrincipal) {
     server.registerTool("team_audit_export", { description: "Page through project/workspace audit entries, 1000 per page; repeat with offset + 1000 until empty.", outputSchema, inputSchema: {...share,offset:z.number().int().min(0).max(10000000).default(0)}, annotations: { readOnlyHint: true } },
       ({ shareId,offset }) => invoke(() => service.auditLog(principal, shareId,offset)));
   }
+  registerKnowledgeTools(server, knowledge, principal, roles);
   return server;
 }
 
@@ -56,6 +59,7 @@ async function jsonBody(request: IncomingMessage) {
 
 export async function startTeamHttp(options: { port?: number } = {}) {
   const app = await ProjectContextApp.create(); const service = new TeamService(app);
+  const knowledge = new TeamKnowledgeService(service);
   const pending = new Set<Promise<void>>();
   const server = createServer((request, response) => {
     const work = (async () => {
@@ -70,7 +74,7 @@ export async function startTeamHttp(options: { port?: number } = {}) {
         service.authenticate(header.slice(7));
         const body = await jsonBody(request);
         const principal = service.authenticate(header.slice(7));
-        const mcp = teamMcp(service, principal);
+        const mcp = teamMcp(service, knowledge, principal);
         const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
         // SDK optional callback declarations predate exactOptionalPropertyTypes.
         try { await mcp.connect(transport as Transport); await transport.handleRequest(request, response, body); }

@@ -1,5 +1,7 @@
 # Project Context MCP
 
+Optional [team knowledge infrastructure](docs/team-service.md) keeps shared memories, plans and project rules in one server database. Developers connect to the same team MCP while keeping source code, indexes and personal preferences locally. Configure separate local and remote MCP connections in your IDE; changing the web workbench connection does not reconfigure the IDE. Shared knowledge is immediately visible without S3 push/pull.
+
 <p align="center">
   <img src="docs/assets/readme-banner-en.jpg" alt="Project Context MCP — Local project memory so coding agents pick up where they left off" width="100%">
 </p>

@@ -18,12 +18,14 @@ import { IndexPreviewJobs } from "./index-preview-jobs.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { TeamService } from "../team/team-service.js";
-import { connectionStatusFromDisk, loadConnectionConfig, saveConnectionConfig } from "../config/connection.js";
+import { TeamKnowledgeService } from "../team/knowledge-service.js";
+import { connectionIdentity, connectionStatusFromDisk, loadConnectionConfig, saveConnectionConfig } from "../config/connection.js";
 import {
   remoteTeamAccept,
   remoteTeamAudit,
   remoteTeamCandidates,
   remoteTeamConflicts,
+  remoteTeamContext,
   remoteTeamGraph,
   remoteTeamListShares,
   remoteTeamResolve,
@@ -181,25 +183,31 @@ async function routeRequest(
       return;
     }
 
-    const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/(candidates|conflicts|accept|resolve|audit|graph))?$/);
+    const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/(candidates|conflicts|accept|resolve|audit|graph|context))?$/);
     if (teamMatch && (request.method === "GET" || request.method === "POST")) {
       const input = request.method === "POST" ? await readJsonBody(request) : undefined;
       const connection = await loadConnectionConfig();
+      const expectedConnection = url.searchParams.get("connectionId");
+      if ((request.method === "POST" || expectedConnection) && expectedConnection !== connectionIdentity(connection)) {
+        sendJson(response, 409, { code: "TEAM_CONNECTION_CHANGED", message: "Team connection changed. Refresh the shared project before continuing." });
+        return;
+      }
       if (connection.mode === "remote-team") {
         try {
-          if (!teamMatch[1] && request.method === "GET") { sendJson(response, 200, await remoteTeamListShares()); return; }
+          if (!teamMatch[1] && request.method === "GET") { sendJson(response, 200, await remoteTeamListShares(connection)); return; }
           const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
-          if (request.method === "GET" && action === "candidates") { sendJson(response, 200, await remoteTeamCandidates(shareId)); return; }
-          if (request.method === "GET" && action === "conflicts") { sendJson(response, 200, await remoteTeamConflicts(shareId)); return; }
-          if (request.method === "GET" && action === "audit") { sendJson(response, 200, await remoteTeamAudit(shareId)); return; }
-          if (request.method === "GET" && action === "graph") { sendJson(response, 200, await remoteTeamGraph(shareId)); return; }
+          if (request.method === "GET" && action === "context") { sendJson(response, 200, await remoteTeamContext(shareId, connection)); return; }
+          if (request.method === "GET" && action === "candidates") { sendJson(response, 200, await remoteTeamCandidates(shareId, connection)); return; }
+          if (request.method === "GET" && action === "conflicts") { sendJson(response, 200, await remoteTeamConflicts(shareId, connection)); return; }
+          if (request.method === "GET" && action === "audit") { sendJson(response, 200, await remoteTeamAudit(shareId, 0, connection)); return; }
+          if (request.method === "GET" && action === "graph") { sendJson(response, 200, await remoteTeamGraph(shareId, connection)); return; }
           if (request.method === "POST" && action === "accept") {
             const args = z.object({ candidateId: z.string().min(1) }).strict().parse(input);
-            sendJson(response, 200, await remoteTeamAccept(shareId, args.candidateId)); return;
+            sendJson(response, 200, await remoteTeamAccept(shareId, args.candidateId, connection)); return;
           }
           if (request.method === "POST" && action === "resolve") {
             const args = z.object({ entity: z.string().min(1), eventId: z.string().min(1) }).strict().parse(input);
-            sendJson(response, 200, await remoteTeamResolve(shareId, args.entity, args.eventId)); return;
+            sendJson(response, 200, await remoteTeamResolve(shareId, args.entity, args.eventId, connection)); return;
           }
           throw new ProjectContextError("TEAM_INVALID_ACTION", "Unsupported team action.");
         } catch (error) {
@@ -217,6 +225,7 @@ async function routeRequest(
           const principal = team.authenticate(credential);
           if (!teamMatch[1] && request.method === "GET") return team.listShares(principal);
           const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
+          if (request.method === "GET" && action === "context") return new TeamKnowledgeService(team).context(principal, shareId, "");
           if (request.method === "GET" && action === "candidates") return team.candidates(principal, shareId);
           if (request.method === "GET" && action === "conflicts") return team.conflicts(principal, shareId);
           if (request.method === "GET" && action === "audit") return team.auditLog(principal, shareId);

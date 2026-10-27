@@ -8,6 +8,7 @@ import { startTeamHttp } from "../src/mcp/http.js";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import {startUiServer} from "../src/ui/server.js";
+import { connectionStatusFromDisk } from "../src/config/connection.js";
 import {initializeSync,outgoingEvents,receiveEvents} from "../src/storage/sync/event-store.js";
 
 describe("team sharing and authenticated HTTP MCP", () => {
@@ -15,7 +16,7 @@ describe("team sharing and authenticated HTTP MCP", () => {
   let env: Record<string,string|undefined>; const owner: TeamPrincipal = { userId: "owner", clientId: "local" };
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "team-test-"));
-    const values = { PROJECT_CONTEXT_HOME: join(root, "store"), PROJECT_CONTEXT_ALLOWED_ROOTS: root, PROJECT_CONTEXT_ALLOWED_OUTPUT_ROOTS: root, PROJECT_CONTEXT_TEAM_UI_TOKEN:"" };
+    const values = { APPDATA: join(root, "config"), PROJECT_CONTEXT_HOME: join(root, "store"), PROJECT_CONTEXT_ALLOWED_ROOTS: root, PROJECT_CONTEXT_ALLOWED_OUTPUT_ROOTS: root, PROJECT_CONTEXT_TEAM_UI_TOKEN:"" };
     env = Object.fromEntries(Object.keys(values).map(key => [key,process.env[key]])); Object.assign(process.env, values);
     app = await ProjectContextApp.create(); await mkdir(join(root, "project")); projectId = (await app.openProject(join(root, "project"))).id;
     app.remember(projectId, { type: "constraint", title: "共享约束", content: "shared constraint", sourceKind: "user" });
@@ -48,8 +49,10 @@ describe("team sharing and authenticated HTTP MCP", () => {
       expect((await request("/api/team")).response.status).toBe(401);
       const session=await request("/api/session",{token:new URLSearchParams(new URL(ui.launchUrl).hash.slice(1)).get("token")});cookie=session.response.headers.get("set-cookie")!.split(";")[0]!;
       expect(JSON.stringify((await request("/api/team")).body)).not.toContain(credential.token);
-      expect((await request('/api/team/'+shareId+'/accept',{candidateId:proposal.id})).body.status).toBe("active");
-      const resolved=await request('/api/team/'+shareId+'/resolve',{entity:conflict.entity,eventId:conflict.versions[0]!.id});expect(resolved.response.status).toBe(200);
+      const identity = "?connectionId=" + (await connectionStatusFromDisk()).connectionId;
+      expect((await request('/api/team/'+shareId+'/accept'+identity,{candidateId:proposal.id})).body.status).toBe("active");
+      const resolved=await request('/api/team/'+shareId+'/resolve'+identity,{entity:conflict.entity,eventId:conflict.versions[0]!.id});expect(resolved.response.status).toBe(200);
+      expect((await request('/api/team/'+shareId+'/context')).body.sourceCodeIncluded).toBe(false);
       expect(team.conflicts(reviewer,shareId)).toEqual([]);expect(team.auditLog(reviewer,shareId)).toEqual(expect.arrayContaining([expect.objectContaining({action:'conflict.resolve',status:'completed'})]));
       expect((await request('/api/team/'+shareId+'/graph')).body.code).toBe('TEAM_CODE_NOT_SHARED');
       team.revokeToken(credential.id);expect((await request('/api/team')).body.code).toBe('TEAM_UNAUTHENTICATED');
@@ -96,7 +99,7 @@ describe("team sharing and authenticated HTTP MCP", () => {
     try {
       const unauthorized=await fetch(endpoint.url,{method:"POST",headers:{"content-type":"application/json"},body:'{}'}); expect(unauthorized.status).toBe(401);
       await client.connect(new StreamableHTTPClientTransport(new URL(endpoint.url),{requestInit:{headers:{Authorization:'Bearer '+token.token}}}));
-      const tools=await client.listTools(); expect(tools.tools.map(tool=>tool.name)).toEqual(["team_projects","team_search","team_presence_list","team_code_graph"]);
+      const tools=await client.listTools(); expect(tools.tools.map(tool=>tool.name)).toEqual(["team_projects","team_search","team_presence_list","team_code_graph","team_context","team_task_list","team_task_get","team_task_history","team_rule_list","team_rule_history"]);
       const read=await client.callTool({name:"team_search",arguments:{shareId}}); expect(read.isError).not.toBe(true);
       expect(JSON.stringify(read)).toContain("shared constraint"); expect(JSON.stringify(read)).not.toContain("private preference");
       team.setMember(owner,workspaceId,"viewer",null);

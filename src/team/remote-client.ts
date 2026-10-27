@@ -49,38 +49,42 @@ function unpack(result: ToolResult): unknown {
   return result;
 }
 
-async function callRemote(name: string, args: Record<string, unknown> = {}): Promise<unknown> {
-  const config = await loadConnectionConfig();
+async function callRemote(name: string, args: Record<string, unknown> = {}, config?: ConnectionConfig): Promise<unknown> {
+  config ??= await loadConnectionConfig();
   return withRemoteClient(config, async (client) => {
     const result = await client.callTool({ name, arguments: args }) as ToolResult;
     return unpack(result);
   });
 }
 
-export async function remoteTeamListShares(): Promise<unknown> {
-  return callRemote("team_projects");
+export async function remoteTeamListShares(config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_projects", {}, config);
 }
 
-export async function remoteTeamCandidates(shareId: string): Promise<unknown> {
-  return callRemote("team_candidate_list", { shareId });
+export async function remoteTeamContext(shareId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_context", { shareId }, config);
 }
 
-export async function remoteTeamConflicts(shareId: string): Promise<unknown> {
-  return callRemote("team_conflict_list", { shareId });
+export async function remoteTeamCandidates(shareId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_candidate_list", { shareId }, config);
 }
 
-export async function remoteTeamAudit(shareId: string, offset = 0): Promise<unknown> {
-  return callRemote("team_audit_export", { shareId, offset });
+export async function remoteTeamConflicts(shareId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_conflict_list", { shareId }, config);
 }
 
-export async function remoteTeamGraph(shareId: string): Promise<unknown> {
-  return callRemote("team_code_graph", { shareId });
+export async function remoteTeamAudit(shareId: string, offset = 0, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_audit_export", { shareId, offset }, config);
 }
 
-export async function remoteTeamAccept(shareId: string, candidateId: string): Promise<unknown> {
-  return callRemote("team_candidate_accept", { shareId, candidateId });
+export async function remoteTeamGraph(shareId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_code_graph", { shareId }, config);
 }
 
-export async function remoteTeamResolve(shareId: string, entity: string, eventId: string): Promise<unknown> {
-  return callRemote("team_conflict_resolve", { shareId, entity, eventId });
+export async function remoteTeamAccept(shareId: string, candidateId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_candidate_accept", { shareId, candidateId }, config);
+}
+
+export async function remoteTeamResolve(shareId: string, entity: string, eventId: string, config?: ConnectionConfig): Promise<unknown> {
+  return callRemote("team_conflict_resolve", { shareId, entity, eventId }, config);
 }

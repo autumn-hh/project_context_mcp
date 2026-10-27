@@ -1,4 +1,5 @@
 import { dirname, join } from "node:path";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { z } from "zod/v4";
@@ -14,6 +15,7 @@ const connectionSchema = z.object({
 export type ConnectionConfig = z.infer<typeof connectionSchema>;
 
 export type ConnectionStatus = {
+  connectionId: string;
   mode: "local" | "remote-team";
   remoteTeamUrl?: string;
   tokenEnv: string;
@@ -88,6 +90,7 @@ export function connectionStatus(config: ConnectionConfig): ConnectionStatus {
     ? "使用本机 SQLite 数据库；团队审核仍走本机 team 服务（需 PROJECT_CONTEXT_TEAM_UI_TOKEN）。"
     : `可选连接远程团队 MCP：${config.remoteTeamUrl ?? "（未设置 URL）"}；令牌只读环境变量 ${config.tokenEnv}，不会写入配置文件或网页。`;
   return {
+    connectionId: connectionIdentity(config),
     mode: config.mode,
     ...(config.remoteTeamUrl ? { remoteTeamUrl: config.remoteTeamUrl } : {}),
     tokenEnv: config.tokenEnv,
@@ -96,6 +99,10 @@ export function connectionStatus(config: ConnectionConfig): ConnectionStatus {
       : Boolean(process.env.PROJECT_CONTEXT_TEAM_UI_TOKEN?.trim()),
     summary,
   };
+}
+
+export function connectionIdentity(config: ConnectionConfig): string {
+  return createHash("sha256").update(JSON.stringify([config.mode, config.remoteTeamUrl ?? "", config.tokenEnv])).digest("hex");
 }
 
 function normalizeConnection(config: ConnectionConfig): ConnectionConfig {

@@ -1,10 +1,54 @@
 # 自托管团队服务
 
+## 服务器是共享知识中心，开发在各自本机
+
+多个客户端连接同一个团队 MCP、使用同一个 shareId，就直接读写同一份服务端数据。无需共享 SQLite 文件夹，也无需先运行 S3 推送/拉取。
+
+| 内容 | 保存位置 | 使用入口 |
+| --- | --- | --- |
+| 团队记忆、共同决策 | 团队服务器 | team_search / team_propose / team_candidate_accept |
+| 团队计划、进度与历史 | 团队服务器 | team_task_start / team_task_checkpoint / team_task_list / team_task_history |
+| 团队项目规则与版本 | 团队服务器 | team_rule_put / team_rule_list / team_rule_history |
+| 成员、权限与审计 | 团队服务器 | 管理员 CLI / team_audit_export |
+| 源码、代码索引、个人规则、私人任务 | 每个开发者本机 | 本地 stdio MCP 与本机工作台 |
+
+推荐在 IDE 中配置两个名称明确的 MCP：本地 project-context-local 用于项目代码与个人上下文；远程 project-context-team 用于共享知识。仅修改 Web 的连接方式不会自动改写 IDE 的 MCP 配置。远程使用 Streamable HTTP、MCP URL 和客户端秘密配置提供的 Bearer 请求头；不要把令牌写进项目文件。服务器可用空目录登记知识项目，不要求上传 Git 仓库。各开发机的目录可以不同。
+
+给开发代理的工作约定可以写为：
+
+> 开始任务先从 project-context-team 调用 team_projects，选定共享项目后用 team_context 读取团队记忆、计划和规则；通过 project-context-local 读取本地代码与个人上下文。需要协作的计划使用 team_task_start，进度使用 team_task_checkpoint。稳定结论通过 team_propose 提交审核。仅明确共享的内容写入团队服务，不上传源码、密钥或个人偏好。
+
+这是一项调用约定，连接 MCP 本身不会强制所有 AI 自动读取或遵守规则。服务器离线时本机开发仍可继续；团队读写会报错，不会偷偷写入本地副本。
+
+## 共享计划与规则
+
+team_context 返回最多 20 条共享记忆、20 个进行中的计划及 50 条有效规则。计划与规则可用对应 list 工具的 limit/offset 分页；计划支持 in_progress/completed/cancelled 筛选，规则支持 active/deleted。team_task_get 返回当前版本，team_task_history 和 team_rule_history 保留历史。记忆检索可用 team_search 的 query 缩小范围。
+
+创建计划后，将返回的 id 和 version 传给 team_task_checkpoint：
+
+```json
+{
+  "shareId": "<shared-project-id>",
+  "taskId": "<task-id>",
+  "expectedVersion": 1,
+  "requestId": "client-checkpoint-001",
+  "checkpoint": {
+    "summary": "已完成本地接口，等待另一位成员联调",
+    "completed": ["本机类型检查通过"],
+    "next": ["联调共享计划读取"]
+  }
+}
+```
+
+checkpoint 是本次完整进度快照；未提供的列表会清空。更新时须使用最新 version；并发修改返回 TEAM_VERSION_CONFLICT，先重新读取并合并。相同 requestId 仅用于同一客户端重试同样的 task/checkpoint，重试不会覆盖后来的进度。team_task_finish 以最新版本完成或取消任务。既有私人任务不会自动出现在共享列表，每个 shareId 的任务独立。
+
+owner/reviewer 可调用 team_rule_put 新建规则；编辑时带 ruleId 和 expectedVersion。team_rule_disable 停用并保留历史，重新 put 同一个 ruleId 可恢复。editor 可以更新计划，但不能改团队规则；viewer 只读。规则是共享项目规则，不修改任何开发者的个人规则。
+
 团队端采用可信服务端模型：管理员部署的服务能读取共享记忆，统一执行权限、搜索、审核与审计。项目数据库和 team.db 在服务端是普通 SQLite 文件；磁盘加密、目录访问控制、备份和 TLS 由部署方配置。对象存储中的知识备份/同步批次仍使用 AES-256-GCM。本功能不是端到端加密的团队搜索。
 
 ## 初始化与连接
 
-先完成本地 init、project open/index。以下命令由有权访问服务端存储的本地管理员执行。替换占位符；输出文件须位于 allowedOutputRoots，且不能已存在。
+先完成服务端 init、project open；知识项目不需要源码索引。以下命令由有权访问服务端存储的本地管理员执行。替换占位符；输出文件须位于 allowedOutputRoots，且不能已存在。
 
 ```powershell
 node dist/cli.js team init --org Engineering --workspace Backend --owner alice
@@ -23,18 +67,18 @@ HTTP 服务只绑定 127.0.0.1，拒绝浏览器 Origin，接受 POST /mcp；请
 
 ## 可选：本机工作台连接远程 MCP
 
-默认始终使用本机 SQLite。若要让 Web「团队审核」改走另一台已部署的团队 HTTP MCP（局域网或公网），可显式切换：
+Web 的代码、个人规则和原有任务页面使用本机数据。「团队与备份 → 团队知识中心」可显式连接另一台已部署的团队 HTTP MCP，查看共享记忆、计划和规则并审核候选：
 
 ```powershell
 node dist/cli.js connection show
 node dist/cli.js connection use-remote --url http://192.168.1.10:8787/mcp
 # 公网须 https，例如：
 # node dist/cli.js connection use-remote --url https://team.example.com/mcp --token-env PROJECT_CONTEXT_TEAM_TOKEN
-setx PROJECT_CONTEXT_TEAM_TOKEN "<Bearer token>"
+# 启动 UI 前，从自己的秘密存储向进程环境注入 PROJECT_CONTEXT_TEAM_TOKEN。
 node dist/cli.js connection use-local
 ```
 
-也可在 Web「远程备份 → 数据连接」里切换。令牌只放在环境变量，不进配置文件、不进浏览器。未切换时行为与从前相同。本地 UI 仍默认只监听 127.0.0.1。
+也可在 Web「团队与备份 → 团队知识连接」里切换。页面明确标示共享数据来源；代码、个人规则和原任务页面仍读本机库。团队计划与规则的创建/编辑通过 MCP 完成，页面提供摘要查看。令牌只放在服务进程环境变量，不进连接配置文件、不进浏览器。本地 UI 只监听 127.0.0.1。切换连接会清空旧审核内容；旧连接发起的审核请求被拒绝，须刷新后继续。
 
 
 例如 Nginx 的 location 配置（TLS 证书及 server_name 另行配置）：
@@ -68,6 +112,8 @@ HTTP 按认证身份提供工具子集，每次操作重新检查实际 workspac
 
 所有成员可用 team_projects、team_search、team_presence_list、team_code_graph。写入角色另有 team_candidate_list、team_propose、team_candidate_accept、team_presence；owner/reviewer 另有 team_conflict_list、team_conflict_resolve、team_audit_export。
 
+共享知识新增 11 个工具：所有成员可用 team_context、team_task_list/get/history、team_rule_list/history；owner/reviewer/editor 可用 team_task_start/checkpoint/finish；owner/reviewer 可用 team_rule_put/disable。单一 reviewer/owner 工作区共 22 个工具，viewer 共 10 个。本地 stdio 的 49 个工具保持独立，不向团队成员开放服务端文件管理和索引入口。
+
 团队冲突审核复用 P1 因果事件日志：项目先配置单用户同步，出现并发版本后，由授权审核者在 Web 或 MCP 选择版本。只展示该共享类型范围内的 memory 冲突。首版提供“择一”而非文本编辑合并；选择后生成引用全部冲突头的新事件，旧版本保留。团队共同使用一个服务端项目数据库，不在每台客户端自动建立项目副本。P1 对象存储共同凭据不是团队 ACL，不应向不可信成员发放该凭据。
 
 team_audit_export 按 shareId 返回每页最多 1000 条记录，以 offset=0、1000……读取，直到空页。记录包含认证用户、客户端、操作类型、实体 ID、时间、结果；不记录原始令牌。审计和项目内容分库，跨库写入不保证原子性：开始时写 started，成功或失败后更新 completed/failed；进程异常退出可留下 started，需要运维核对。被权限检查拒绝的请求不会写成成功审计；当前没有防管理员篡改的外部审计存储。
@@ -82,4 +128,8 @@ node dist/cli.js team code-sharing <share-id> --actor alice --enabled true
 
 显式开启后，成员可通过 team_code_graph 或审核页“导出只读代码关系图（JSON）”下载。输出最多 5000 个符号、10000 条已解析关系，包含相对路径、名称、类型和行号；排除源码全文、签名、调用证据、绝对根路径。结构名称和路径仍属于项目资料。manifest 标记版本、索引时间、捕获的版本控制 revision、是否截断；图谱不是可导入的搜索索引，也不保证当前工作区仍与捕获 revision 一致。--enabled false 后禁止新的导出。
 
-服务状态保存在 <storage-root>/team.db，另有 registry.db 和各 project.db。灾备时应协调停止写入并备份这些文件；P0 知识包只迁移项目知识，不包含团队成员、令牌摘要、ACL 和审计。对象存储访问密钥可独立轮换；加密口令变更不会重加密旧对象，旧备份仍需旧口令。单用户同步换口令时应新建空间/前缀并以知识快照重新初始化，不能用新口令继续读取原空间。
+服务状态保存在 <storage-root>/team.db，另有 registry.db 和各 project.db。灾备时应协调停止写入并备份这些文件；团队规则/版本在 team.db，计划与共享映射在 project.db。P0 知识包不包含团队规则、共享映射、成员、令牌摘要、ACL 和审计，不能作为完整团队服务备份。对象存储访问密钥可独立轮换；加密口令变更不会重加密旧对象，旧备份仍需旧口令。单用户同步换口令时应新建空间/前缀并以知识快照重新初始化，不能用新口令继续读取原空间。
+
+## 0.10.2 验收范围
+
+已通过本地两客户端 HTTP 集成测试及云 VM 实际部署验收：共享记忆、计划与规则立即可读，任务旧版本修改被拒绝，重启后记录保留，原有记忆仍可检索。云端两个客户端分别认证；没有迁移开发者源码。Web 实际查看云端数据，验证本机/远程切换、展开详情、390px 窄屏与 200% CSS 放大下长标题/连续编号。真实连接使用 SSH 隧道转发至回环监听端口；不代表公网 TLS、OIDC、长期负载或原生系统缩放已经验收。

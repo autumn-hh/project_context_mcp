@@ -22,7 +22,7 @@ export const UI_HTML = String.raw`<!doctype html>
       <button class="tab" data-view="rules" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h4m4 0h6M3 14h8m4 0h2"/><circle cx="9" cy="6" r="2"/><circle cx="13" cy="14" r="2"/></svg>规则</button>
       <button class="tab" data-view="context" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 8 4-8 4-8-4 8-4ZM2 10l8 4 8-4M2 14l8 4 8-4"/></svg>上下文</button>
     </nav>
-    <div class="local-state"><span class="status-dot"></span><div><strong>本地运行</strong><span>连接正常</span></div></div>
+    <div class="local-state"><span class="status-dot"></span><div><strong>本机工作台</strong><span id="knowledge-location">代码与个人数据：本机</span></div></div>
   </header>
 
   <main>
@@ -49,7 +49,7 @@ export const UI_HTML = String.raw`<!doctype html>
           <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
           <button class="portrait-mode" data-portrait-mode="graph" aria-pressed="false" type="button">代码关系</button>
           <button class="portrait-mode" data-portrait-mode="maintenance" aria-pressed="false" type="button">索引与存储</button>
-          <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">远程备份</button>
+          <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">团队与备份</button>
         </nav>
         ${REMOTE_BACKUP_HTML}
         <div id="portrait-overview" class="portrait-grid">
@@ -959,6 +959,7 @@ export const UI_JS = String.raw`(function () {
     populateStaticOptions();
     try {
       await establishSession();
+      await loadConnectionStatus();
       await refresh(true);
       newRule(false);
       await loadTaskView(false, false);

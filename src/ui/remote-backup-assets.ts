@@ -1,13 +1,13 @@
 export const REMOTE_BACKUP_HTML = String.raw`
 <section id="portrait-backup" class="remote-backup-panel" hidden aria-labelledby="remote-backup-title">
-  <header><div><span class="panel-label">ENCRYPTED BACKUP</span><h2 id="remote-backup-title">远程备份</h2></div><button id="remote-refresh" class="secondary-button" type="button">刷新记录</button></header>
+  <header><div><span class="panel-label">TEAM & BACKUP</span><h2 id="remote-backup-title">团队与备份</h2></div><button id="remote-refresh" class="secondary-button" type="button">刷新备份记录</button></header>
   <p class="maintenance-note">将本项目的记忆、候选、任务和历史加密备份。代码索引、来源摘录和个人规则默认不上传；已保存在记忆或任务正文中的内容会随包备份。</p>
-  <section class="maintenance-card remote-sync-card" aria-labelledby="connection-title"><h3 id="connection-title">数据连接</h3>
-  <p class="maintenance-note">默认只用本机数据库。需要时可选连接局域网或公网的团队 MCP（Bearer），本机工作台其它功能仍读本地库。</p>
-  <fieldset class="connection-mode-fields" style="border:0;padding:0;margin:0 0 12px">
+  <section class="maintenance-card remote-sync-card" aria-labelledby="connection-title"><h3 id="connection-title">团队知识连接</h3>
+  <p class="maintenance-note">团队记忆、计划和规则可统一保存在服务器，多人直接读写同一份数据。代码、索引与个人规则仍在各自本机；无需推送或拉取团队知识。</p>
+  <fieldset class="connection-mode-fields">
     <legend class="sr-only">连接方式</legend>
-    <label style="display:block;margin:6px 0"><input id="connection-mode-local" name="connection-mode" type="radio" value="local"> 本机数据库（默认）</label>
-    <label style="display:block;margin:6px 0"><input id="connection-mode-remote" name="connection-mode" type="radio" value="remote-team"> 远程团队 MCP</label>
+    <label><input id="connection-mode-local" name="connection-mode" type="radio" value="local"><span>本机数据库（默认）</span></label>
+    <label><input id="connection-mode-remote" name="connection-mode" type="radio" value="remote-team"><span>远程团队 MCP</span></label>
   </fieldset>
   <div class="field"><label for="connection-url">远程 MCP 地址（以 /mcp 结尾）</label><input id="connection-url" placeholder="http://192.168.1.10:8787/mcp 或 https://example.com/mcp" autocomplete="off" spellcheck="false"></div>
   <div class="field"><label for="connection-token-env">令牌环境变量名</label><input id="connection-token-env" value="PROJECT_CONTEXT_TEAM_TOKEN" autocomplete="off" spellcheck="false"></div>
@@ -31,7 +31,7 @@ export const REMOTE_BACKUP_HTML = String.raw`
   <details class="remote-setup"><summary>首次配置与恢复说明</summary><p>先在本机运行 remote add 配置目标及凭据环境变量名称。口令与存储凭据由运行服务的环境提供，页面不接收密钥。</p><p>恢复出的 project.db 可通过 project restore 登记为新项目，再按需要重建代码索引。所选个人规则保存在 rules.db，需另行明确作用域后导入。仅有知识备份不包含 Git 源码。</p></details>
   <h3>最近成功的备份</h3><p class="maintenance-note">显示最近 50 条本机记录；更早备份或另一台机器的对象键仍可用于恢复。记录不代表远端对象当前仍存在。</p>
   <div id="remote-backup-history" class="remote-backup-history"></div>
-  <section class="maintenance-card remote-sync-card"><h3>团队审核</h3><p class="maintenance-note">按上方「数据连接」选择本机团队服务或远程 MCP；操作由对应服务端重新检查权限并记录审计。</p><button id="team-review-refresh" class="secondary-button" type="button">读取团队项目</button><div class="field"><label for="team-review-share">共享项目</label><select id="team-review-share"></select></div><p id="team-review-status" role="status" class="maintenance-note"></p><div id="team-review-items"></div></section>
+  <section class="maintenance-card remote-sync-card"><h3>团队知识中心</h3><p id="team-data-source" class="maintenance-note">请选择团队知识连接。</p><button id="team-review-refresh" class="secondary-button" type="button">刷新共享内容</button><div class="field"><label for="team-review-share">共享项目</label><select id="team-review-share"></select></div><p id="team-review-status" role="status" class="maintenance-note"></p><div id="team-knowledge-items"></div><h3>候选与冲突审核</h3><div id="team-review-items"></div></section>
 </section>
 <dialog id="remote-confirm-dialog" aria-labelledby="remote-confirm-title"><div class="migration-body"><h2 id="remote-confirm-title">确认操作</h2><p id="remote-confirm-message" style="overflow-wrap:anywhere"></p><div class="dialog-actions"><button id="remote-confirm-cancel" class="secondary-button" type="button">取消</button><button id="remote-confirm-ok" class="primary-button" type="button">确认执行</button></div></div></dialog>`;
 
@@ -45,6 +45,11 @@ export const REMOTE_BACKUP_CSS = String.raw`
 .remote-sync-version pre { max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
 .remote-backup-panel .field { margin:12px 0; min-width:0; }
 .remote-backup-panel input, .remote-backup-panel select { width:100%; min-width:0; max-width:100%; }
+.remote-backup-panel .connection-mode-fields { border:0; padding:0; margin:0 0 12px; min-width:0; }
+.remote-backup-panel .connection-mode-fields label { display:flex; align-items:center; gap:8px; margin:6px 0; min-height:32px; cursor:pointer; }
+.remote-backup-panel .connection-mode-fields label span { min-width:0; overflow-wrap:anywhere; }
+.remote-backup-panel .connection-mode-fields input[type="radio"] { flex:0 0 16px; width:16px; height:16px; margin:0; padding:0; border:0; border-radius:50%; accent-color:var(--accent); box-shadow:none; cursor:pointer; }
+.remote-backup-panel .connection-mode-fields input[type="radio"]:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
 .remote-backup-panel p, .remote-backup-panel h2, .remote-backup-panel h3, .remote-backup-panel summary { overflow-wrap:anywhere; }
 .remote-backup-panel button { max-width:100%; white-space:normal; overflow-wrap:anywhere; }
 .remote-backup-panel button:focus-visible, .remote-backup-panel summary:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
@@ -59,6 +64,13 @@ export const REMOTE_BACKUP_CSS = String.raw`
 
 export const REMOTE_BACKUP_JS = String.raw`
   var remoteSequence = 0, remoteBusy = false, remoteTargets = [], remoteSyncConfigured = false, teamShares = [];
+  var teamSequence = 0, teamConnectionId = "", teamConnectionSaving = false;
+  function resetTeamView() {
+    teamSequence++; teamShares = [];
+    ["team-review-share", "team-review-items", "team-knowledge-items"].forEach(function(id) { remoteElement(id).replaceChildren(); });
+    remoteElement("team-review-status").textContent = "请刷新共享内容。";
+  }
+  function teamUrl(path, connectionId) { return path + "?connectionId=" + encodeURIComponent(connectionId); }
   function remoteElement(id) { return document.getElementById(id); }
   function confirmRemoteOperation(message) {
     var dialog = remoteElement("remote-confirm-dialog");
@@ -87,6 +99,10 @@ export const REMOTE_BACKUP_JS = String.raw`
   }
   
   function fillConnectionForm(status) {
+    if (teamConnectionId !== status.connectionId) resetTeamView();
+    teamConnectionId = status.connectionId;
+    remoteElement("knowledge-location").textContent = status.mode === "remote-team" ? "代码：本机 · 团队：远程" : "代码与团队：本机";
+    remoteElement("team-data-source").textContent = status.mode === "remote-team" ? "共享数据来自远程 MCP：" + status.remoteTeamUrl : "共享数据来自本机团队服务。";
     remoteElement("connection-mode-local").checked = status.mode === "local";
     remoteElement("connection-mode-remote").checked = status.mode === "remote-team";
     remoteElement("connection-url").value = status.remoteTeamUrl || "";
@@ -103,15 +119,18 @@ export const REMOTE_BACKUP_JS = String.raw`
     }
   }
   async function saveConnectionStatus() {
+    if (teamConnectionSaving) return;
+    teamConnectionSaving = true; resetTeamView(); remoteElement("connection-save").disabled = true;
     var mode = remoteElement("connection-mode-remote").checked ? "remote-team" : "local";
     var body = { mode: mode, tokenEnv: remoteElement("connection-token-env").value.trim() || "PROJECT_CONTEXT_TEAM_TOKEN" };
     if (mode === "remote-team") body.remoteTeamUrl = remoteElement("connection-url").value.trim();
     try {
       fillConnectionForm(await fetchJson("/api/connection", { method: "PUT", body: body }));
+      teamConnectionSaving = false; await loadTeamShares();
       toast(mode === "local" ? "已切回本机数据库" : "已保存远程 MCP 连接");
     } catch (error) {
       remoteElement("connection-status").textContent = error.message || "保存失败";
-    }
+    } finally { teamConnectionSaving = false; remoteElement("connection-save").disabled = false; }
   }
 
   function bindRemoteBackupEvents() {
@@ -119,7 +138,6 @@ export const REMOTE_BACKUP_JS = String.raw`
     remoteElement("connection-mode-remote").addEventListener("change", function(){ remoteElement("connection-url").disabled = false; });
     remoteElement("connection-save").addEventListener("click", saveConnectionStatus);
     remoteElement("connection-refresh").addEventListener("click", loadConnectionStatus);
-    loadConnectionStatus();
     remoteElement("team-review-refresh").addEventListener("click", loadTeamShares);
     remoteElement("team-review-share").addEventListener("change", loadTeamReview);
     remoteElement("remote-sync-push").addEventListener("click", function() { runRemoteSync("push"); });
@@ -222,25 +240,54 @@ export const REMOTE_BACKUP_JS = String.raw`
     finally { remoteBusy = false; remoteControls(); await loadRemoteSync(els["portrait-project"].value); }
   }
   async function loadTeamShares() {
+    if (teamConnectionSaving) return;
+    resetTeamView();
+    var sequence = teamSequence, connectionId = teamConnectionId;
     try {
-      var shares = await fetchJson("/api/team"); var select = remoteElement("team-review-share"); select.replaceChildren();
+      var shares = await fetchJson(teamUrl("/api/team", connectionId));
+      if (sequence !== teamSequence || connectionId !== teamConnectionId) return;
+      var select = remoteElement("team-review-share"); select.replaceChildren();
       teamShares = shares;
       shares.forEach(function(share) { addOption(select, share.shareId, share.name + " · " + share.workspaceId); });
       await loadTeamReview();
-    } catch(error) { remoteElement("team-review-status").textContent = error.message; }
+    } catch(error) { if (sequence === teamSequence) remoteElement("team-review-status").textContent = error.message; }
+  }
+  function renderTeamKnowledge(data) {
+    var container = remoteElement("team-knowledge-items"); container.replaceChildren();
+    [["共享记忆", data.memories, null], ["共享计划（进行中）", data.tasks.items, data.tasks.total], ["共享项目规则", data.rules.items, data.rules.total]].forEach(function(group) {
+      container.append(element("h3", "", group[0] + " · " + group[1].length + (group[2] === null ? "（最多 20 条）" : " / " + group[2])));
+      if (!group[1].length) container.append(element("p", "maintenance-note", "暂无内容"));
+      group[1].forEach(function(record) {
+        var item = element("details", "remote-backup-record");
+        item.append(element("summary", "", record.title || record.goal));
+        item.append(element("p", "", record.content || (record.checkpoint && record.checkpoint.summary) || "尚无进度说明"));
+        if (record.checkpoint) {
+          ["completed", "next", "blockers", "risks"].forEach(function(key, index) {
+            if (record.checkpoint[key] && record.checkpoint[key].length) item.append(element("p", "", ["已完成", "下一步", "阻塞", "风险"][index] + "：" + record.checkpoint[key].join("；")));
+          });
+        }
+        item.append(element("p", "maintenance-note", "ID：" + record.id + (record.version ? " · 版本 " + record.version : ""))); container.append(item);
+      });
+    });
+    container.append(element("p", "maintenance-note", "这里展示共享摘要。通过团队 MCP 创建或更新计划、规则；完整列表与历史使用 team_task_list / team_rule_list 等工具分页读取。"));
   }
   async function loadTeamReview() {
+    if (teamConnectionSaving) return;
+    var sequence = ++teamSequence, connectionId = teamConnectionId;
     var shareId = remoteElement("team-review-share").value, container = remoteElement("team-review-items"); container.replaceChildren();
+    remoteElement("team-knowledge-items").replaceChildren();
     if (!shareId) { remoteElement("team-review-status").textContent = "没有可访问的共享项目"; return; }
     var base = "/api/team/" + encodeURIComponent(shareId);
     var share = teamShares.find(function(item) { return item.shareId === shareId; });
     var canReview = share && (share.role === "owner" || share.role === "reviewer");
-    var results = await Promise.allSettled([share && share.role !== "viewer" ? fetchJson(base + "/candidates") : Promise.resolve([]), canReview ? fetchJson(base + "/conflicts") : Promise.resolve([])]);
-    if (shareId !== remoteElement("team-review-share").value) return;
-    remoteElement("team-review-status").textContent = results.filter(function(result) { return result.status === "rejected"; }).map(function(result) { return result.reason.message; }).join("；") || "审核队列已更新";
+    var results = await Promise.allSettled([share && share.role !== "viewer" ? fetchJson(teamUrl(base + "/candidates", connectionId)) : Promise.resolve([]), canReview ? fetchJson(teamUrl(base + "/conflicts", connectionId)) : Promise.resolve([]), fetchJson(teamUrl(base + "/context", connectionId))]);
+    if (sequence !== teamSequence || connectionId !== teamConnectionId || shareId !== remoteElement("team-review-share").value) return;
+    remoteElement("team-review-status").textContent = results.filter(function(result) { return result.status === "rejected"; }).map(function(result) { return result.reason.message; }).join("；") || "共享内容已更新 · 当前角色：" + share.role;
+    if (results[2].status === "fulfilled") renderTeamKnowledge(results[2].value);
     function action(button, path, body) { button.addEventListener("click", async function() {
-      if (!await confirmRemoteOperation("确认执行此审核操作？结果将记录到团队审计。")) return; button.disabled = true;
-      try { await fetchJson(base + path, { method: "POST", body: body }); await loadTeamReview(); await loadRemoteSync(els["portrait-project"].value); }
+      if (!await confirmRemoteOperation("确认执行此审核操作？结果将记录到团队审计。")) return;
+      if (sequence !== teamSequence || connectionId !== teamConnectionId || teamConnectionSaving) return; button.disabled = true;
+      try { await fetchJson(teamUrl(base + path, connectionId), { method: "POST", body: body }); if (sequence === teamSequence) await loadTeamReview(); }
       catch(error) { remoteElement("team-review-status").textContent = error.message; button.disabled = false; }
     }); }
     if (results[0].status === "fulfilled") results[0].value.forEach(function(candidate) {
@@ -257,7 +304,7 @@ export const REMOTE_BACKUP_JS = String.raw`
       var download = element("button", "secondary-button", "导出只读代码关系图（JSON）"); download.type = "button";
       download.addEventListener("click", async function() {
         download.disabled = true;
-        try { var graph = await fetchJson(base + "/graph"); var objectUrl = URL.createObjectURL(new Blob([JSON.stringify(graph,null,2)], {type:"application/json"}));
+        try { var graph = await fetchJson(teamUrl(base + "/graph", connectionId)); if (sequence !== teamSequence) return; var objectUrl = URL.createObjectURL(new Blob([JSON.stringify(graph,null,2)], {type:"application/json"}));
           var link = document.createElement("a"); link.href = objectUrl; link.download = "team-code-graph.json"; link.click(); setTimeout(function(){URL.revokeObjectURL(objectUrl);},1000);
           remoteElement("team-review-status").textContent = "已导出 " + graph.nodes.length + " 个节点、" + graph.edges.length + " 条关系" + (graph.manifest.truncated ? "（达到上限，包含部分结构）" : "") + "。";
         } catch(error) { remoteElement("team-review-status").textContent = error.message; } finally {download.disabled=false;}
