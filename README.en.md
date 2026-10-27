@@ -2,22 +2,22 @@
 
 **English** | [中文](README.md)
 
-Project Context MCP is a project-memory service for coding agents.
+Local project memory for coding agents.
 
-Connect it to Cursor, Claude Code, Codex, or any MCP client (MCP is a standard way for agents to call tools). It keeps what matters on your machine: an index of your code and docs, decisions and constraints you approved, and checkpoints for in-progress work. Across sessions and clients, it can assemble the relevant context so the agent can continue where you left off.
+New chat? It still remembers what matters in this repo.
 
-Local-first by default. When you need more, you can also use:
+**What you get**
 
-- Local indexing, memory review, task checkpoints, and a web workbench
-- Encrypted remote knowledge backups (S3-compatible storage)
-- Incremental sync across machines
-- Self-hosted team access control (ACL) and Bearer HTTP MCP
+- An index of your code and docs
+- Decisions and rules you approved
+- Checkpoints so unfinished work can continue
+- Local by default; backup / sync / team ACL are optional
 
-Remote backup, sync, and team features are optional—everyday local use works without them. Real cloud and production setups need your own validation. See [remote backup](docs/remote-backup.md), [sync protocol](docs/sync-protocol.md), and [team service](docs/team-service.md).
+**For:** people using Cursor, Claude Code, Codex, etc. who hate re-explaining a project  
+**Not for:** folks who want a hosted cloud account out of the box (local-first; team setup is self-hosted)
 
-The local web workspace includes project portraits, search-ranking settings, and index storage management. Select indexed directories, check available disk space, run an upgrade in a background worker, and recover its status after a connection loss. Successful upgrades remove their temporary backup; source files remain intact.
-
-The workspace uses consistent light cards and segmented navigation. Pagination stays in the task queue footer. Compact steps represent recorded checkpoints, not automatic execution or successful verification; the process illustration is collapsed by default. See [UI design notes](docs/ui-design.md) for references and validation coverage.
+Install → [Install And Build](#install-and-build)  
+New to MCP? → [Beginner Setup](#beginner-setup-connect-an-mcp-client-and-initialize-projects-automatically)
 
 ## Complete Task Browsing and History
 

@@ -1,7 +1,7 @@
 {
   "name": "project-context-mcp",
   "version": "0.10.0",
-  "description": "Local-first project memory for coding agents: index and checkpoints; optional encrypted remote backup, multi-machine sync, and self-hosted team ACL",
+  "description": "Local project memory for coding agents. Optional backup and sync.",
   "type": "module",
   "bin": {
     "project-context": "dist/cli.js",
