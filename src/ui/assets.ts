@@ -1,4 +1,5 @@
-import { REMOTE_BACKUP_HTML, REMOTE_BACKUP_CSS, REMOTE_BACKUP_JS } from "./remote-backup-assets.js";
+import { TEAM_EDITOR_HTML, TEAM_WORKSPACE_CSS, TEAM_WORKSPACE_JS } from "./team-workspace-assets.js";
+import { REMOTE_BACKUP_HTML, TEAM_WORKSPACE_HTML, REMOTE_BACKUP_CSS, REMOTE_BACKUP_JS } from "./remote-backup-assets.js";
 
 export const UI_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
@@ -21,11 +22,14 @@ export const UI_HTML = String.raw`<!doctype html>
       <button class="tab" data-view="portrait" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="2"/><path d="M3 8h14M8 8v9"/></svg>项目画像</button>
       <button class="tab" data-view="rules" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6h4m4 0h6M3 14h8m4 0h2"/><circle cx="9" cy="6" r="2"/><circle cx="13" cy="14" r="2"/></svg>规则</button>
       <button class="tab" data-view="context" aria-pressed="false"><svg class="nav-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m10 2 8 4-8 4-8-4 8-4ZM2 10l8 4 8-4M2 14l8 4 8-4"/></svg>上下文</button>
+      <button class="tab" data-view="team" aria-pressed="false">团队知识</button>
     </nav>
     <div class="local-state"><span class="status-dot"></span><div><strong>本机工作台</strong><span id="knowledge-location">代码与个人数据：本机</span></div></div>
   </header>
 
   <main>
+    ${TEAM_WORKSPACE_HTML}
+    ${TEAM_EDITOR_HTML}
     <section id="portrait-view" class="portrait-view" hidden>
       <header class="portrait-toolbar">
         <div><h1>项目画像</h1></div>
@@ -49,7 +53,7 @@ export const UI_HTML = String.raw`<!doctype html>
           <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
           <button class="portrait-mode" data-portrait-mode="graph" aria-pressed="false" type="button">代码关系</button>
           <button class="portrait-mode" data-portrait-mode="maintenance" aria-pressed="false" type="button">索引与存储</button>
-          <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">团队与备份</button>
+          <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">备份与同步</button>
         </nav>
         ${REMOTE_BACKUP_HTML}
         <div id="portrait-overview" class="portrait-grid">
@@ -929,6 +933,7 @@ dialog p { color: var(--muted); line-height: 1.5; }
   .toast, .graph-details { transition: none; }
 }
 ${REMOTE_BACKUP_CSS}
+${TEAM_WORKSPACE_CSS}
 `;
 
 export const UI_JS = String.raw`(function () {
@@ -3192,15 +3197,17 @@ export const UI_JS = String.raw`(function () {
   function symbolKindLabel(kind) { return { class: "类", interface: "接口", method: "方法", function: "函数", type: "类型", enum: "枚举" }[kind] || kind || "符号"; }
 
   ${REMOTE_BACKUP_JS}
+  ${TEAM_WORKSPACE_JS}
 
   function switchView(view) {
-    ["portrait", "task", "rules", "context"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });
+    ["portrait", "task", "rules", "context", "team"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });
     document.querySelectorAll(".tab").forEach(function (button) { var selected = button.dataset.view === view; button.classList.toggle("active", selected); button.setAttribute("aria-pressed", String(selected)); });
     if ((view === "portrait" || view === "rules" || view === "context") && !state.rulesLoaded) {
       if (!state.deferredRefresh) state.deferredRefresh = refresh(false).finally(function () { state.deferredRefresh = null; });
       state.deferredRefresh.then(function () { if (view === "portrait" && !document.getElementById("portrait-view").hidden) loadPortrait(false); }).catch(function (error) { toast(error.message || String(error), true); });
     } else if (view === "portrait") loadPortrait(false);
     if (view === "task") loadTaskView(false, false);
+    if (view === "team") loadConnectionStatus().then(loadTeamShares);
   }
 
   async function fetchJson(path, options) {

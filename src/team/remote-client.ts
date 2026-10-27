@@ -3,6 +3,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { loadConnectionConfig, type ConnectionConfig } from "../config/connection.js";
+import type { knowledgeAction } from "./knowledge-actions.js";
 
 type ToolResult = {
   isError?: boolean;
@@ -63,6 +64,10 @@ export async function remoteTeamListShares(config?: ConnectionConfig): Promise<u
 
 export async function remoteTeamContext(shareId: string, config?: ConnectionConfig): Promise<unknown> {
   return callRemote("team_context", { shareId }, config);
+}
+
+export async function remoteTeamKnowledge(action: ReturnType<typeof knowledgeAction>, config: ConnectionConfig): Promise<unknown> {
+  return callRemote(action.name, action.args, config);
 }
 
 export async function remoteTeamCandidates(shareId: string, config?: ConnectionConfig): Promise<unknown> {

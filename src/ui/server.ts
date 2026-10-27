@@ -19,6 +19,7 @@ import { taskQuerySchema } from "../tasks/task-query.js";
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { TeamService } from "../team/team-service.js";
 import { TeamKnowledgeService } from "../team/knowledge-service.js";
+import { KNOWLEDGE_ACTIONS, knowledgeAction } from "../team/knowledge-actions.js";
 import { connectionIdentity, connectionStatusFromDisk, loadConnectionConfig, saveConnectionConfig } from "../config/connection.js";
 import {
   remoteTeamAccept,
@@ -26,6 +27,7 @@ import {
   remoteTeamCandidates,
   remoteTeamConflicts,
   remoteTeamContext,
+  remoteTeamKnowledge,
   remoteTeamGraph,
   remoteTeamListShares,
   remoteTeamResolve,
@@ -183,7 +185,7 @@ async function routeRequest(
       return;
     }
 
-    const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/(candidates|conflicts|accept|resolve|audit|graph|context))?$/);
+    const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/([a-z-]+))?$/);
     if (teamMatch && (request.method === "GET" || request.method === "POST")) {
       const input = request.method === "POST" ? await readJsonBody(request) : undefined;
       const connection = await loadConnectionConfig();
@@ -192,8 +194,12 @@ async function routeRequest(
         sendJson(response, 409, { code: "TEAM_CONNECTION_CHANGED", message: "Team connection changed. Refresh the shared project before continuing." });
         return;
       }
+      const actionName = teamMatch[2] ?? "";
+      const knowledge = KNOWLEDGE_ACTIONS.some(action => action === actionName) ? knowledgeAction(actionName, request.method!, decodeSegment(teamMatch[1] ?? ""),
+        request.method === "GET" ? Object.fromEntries([...url.searchParams].filter(([key]) => key !== "connectionId")) : input) : undefined;
       if (connection.mode === "remote-team") {
         try {
+          if (knowledge) { sendJson(response, 200, await remoteTeamKnowledge(knowledge, connection)); return; }
           if (!teamMatch[1] && request.method === "GET") { sendJson(response, 200, await remoteTeamListShares(connection)); return; }
           const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
           if (request.method === "GET" && action === "context") { sendJson(response, 200, await remoteTeamContext(shareId, connection)); return; }
@@ -212,7 +218,7 @@ async function routeRequest(
           throw new ProjectContextError("TEAM_INVALID_ACTION", "Unsupported team action.");
         } catch (error) {
           const code = error instanceof ProjectContextError ? error.code : "TEAM_OPERATION_FAILED";
-          const status = code === "TEAM_UNAUTHENTICATED" || code === "TEAM_UI_NOT_CONFIGURED" ? 401 : 400;
+          const status = projectErrorStatus(code);
           sendJson(response, status, { code, message: error instanceof ProjectContextError ? error.message : "Team operation failed." });
           return;
         }
@@ -223,6 +229,7 @@ async function routeRequest(
         const team = new TeamService(app);
         try {
           const principal = team.authenticate(credential);
+          if (knowledge) return knowledge.run(team, principal);
           if (!teamMatch[1] && request.method === "GET") return team.listShares(principal);
           const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
           if (request.method === "GET" && action === "context") return new TeamKnowledgeService(team).context(principal, shareId, "");
@@ -699,6 +706,9 @@ function decodeSegment(value: string): string {
 }
 
 function projectErrorStatus(code: string): number {
+  if (code === "TEAM_UNAUTHENTICATED" || code === "TEAM_UI_NOT_CONFIGURED") return 401;
+  if (code === "TEAM_FORBIDDEN" || code === "TEAM_SCOPE_FORBIDDEN") return 403;
+  if (code === "TEAM_VERSION_CONFLICT" || code === "TASK_REQUEST_CONFLICT" || code === "TEAM_CONNECTION_CHANGED") return 409;
   if (code === "INDEX_PREVIEW_BUSY" || code === "INDEX_PREVIEW_CLOSED") return 503;
   if (code.startsWith("INDEX_PREVIEW_")) return 500;
   if (code.includes("NOT_FOUND")) return 404;
