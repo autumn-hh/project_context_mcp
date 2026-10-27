@@ -1,5 +1,9 @@
 # Project Context MCP
 
+<p align="center">
+  <img src="docs/assets/readme-banner-en.jpg" alt="Project Context MCP — Local project memory so coding agents pick up where they left off" width="100%">
+</p>
+
 **English** | [中文](README.md)
 
 Local project memory for coding agents.
@@ -12,6 +16,10 @@ New chat? It still remembers what matters in this repo.
 - Decisions and rules you approved
 - Checkpoints so unfinished work can continue
 - Local by default; backup / sync / team ACL are optional
+
+<p align="center">
+  <img src="docs/assets/flow-remember-resume-en.svg" alt="Remember → Look up → Continue" width="720">
+</p>
 
 **For:** people using Cursor, Claude Code, Codex, etc. who hate re-explaining a project  
 **Not for:** folks who want a hosted cloud account out of the box (local-first; team setup is self-hosted)

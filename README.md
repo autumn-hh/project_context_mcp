@@ -1,5 +1,9 @@
 # Project Context MCP
 
+<p align="center">
+  <img src="docs/assets/readme-banner-cn.jpg" alt="Project Context MCP — 本地项目记忆，让编程助手跨会话接着干" width="100%">
+</p>
+
 **中文** | [English](README.en.md)
 
 给编程助手用的本地「项目记忆」。
@@ -12,6 +16,10 @@
 - 你确认过的决定和约定
 - 做到一半的任务，下次接着干
 - 数据默认在你电脑；备份 / 同步 / 团队权限都是可选
+
+<p align="center">
+  <img src="docs/assets/flow-remember-resume.svg" alt="记 → 查 → 接着干" width="720">
+</p>
 
 **适合：** 用 Cursor、Claude Code、Codex 等，讨厌重复解释项目的人  
 **不适合：** 想要现成云账号、托管服务的人（这里默认本地，团队需自建）

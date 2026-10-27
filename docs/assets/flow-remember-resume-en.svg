@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="160" viewBox="0 0 960 160" role="img" aria-label="Remember → Look up → Continue">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c45c26"/>
+      <stop offset="100%" stop-color="#e8a54b"/>
+    </linearGradient>
+  </defs>
+  <rect width="960" height="160" rx="16" fill="#0f1115"/>
+  <rect x="28" y="36" width="260" height="88" rx="14" fill="#1a1d24" stroke="#e8a54b" stroke-opacity="0.45"/>
+  <circle cx="66" cy="80" r="18" fill="url(#g)"/>
+  <text x="66" y="86" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="16" font-weight="700" fill="#0f1115">1</text>
+  <text x="180" y="76" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="20" font-weight="700" fill="#f5efe6">Remember</text>
+  <text x="180" y="100" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="12" fill="#b8a890">Index · decisions · checkpoints</text>
+  <path d="M304 80 L344 80" stroke="#e8a54b" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M336 72 L348 80 L336 88" fill="none" stroke="#e8a54b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="364" y="36" width="240" height="88" rx="14" fill="#1a1d24" stroke="#e8a54b" stroke-opacity="0.45"/>
+  <circle cx="402" cy="80" r="18" fill="url(#g)"/>
+  <text x="402" y="86" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="16" font-weight="700" fill="#0f1115">2</text>
+  <text x="500" y="76" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="20" font-weight="700" fill="#f5efe6">Look up</text>
+  <text x="500" y="100" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="12" fill="#b8a890">MCP search over project memory</text>
+  <path d="M620 80 L660 80" stroke="#e8a54b" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M652 72 L664 80 L652 88" fill="none" stroke="#e8a54b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="680" y="36" width="252" height="88" rx="14" fill="#1a1d24" stroke="#e8a54b" stroke-opacity="0.55"/>
+  <circle cx="718" cy="80" r="18" fill="url(#g)"/>
+  <text x="718" y="86" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="16" font-weight="700" fill="#0f1115">3</text>
+  <text x="820" y="76" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="20" font-weight="700" fill="#f5efe6">Continue</text>
+  <text x="820" y="100" text-anchor="middle" font-family="system-ui,Segoe UI,sans-serif" font-size="12" fill="#b8a890">Pick up in a new chat</text>
+</svg>
