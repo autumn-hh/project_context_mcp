@@ -18,6 +18,16 @@ import { IndexPreviewJobs } from "./index-preview-jobs.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { TeamService } from "../team/team-service.js";
+import { connectionStatusFromDisk, loadConnectionConfig, saveConnectionConfig } from "../config/connection.js";
+import {
+  remoteTeamAccept,
+  remoteTeamAudit,
+  remoteTeamCandidates,
+  remoteTeamConflicts,
+  remoteTeamGraph,
+  remoteTeamListShares,
+  remoteTeamResolve,
+} from "../team/remote-client.js";
 
 const MAX_BODY_BYTES = 64 * 1024;
 const retentionDaysSchema = z.number().int().min(1).max(3650);
@@ -153,9 +163,52 @@ async function routeRequest(
     }
 
     const jobsMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/migration-jobs(?:\/([^/]+))?$/);
+    if (request.method === "GET" && url.pathname === "/api/connection") {
+      sendJson(response, 200, await connectionStatusFromDisk());
+      return;
+    }
+    if (request.method === "PUT" && url.pathname === "/api/connection") {
+      const input = z.object({
+        mode: z.enum(["local", "remote-team"]),
+        remoteTeamUrl: z.string().url().optional(),
+        tokenEnv: z.string().regex(/^[A-Z][A-Z0-9_]{0,127}$/).optional(),
+      }).strict().parse(await readJsonBody(request));
+      sendJson(response, 200, await saveConnectionConfig({
+        mode: input.mode,
+        ...(input.remoteTeamUrl ? { remoteTeamUrl: input.remoteTeamUrl } : {}),
+        ...(input.tokenEnv ? { tokenEnv: input.tokenEnv } : {}),
+      }));
+      return;
+    }
+
     const teamMatch = url.pathname.match(/^\/api\/team(?:\/([^/]+)\/(candidates|conflicts|accept|resolve|audit|graph))?$/);
     if (teamMatch && (request.method === "GET" || request.method === "POST")) {
       const input = request.method === "POST" ? await readJsonBody(request) : undefined;
+      const connection = await loadConnectionConfig();
+      if (connection.mode === "remote-team") {
+        try {
+          if (!teamMatch[1] && request.method === "GET") { sendJson(response, 200, await remoteTeamListShares()); return; }
+          const shareId = decodeSegment(teamMatch[1] ?? ""); const action = teamMatch[2];
+          if (request.method === "GET" && action === "candidates") { sendJson(response, 200, await remoteTeamCandidates(shareId)); return; }
+          if (request.method === "GET" && action === "conflicts") { sendJson(response, 200, await remoteTeamConflicts(shareId)); return; }
+          if (request.method === "GET" && action === "audit") { sendJson(response, 200, await remoteTeamAudit(shareId)); return; }
+          if (request.method === "GET" && action === "graph") { sendJson(response, 200, await remoteTeamGraph(shareId)); return; }
+          if (request.method === "POST" && action === "accept") {
+            const args = z.object({ candidateId: z.string().min(1) }).strict().parse(input);
+            sendJson(response, 200, await remoteTeamAccept(shareId, args.candidateId)); return;
+          }
+          if (request.method === "POST" && action === "resolve") {
+            const args = z.object({ entity: z.string().min(1), eventId: z.string().min(1) }).strict().parse(input);
+            sendJson(response, 200, await remoteTeamResolve(shareId, args.entity, args.eventId)); return;
+          }
+          throw new ProjectContextError("TEAM_INVALID_ACTION", "Unsupported team action.");
+        } catch (error) {
+          const code = error instanceof ProjectContextError ? error.code : "TEAM_OPERATION_FAILED";
+          const status = code === "TEAM_UNAUTHENTICATED" || code === "TEAM_UI_NOT_CONFIGURED" ? 401 : 400;
+          sendJson(response, status, { code, message: error instanceof ProjectContextError ? error.message : "Team operation failed." });
+          return;
+        }
+      }
       await withApp(response, async app => {
         const credential = process.env.PROJECT_CONTEXT_TEAM_UI_TOKEN;
         if (!credential) throw new ProjectContextError("TEAM_UI_NOT_CONFIGURED", "Set PROJECT_CONTEXT_TEAM_UI_TOKEN in the local service environment to use the team review view.");

@@ -2,7 +2,20 @@ export const REMOTE_BACKUP_HTML = String.raw`
 <section id="portrait-backup" class="remote-backup-panel" hidden aria-labelledby="remote-backup-title">
   <header><div><span class="panel-label">ENCRYPTED BACKUP</span><h2 id="remote-backup-title">远程备份</h2></div><button id="remote-refresh" class="secondary-button" type="button">刷新记录</button></header>
   <p class="maintenance-note">将本项目的记忆、候选、任务和历史加密备份。代码索引、来源摘录和个人规则默认不上传；已保存在记忆或任务正文中的内容会随包备份。</p>
-  <section class="maintenance-card remote-sync-card" aria-labelledby="remote-sync-title"><h3 id="remote-sync-title">多机同步</h3><p id="remote-sync-state" class="maintenance-note">正在读取状态</p><div class="remote-sync-actions"><button id="remote-sync-push" class="secondary-button" type="button" disabled>推送本地更新</button><button id="remote-sync-pull" class="secondary-button" type="button" disabled>拉取远端更新</button></div><p class="maintenance-note">先通过 sync configure 将两台机器绑定到同一同步空间。同步包含项目规则；全局与工作区规则保持本地。未解决冲突保留双方版本。</p><div id="remote-sync-conflicts"></div></section>
+  <section class="maintenance-card remote-sync-card" aria-labelledby="connection-title"><h3 id="connection-title">数据连接</h3>
+  <p class="maintenance-note">默认只用本机数据库。需要时可选连接局域网或公网的团队 MCP（Bearer），本机工作台其它功能仍读本地库。</p>
+  <fieldset class="connection-mode-fields" style="border:0;padding:0;margin:0 0 12px">
+    <legend class="sr-only">连接方式</legend>
+    <label style="display:block;margin:6px 0"><input id="connection-mode-local" name="connection-mode" type="radio" value="local"> 本机数据库（默认）</label>
+    <label style="display:block;margin:6px 0"><input id="connection-mode-remote" name="connection-mode" type="radio" value="remote-team"> 远程团队 MCP</label>
+  </fieldset>
+  <div class="field"><label for="connection-url">远程 MCP 地址（以 /mcp 结尾）</label><input id="connection-url" placeholder="http://192.168.1.10:8787/mcp 或 https://example.com/mcp" autocomplete="off" spellcheck="false"></div>
+  <div class="field"><label for="connection-token-env">令牌环境变量名</label><input id="connection-token-env" value="PROJECT_CONTEXT_TEAM_TOKEN" autocomplete="off" spellcheck="false"></div>
+  <p id="connection-status" class="maintenance-note" role="status">正在读取连接配置…</p>
+  <div class="remote-sync-actions"><button id="connection-save" class="primary-button" type="button">保存连接方式</button><button id="connection-refresh" class="secondary-button" type="button">刷新状态</button></div>
+  <p class="maintenance-note">令牌本身不进网页、也不写配置文件。远程模式启动服务前请在环境里设置对应变量；公网请用 https，局域网可用 http。</p>
+</section>
+<section class="maintenance-card remote-sync-card" aria-labelledby="remote-sync-title"><h3 id="remote-sync-title">多机同步</h3><p id="remote-sync-state" class="maintenance-note">正在读取状态</p><div class="remote-sync-actions"><button id="remote-sync-push" class="secondary-button" type="button" disabled>推送本地更新</button><button id="remote-sync-pull" class="secondary-button" type="button" disabled>拉取远端更新</button></div><p class="maintenance-note">先通过 sync configure 将两台机器绑定到同一同步空间。同步包含项目规则；全局与工作区规则保持本地。未解决冲突保留双方版本。</p><div id="remote-sync-conflicts"></div></section>
   <div class="remote-backup-grid">
     <section class="maintenance-card"><h3>备份目标</h3><div class="field"><label for="remote-target">已配置的存储</label><select id="remote-target"></select></div>
       <p id="remote-target-details" class="maintenance-note"></p><p id="remote-latest" class="maintenance-note">尚未读取备份记录</p>
@@ -18,7 +31,7 @@ export const REMOTE_BACKUP_HTML = String.raw`
   <details class="remote-setup"><summary>首次配置与恢复说明</summary><p>先在本机运行 remote add 配置目标及凭据环境变量名称。口令与存储凭据由运行服务的环境提供，页面不接收密钥。</p><p>恢复出的 project.db 可通过 project restore 登记为新项目，再按需要重建代码索引。所选个人规则保存在 rules.db，需另行明确作用域后导入。仅有知识备份不包含 Git 源码。</p></details>
   <h3>最近成功的备份</h3><p class="maintenance-note">显示最近 50 条本机记录；更早备份或另一台机器的对象键仍可用于恢复。记录不代表远端对象当前仍存在。</p>
   <div id="remote-backup-history" class="remote-backup-history"></div>
-  <section class="maintenance-card remote-sync-card"><h3>团队审核</h3><p class="maintenance-note">以本地服务配置的团队身份访问共享项目，所有操作由服务端重新检查权限并记录审计。</p><button id="team-review-refresh" class="secondary-button" type="button">读取团队项目</button><div class="field"><label for="team-review-share">共享项目</label><select id="team-review-share"></select></div><p id="team-review-status" role="status" class="maintenance-note"></p><div id="team-review-items"></div></section>
+  <section class="maintenance-card remote-sync-card"><h3>团队审核</h3><p class="maintenance-note">按上方「数据连接」选择本机团队服务或远程 MCP；操作由对应服务端重新检查权限并记录审计。</p><button id="team-review-refresh" class="secondary-button" type="button">读取团队项目</button><div class="field"><label for="team-review-share">共享项目</label><select id="team-review-share"></select></div><p id="team-review-status" role="status" class="maintenance-note"></p><div id="team-review-items"></div></section>
 </section>
 <dialog id="remote-confirm-dialog" aria-labelledby="remote-confirm-title"><div class="migration-body"><h2 id="remote-confirm-title">确认操作</h2><p id="remote-confirm-message" style="overflow-wrap:anywhere"></p><div class="dialog-actions"><button id="remote-confirm-cancel" class="secondary-button" type="button">取消</button><button id="remote-confirm-ok" class="primary-button" type="button">确认执行</button></div></div></dialog>`;
 
@@ -27,7 +40,7 @@ export const REMOTE_BACKUP_CSS = String.raw`
 .remote-backup-panel > header { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:16px; }
 .remote-backup-panel h2 { font-size:20px; } .remote-backup-panel h3 { font-size:15px; margin:12px 0; }
 .remote-backup-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; margin:20px 0; }
-.remote-sync-card { margin-top:16px; } .remote-sync-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.remote-sync-card { margin-top:16px; } .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0; } .remote-sync-actions { display:flex; flex-wrap:wrap; gap:10px; }
 .remote-sync-version { margin:10px 0; padding:10px; border:1px solid var(--line); min-width:0; }
 .remote-sync-version pre { max-height:240px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font-size:12px; }
 .remote-backup-panel .field { margin:12px 0; min-width:0; }
@@ -72,7 +85,41 @@ export const REMOTE_BACKUP_JS = String.raw`
     remoteElement("remote-target-details").textContent = target ? target.endpoint + " / " + target.bucket + " / " + target.prefix : "尚未配置目标，请先查看首次配置说明。";
     remoteControls();
   }
+  
+  function fillConnectionForm(status) {
+    remoteElement("connection-mode-local").checked = status.mode === "local";
+    remoteElement("connection-mode-remote").checked = status.mode === "remote-team";
+    remoteElement("connection-url").value = status.remoteTeamUrl || "";
+    remoteElement("connection-token-env").value = status.tokenEnv || "PROJECT_CONTEXT_TEAM_TOKEN";
+    remoteElement("connection-url").disabled = status.mode !== "remote-team";
+    var tokenHint = status.tokenConfigured ? "令牌环境变量已设置" : "尚未检测到令牌环境变量";
+    remoteElement("connection-status").textContent = status.summary + " · " + tokenHint;
+  }
+  async function loadConnectionStatus() {
+    try {
+      fillConnectionForm(await fetchJson("/api/connection"));
+    } catch (error) {
+      remoteElement("connection-status").textContent = error.message || "读取连接配置失败";
+    }
+  }
+  async function saveConnectionStatus() {
+    var mode = remoteElement("connection-mode-remote").checked ? "remote-team" : "local";
+    var body = { mode: mode, tokenEnv: remoteElement("connection-token-env").value.trim() || "PROJECT_CONTEXT_TEAM_TOKEN" };
+    if (mode === "remote-team") body.remoteTeamUrl = remoteElement("connection-url").value.trim();
+    try {
+      fillConnectionForm(await fetchJson("/api/connection", { method: "PUT", body: body }));
+      toast(mode === "local" ? "已切回本机数据库" : "已保存远程 MCP 连接");
+    } catch (error) {
+      remoteElement("connection-status").textContent = error.message || "保存失败";
+    }
+  }
+
   function bindRemoteBackupEvents() {
+    remoteElement("connection-mode-local").addEventListener("change", function(){ remoteElement("connection-url").disabled = true; });
+    remoteElement("connection-mode-remote").addEventListener("change", function(){ remoteElement("connection-url").disabled = false; });
+    remoteElement("connection-save").addEventListener("click", saveConnectionStatus);
+    remoteElement("connection-refresh").addEventListener("click", loadConnectionStatus);
+    loadConnectionStatus();
     remoteElement("team-review-refresh").addEventListener("click", loadTeamShares);
     remoteElement("team-review-share").addEventListener("change", loadTeamReview);
     remoteElement("remote-sync-push").addEventListener("click", function() { runRemoteSync("push"); });

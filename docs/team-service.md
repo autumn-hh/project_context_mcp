@@ -21,6 +21,22 @@ node dist/cli.js team serve --port 8787
 
 HTTP 服务只绑定 127.0.0.1，拒绝浏览器 Origin，接受 POST /mcp；请求体上限 128 KiB。对外部署须使用受信任的 TLS 反向代理，将 Host 改写为 127.0.0.1:8787，并转发 Authorization、Accept 和 MCP-Protocol-Version。不要记录 Authorization。按客户端需要配置请求速率和并发限制。当前支持 Bearer，未实现 OIDC/OAuth 登录或自动令牌发现。真实生产代理和公网部署尚未验收。
 
+## 可选：本机工作台连接远程 MCP
+
+默认始终使用本机 SQLite。若要让 Web「团队审核」改走另一台已部署的团队 HTTP MCP（局域网或公网），可显式切换：
+
+```powershell
+node dist/cli.js connection show
+node dist/cli.js connection use-remote --url http://192.168.1.10:8787/mcp
+# 公网须 https，例如：
+# node dist/cli.js connection use-remote --url https://team.example.com/mcp --token-env PROJECT_CONTEXT_TEAM_TOKEN
+setx PROJECT_CONTEXT_TEAM_TOKEN "<Bearer token>"
+node dist/cli.js connection use-local
+```
+
+也可在 Web「远程备份 → 数据连接」里切换。令牌只放在环境变量，不进配置文件、不进浏览器。未切换时行为与从前相同。本地 UI 仍默认只监听 127.0.0.1。
+
+
 例如 Nginx 的 location 配置（TLS 证书及 server_name 另行配置）：
 
 ```nginx

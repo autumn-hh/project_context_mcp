@@ -123,7 +123,7 @@ node dist/cli.js memory normalize-task-titles <project-id> --apply --preview-has
 
 已提供可选加密远程知识备份：S3 兼容存储、CLI/MCP 和工作台「项目画像 → 远程备份」。默认排除代码索引，个人规则明确选择；下载恢复到全新目录。配置、迁移步骤和验证限制见 [远程备份说明](docs/remote-backup.md)。原有本地备份继续兼容。
 
-已提供可选的[多机增量同步](docs/sync-protocol.md)、[自托管团队 ACL/审核与 Bearer HTTP MCP](docs/team-service.md)，以及 [Python/Go/Rust、embedding 插件和 LSP 定义桥接](docs/search-extensions.md)。默认纯本地行为保持兼容；真实云端、生产代理和第三方模型/语言服务仍需部署验证。见[执行计划](docs/remote-storage-team-sync-execution-plan.md)。
+已提供可选的[多机增量同步](docs/sync-protocol.md)、[自托管团队 ACL/审核与 Bearer HTTP MCP](docs/team-service.md)（可用 `connection use-remote` / Web「数据连接」改连远程 MCP，默认仍是本机库），以及 [Python/Go/Rust、embedding 插件和 LSP 定义桥接](docs/search-extensions.md)。默认纯本地行为保持兼容；真实云端、生产代理和第三方模型/语言服务仍需部署验证。见[执行计划](docs/remote-storage-team-sync-execution-plan.md)。
 
 ## 环境要求
 

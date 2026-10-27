@@ -5,6 +5,7 @@ import { stdin as input, stdout as output } from "node:process";
 import { isAbsolute, join, resolve } from "node:path";
 import { ProjectContextApp } from "./core/app.js";
 import { defaultUserStorageRoot, saveGlobalConfig } from "./config/paths.js";
+import { connectionStatusFromDisk, saveConnectionConfig } from "./config/connection.js";
 import { ProjectContextError, errorMessage } from "./shared/errors.js";
 import { memoryStatusSchema, memoryTypeSchema } from "./memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "./memory/user-memory-service.js";
@@ -505,6 +506,22 @@ pack.command("import-rules").argument("<project-id>").argument("<rules-database>
     print(await app.importPackRules(projectId, source, { apply: options.apply, allowGlobal: options.allowGlobal,
       ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}) }));
   }));
+
+
+const connection = program.command("connection").description("Choose local database or an opt-in remote team MCP URL");
+connection.command("show")
+  .description("Show the current data connection mode")
+  .action(async () => print(await connectionStatusFromDisk()));
+connection.command("use-local")
+  .description("Use the local SQLite database (default)")
+  .action(async () => print(await saveConnectionConfig({ mode: "local" })));
+connection.command("use-remote")
+  .description("Opt in to a remote team HTTP MCP database")
+  .requiredOption("--url <url>", "absolute http(s) MCP URL ending with /mcp")
+  .option("--token-env <name>", "environment variable that holds the Bearer token", "PROJECT_CONTEXT_TEAM_TOKEN")
+  .action(async (options: { url: string; tokenEnv: string }) => {
+    print(await saveConnectionConfig({ mode: "remote-team", remoteTeamUrl: options.url, tokenEnv: options.tokenEnv }));
+  });
 
 registerTeamCli(program);
 registerExtensionsCli(program);
