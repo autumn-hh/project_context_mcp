@@ -7,9 +7,17 @@ import type { UserMemoryRecord } from "../memory/user-memory-service.js";
 import { taskOverlap, taskTokens as tokens } from "../shared/task-relevance.js";
 import { recallMemories } from "../memory/recall-service.js";
 import { relatedGraphMemories, type GraphMemoryRecall } from "../memory/graph-service.js";
+import { contentMatchesTask, findContentRelations } from "../memory/content-relations.js";
 
 type SupportingMemory = Pick<MemoryRecord, "id" | "sourceKind" | "sourceRef" | "confidence">;
-type GraphRecallEvidence = Omit<GraphMemoryRecall, "memory">;
+type GraphRecallEvidence = Omit<GraphMemoryRecall, "memory"> | {
+  fromMemoryId: string;
+  viaNodeId: string;
+  relation: "content-related";
+  sharedTerms: string[];
+  excerpts: { source: string; target: string };
+  possiblyRelated: true;
+};
 
 export interface ContextMemory extends MemoryRecord {
   /** Other active records with exactly the same title, type, conclusion, reason and scope. */
@@ -94,12 +102,28 @@ export function buildProjectContext(
   const graphEvidence = new Map<string, GraphRecallEvidence>();
   const seeds = [...memoryScores.keys()].filter((id) => getMemory(db, id).type !== "task-summary").slice(0, 5);
   const graphMatches = relatedGraphMemories(db, seeds, 4, (memory) => (
-    !relevantMemoryIds.has(memory.id) && accepts(memory)
+    !relevantMemoryIds.has(memory.id) && accepts(memory) && contentMatchesTask(memory, task)
   ));
   for (const { memory, fromMemoryId, viaNodeId, relation } of graphMatches) {
     relevantMemoryIds.add(memory.id);
     memoryScores.set(memory.id, (memoryScores.get(fromMemoryId) ?? 1) * 0.35);
     graphEvidence.set(memory.id, { fromMemoryId, viaNodeId, relation });
+  }
+  if (graphEvidence.size < 4) {
+    const related = findContentRelations(db, seeds, {
+      limit: 4 - graphEvidence.size, perSeed: 2,
+      accepts: (memory) => !relevantMemoryIds.has(memory.id) && accepts(memory) && contentMatchesTask(memory, task),
+    });
+    for (const relation of related.relations) {
+      if (relevantMemoryIds.has(relation.targetMemoryId)) continue;
+      relevantMemoryIds.add(relation.targetMemoryId);
+      memoryScores.set(relation.targetMemoryId, (memoryScores.get(relation.sourceMemoryId) ?? 1) * 0.2);
+      graphEvidence.set(relation.targetMemoryId, {
+        fromMemoryId: relation.sourceMemoryId, viaNodeId: `memory:${relation.sourceMemoryId}`,
+        relation: "content-related", sharedTerms: relation.sharedTerms,
+        excerpts: relation.excerpts, possiblyRelated: true,
+      });
+    }
   }
   const memories: ContextMemory[] = memoryCandidates(db, relevantMemoryIds, recallSummaries).map((memory) => ({
     ...memory, ...(graphEvidence.has(memory.id) ? { graphRecall: graphEvidence.get(memory.id)! } : {}),

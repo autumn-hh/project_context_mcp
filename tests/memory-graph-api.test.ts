@@ -67,7 +67,11 @@ describe("local memory graph HTTP boundaries", () => {
 
   it("serves a graph, source evidence and opt-in history without crossing projects", async () => {
     const path = `/api/projects/${projectId}/memory-graph`;
-    const response = await request(path);
+    const knowledge = await (await request(path)).json();
+    expect(knowledge.view).toBe("knowledge");
+    expect(knowledge.nodes.every((entry: { nodeType: string }) => entry.nodeType === "memory")).toBe(true);
+    expect(knowledge.totals.memories).toBe(1);
+    const response = await request(path + "?view=evidence");
     expect(response.status).toBe(200);
     const graph = await response.json();
     expect(graph.nodes.some((node: { id: string }) => node.id === `memory:${currentId}`)).toBe(true);
@@ -89,7 +93,7 @@ describe("local memory graph HTTP boundaries", () => {
     const path = `/api/projects/${projectId}/memory-graph`;
     expect((await request(path, false)).status).toBe(401);
     expect((await request(path, true, "https://other.invalid")).status).toBe(403);
-    for (const suffix of ["?depth=3", "?limit=151", "?limit=NaN", "?includeInactive=yes", "?relation=INVENTED", "?relation=none&relation=SUPERSEDES", `?query=${"a".repeat(201)}`]) {
+    for (const suffix of ["?view=unknown", "?includeSummaries=yes", "?depth=3", "?limit=151", "?limit=NaN", "?includeInactive=yes", "?relation=INVENTED", "?relation=none&relation=SUPERSEDES", `?query=${"a".repeat(201)}`]) {
       expect((await request(path + suffix)).status).toBe(400);
     }
     expect((await request(`${path}/nodes/${encodeURIComponent("scope:not-base64")}`)).status).toBe(400);

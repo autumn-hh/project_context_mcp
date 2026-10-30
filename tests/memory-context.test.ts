@@ -192,8 +192,8 @@ describe("local memory context recall", () => {
     expect(listMemories(db, "active", 100)).toHaveLength(30);
   });
 
-  it("recalls a lexically unrelated old decision through explicit shared evidence", () => {
-    const seed = memory({ sourceRef: "meeting:retention", scope: ["src/storage"] });
+  it("does not inject unrelated knowledge merely because it shares source and scope", () => {
+    memory({ sourceRef: "meeting:retention", scope: ["src/storage"] });
     const neighbor = memory({
       title: "Deletion approval", content: "Owners must approve erasure.", sourceRef: "meeting:retention",
       scope: ["src/storage"],
@@ -201,9 +201,7 @@ describe("local memory context recall", () => {
     bury(neighbor);
     memory({ title: "Image approval", content: "Owners must approve thumbnails.", sourceRef: "meeting:retention", scope: ["src/images"] });
     const context = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 20_000);
-    expect(context.decisions.find((item) => item.id === neighbor.id)).toMatchObject({
-      graphRecall: { fromMemoryId: seed.id, relation: "same-source" },
-    });
+    expect(context.decisions.find((item) => item.id === neighbor.id)).toBeUndefined();
     expect(JSON.stringify(context)).not.toContain("Image approval");
     expect(context.relevant.some((item) => item.id === neighbor.id)).toBe(false);
     const limited = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 500);
@@ -218,5 +216,20 @@ describe("local memory context recall", () => {
     bury(unrelated);
     const context = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 20_000);
     expect(JSON.stringify(context)).not.toContain(unrelated.id);
+  });
+
+  it("adds explainable content neighbors from different sources only when the task also matches", () => {
+    const seed = memory({ title: "refreshToken", content: "Replay prevention preserves token families.", scope: ["src/auth"] });
+    const peer = memory({ title: "Refresh policy", content: "Refresh token families enforce replay prevention.", scope: ["src/auth"] });
+    const context = buildProjectContext(db, project,
+      "please carefully investigate how refreshToken behaves whenever authorization credentials become invalid during concurrent application sessions src/auth/index.ts", 3_000);
+    const selected = context.decisions.find((item) => item.id === peer.id);
+    expect(selected?.graphRecall).toMatchObject({
+      relation: "content-related", possiblyRelated: true, fromMemoryId: seed.id,
+      viaNodeId: `memory:${seed.id}`, sharedTerms: expect.arrayContaining(["prevention", "families"]),
+      excerpts: { source: expect.stringContaining(seed.content), target: expect.stringContaining(peer.content) },
+    });
+    expect(context.budget.usedTokens).toBeLessThanOrEqual(3_000);
+    expect(listMemories(db)).toHaveLength(2);
   });
 });

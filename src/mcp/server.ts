@@ -251,7 +251,7 @@ export function createMcpServer(): McpServer {
   }));
 
   server.registerTool("memory_graph", {
-    description: "Explore a bounded local memory graph of sourced knowledge, tasks, scopes and superseding decisions. Query or expand a node by one/two hops; history is opt-in. Relations reflect stored evidence, not inferred truth.",
+    description: "Explore local knowledge with sparse possible topic links and explicit supersession. Possible links show shared terms and excerpts, never dependency or agreement. Use view=evidence for sources/tasks/scopes; history and task summaries are opt-in.",
     outputSchema,
     inputSchema: { projectId: z.string().min(1), ...memoryGraphInputShape },
     annotations: { readOnlyHint: true, idempotentHint: true },
@@ -266,11 +266,12 @@ export function createMcpServer(): McpServer {
     inputSchema: {
       projectId: z.string().min(1), nodeId: memoryGraphNodeIdSchema,
       includeInactive: z.boolean().default(false),
+      includeSummaries: z.boolean().default(false),
     },
     annotations: { readOnlyHint: true, idempotentHint: true },
-  }, ({ projectId, nodeId, includeInactive }) => withApp(async (app) => {
+  }, ({ projectId, nodeId, includeInactive, includeSummaries }) => withApp(async (app) => {
     await app.watchFlush(projectId);
-    return app.memoryGraphNode(projectId, nodeId, { includeInactive });
+    return app.memoryGraphNode(projectId, nodeId, { includeInactive, includeSummaries });
   }));
 
   server.registerTool("memory_remember", {

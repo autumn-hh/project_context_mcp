@@ -535,16 +535,19 @@ async function routeRequest(
     if (request.method === "GET" && memoryGraphMatch) {
       const projectId = decodeSegment(memoryGraphMatch[1]!);
       const includeInactive = z.enum(["true", "false"]).parse(url.searchParams.get("includeInactive") ?? "false") === "true";
+      const includeSummaries = z.enum(["true", "false"]).parse(url.searchParams.get("includeSummaries") ?? "false") === "true";
       if (memoryGraphMatch[2]) {
         const nodeId = memoryGraphNodeIdSchema.parse(decodeSegment(memoryGraphMatch[2]));
-        await withApp(response, (app) => app.memoryGraphNode(projectId, nodeId, { includeInactive }));
+        await withApp(response, (app) => app.memoryGraphNode(projectId, nodeId, { includeInactive, includeSummaries }));
       } else {
         const relations = url.searchParams.getAll("relation");
         const input = memoryGraphInputSchema.parse({
+          view: url.searchParams.get("view") ?? "knowledge",
+          includeSummaries,
           ...(url.searchParams.has("query") ? { query: url.searchParams.get("query") } : {}),
           ...(url.searchParams.has("node") ? { nodeId: url.searchParams.get("node") } : {}),
           depth: Number(url.searchParams.get("depth") ?? "1"),
-          limit: Number(url.searchParams.get("limit") ?? "80"),
+          limit: Number(url.searchParams.get("limit") ?? "24"),
           includeInactive,
           ...(relations.length ? { relationTypes: relations.length === 1 && relations[0] === "none" ? [] : relations } : {}),
         });

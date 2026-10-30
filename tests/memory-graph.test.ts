@@ -3,7 +3,12 @@ import { beforeEach, afterEach, describe, expect, it } from "vitest";
 import { migrateProject } from "../src/storage/schema.js";
 import { remember, updateMemoryStatus, type MemoryRecord } from "../src/memory/memory-service.js";
 import { startTask, checkpointTask } from "../src/tasks/task-service.js";
-import { memoryGraph, memoryGraphNode, relatedGraphMemories } from "../src/memory/graph-service.js";
+import { memoryGraph as queryMemoryGraph, memoryGraphNode, relatedGraphMemories, type MemoryGraphOptions } from "../src/memory/graph-service.js";
+
+// Existing provenance behavior remains available explicitly; knowledge is the new default.
+const memoryGraph = (db: Database.Database, options: MemoryGraphOptions = {}) => (
+  queryMemoryGraph(db, { view: "evidence", includeSummaries: true, ...options })
+);
 
 describe("derived local memory graph", () => {
   let db: Database.Database;
@@ -238,5 +243,51 @@ describe("derived local memory graph", () => {
     const related = relatedGraphMemories(db, [seed.id]);
     expect(related).toEqual([]);
     for (const item of related) expect(() => memoryGraphNode(db, item.viaNodeId)).not.toThrow();
+  });
+
+  it("defaults to sparse long-term knowledge instead of metadata hubs and execution summaries", () => {
+    const a = memory({ title: "团队服务架构", content: "团队服务统一提供共享记忆。", sourceRef: "meeting:one", scope: ["src/team"] });
+    const b = memory({ title: "共享记忆访问", content: "共享记忆通过团队服务访问。", sourceRef: "meeting:two", scope: ["src/other"] });
+    for (let i = 0; i < 60; i += 1) memory({ title: `Execution ${i}`, type: "task-summary", scope: ["src/team"] });
+    const graph = queryMemoryGraph(db);
+    expect(graph.view).toBe("knowledge");
+    expect(graph.nodes.every((entry) => entry.nodeType === "memory" && entry.memoryType !== "task-summary")).toBe(true);
+    expect(graph.totals.memories).toBe(2);
+    expect(graph.edges).toHaveLength(1);
+    expect(graph.edges[0]).toMatchObject({ relationType: "CONTENT_RELATED", sharedTerms: expect.arrayContaining(["团队服务", "共享记忆"]) });
+    expect(new Set([graph.edges[0]!.source, graph.edges[0]!.target])).toEqual(new Set([node(a.id), node(b.id)]));
+    expect(graph.edges[0]!.excerpts?.source).toContain("团队");
+    expect(queryMemoryGraph(db, { relationTypes: [] }).edges).toEqual([]);
+  });
+
+  it("caps the displayed content degree and distinguishes current nodes from total matching memories", () => {
+    for (let i = 0; i < 35; i += 1) memory({
+      title: `Backup retention ${i}`, content: "Database backups follow retention policy and require archive approval.",
+    });
+    const graph = queryMemoryGraph(db);
+    expect(graph.nodes.length).toBeLessThanOrEqual(24);
+    expect(graph.totals.memories).toBe(35);
+    expect(graph.truncated).toBe(true);
+    const degrees = new Map<string, number>();
+    for (const edge of graph.edges) {
+      expect(graph.nodes.some((entry) => entry.id === edge.source)).toBe(true);
+      expect(graph.nodes.some((entry) => entry.id === edge.target)).toBe(true);
+      for (const id of [edge.source, edge.target]) degrees.set(id, (degrees.get(id) ?? 0) + 1);
+    }
+    expect([...degrees.values()].every((degree) => degree <= 2)).toBe(true);
+  });
+
+  it("requires explicit evidence and summary options to browse execution provenance", () => {
+    const summary = memory({ type: "task-summary", sourceRef: "meeting:summary" });
+    expect(queryMemoryGraph(db).nodes).toEqual([]);
+    expect(queryMemoryGraph(db, { view: "evidence" }).nodes).toEqual([]);
+    const evidence = queryMemoryGraph(db, { view: "evidence", includeSummaries: true });
+    expect(evidence.nodes.some((entry) => entry.id === node(summary.id))).toBe(true);
+    expect(evidence.nodes.some((entry) => entry.nodeType === "source")).toBe(true);
+    const source = evidence.nodes.find((entry) => entry.nodeType === "source")!;
+    expect(() => queryMemoryGraph(db, { view: "evidence", nodeId: source.id })).toThrow(/unavailable/u);
+    expect(() => memoryGraphNode(db, source.id)).toThrow(/unavailable/u);
+    expect(memoryGraphNode(db, source.id, { includeSummaries: true }).source?.sourceRef).toBe("meeting:summary");
+    expect(() => queryMemoryGraph(db, { relationTypes: ["APPLIES_TO"] })).toThrow(/view/u);
   });
 });

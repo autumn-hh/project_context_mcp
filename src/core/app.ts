@@ -578,7 +578,7 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => memoryGraph(db, options));
   }
 
-  memoryGraphNode(projectId: string, nodeId: string, options: { includeInactive?: boolean } = {}) {
+  memoryGraphNode(projectId: string, nodeId: string, options: { includeInactive?: boolean; includeSummaries?: boolean } = {}) {
     return this.withDb(projectId, (db) => memoryGraphNode(db, nodeId, options));
   }
 

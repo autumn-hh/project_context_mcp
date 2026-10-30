@@ -4,11 +4,14 @@ import type { TaskRecord } from "../tasks/task-service.js";
 import { taskTokens } from "../shared/task-relevance.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { sha256 } from "../shared/ids.js";
+import { findContentRelations } from "./content-relations.js";
 
-export const MEMORY_GRAPH_RELATIONS = ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO"] as const;
+export const MEMORY_GRAPH_RELATIONS = ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO", "CONTENT_RELATED"] as const;
 export type MemoryGraphRelation = typeof MEMORY_GRAPH_RELATIONS[number];
 
 export interface MemoryGraphOptions {
+  view?: "knowledge" | "evidence" | undefined;
+  includeSummaries?: boolean | undefined;
   query?: string | undefined;
   nodeId?: string | undefined;
   depth?: number | undefined;
@@ -35,14 +38,18 @@ export interface MemoryGraphEdge {
   target: string;
   relationType: MemoryGraphRelation;
   evidence: string;
+  sharedTerms?: string[];
+  excerpts?: { source: string; target: string };
 }
 
 export interface MemoryGraph {
+  view: "knowledge" | "evidence";
   nodes: MemoryGraphNodeRecord[];
   edges: MemoryGraphEdge[];
   root: string | null;
   truncated: boolean;
   counts: { nodes: number; edges: number };
+  totals: { memories: number };
 }
 
 export interface MemoryGraphNodeDetails extends MemoryGraphNodeRecord {
@@ -104,18 +111,28 @@ const BINDING_COLUMNS = `ms.id, ms.memory_id, ms.source_kind, ms.source_ref, ms.
   CASE WHEN EXISTS (SELECT 1 FROM sources s WHERE s.id = ms.source_id) THEN 1 ELSE 0 END AS present,
   (SELECT s.content_hash FROM sources s WHERE s.id = ms.source_id) AS current_hash`;
 
-/** A derived, read-only graph. No inferred semantic edges or automatic memory status changes. */
+/** A derived, read-only graph. Lexical suggestions are distinct from recorded evidence. */
 export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}): MemoryGraph {
-  const limit = integerOption(options.limit, 80, 1, 150);
+  const view = options.view ?? "knowledge";
+  if (view !== "knowledge" && view !== "evidence") invalid("Unknown graph view.");
+  const includeSummaries = view === "evidence" && (options.includeSummaries ?? false);
+  const limit = integerOption(options.limit, 24, 1, 150);
   const depth = integerOption(options.depth, 1, 1, 2);
   const includeInactive = options.includeInactive ?? false;
-  const allowed = new Set(options.relationTypes ?? MEMORY_GRAPH_RELATIONS);
+  const viewRelations: MemoryGraphRelation[] = view === "knowledge" ? ["CONTENT_RELATED", "SUPERSEDES"]
+    : ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO"];
+  const allowed = new Set(options.relationTypes ?? viewRelations);
   if ([...allowed].some((type) => !MEMORY_GRAPH_RELATIONS.includes(type))) invalid("Unknown relation type.");
+  if ([...allowed].some((type) => !viewRelations.includes(type))) invalid("Relation type is unavailable in this graph view.");
   if (options.query !== undefined && options.query.length > 200) invalid("Query must not exceed 200 characters.");
   const nodes = new Map<string, MemoryGraphNodeRecord>();
   const edges = new Map<string, MemoryGraphEdge>();
+  const contentDegree = new Map<string, number>();
+  const total = db.prepare(`SELECT COUNT(*) AS count FROM memories m WHERE ${includeInactive ? HISTORY : ACTIVE}
+    ${includeSummaries ? "" : "AND m.type <> 'task-summary'"}`).get() as { count: number };
   let truncated = false;
   const addNode = (node: MemoryGraphNodeRecord): boolean => {
+    if (!includeSummaries && node.memoryType === "task-summary") return false;
     if (node.id.length > 8192) { truncated = true; return false; }
     if (nodes.has(node.id)) return true;
     if (nodes.size >= limit) { truncated = true; return false; }
@@ -123,9 +140,14 @@ export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}
     return true;
   };
   let roots: MemoryGraphNodeRecord[];
-  if (options.nodeId) roots = [loadNode(db, options.nodeId, includeInactive)];
+  if (options.nodeId) {
+    const root = loadNode(db, options.nodeId, includeInactive, includeSummaries);
+    if (view === "knowledge" && root.nodeType !== "memory") invalid("Choose evidence view for a provenance node.");
+    if (!includeSummaries && root.memoryType === "task-summary") invalid("Task summaries are excluded from this view.");
+    roots = [root];
+  }
   else {
-    const selected = seedNodes(db, options.query?.trim() ?? "", Math.min(40, limit), includeInactive);
+    const selected = seedNodes(db, options.query?.trim() ?? "", Math.min(12, limit), includeInactive, includeSummaries, view === "evidence");
     roots = selected.nodes;
     truncated = selected.truncated;
   }
@@ -136,12 +158,12 @@ export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}
     const next = new Set<string>();
     const reverse = incomingSupersedes(db, allowed.has("SUPERSEDES")
       ? frontier.filter((id) => id.startsWith("memory:")).map((id) => id.slice(7)) : [],
-    includeInactive, MAX_EDGES);
+    includeInactive, MAX_EDGES, !includeSummaries);
     truncated ||= reverse.truncated;
     for (const id of frontier) {
       if (visited.has(id)) continue;
       visited.add(id);
-      const adjacent = connections(db, nodes.get(id)!, includeInactive, allowed, reverse.byTarget);
+      const adjacent = connections(db, nodes.get(id)!, includeInactive, allowed, reverse.byTarget, includeSummaries);
       truncated ||= adjacent.truncated;
       for (const { node, edge } of adjacent.items) {
         if (edges.has(edge.id)) continue;
@@ -151,18 +173,51 @@ export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}
         next.add(node.id);
       }
     }
+    if (allowed.has("CONTENT_RELATED")) {
+      const candidates = findContentRelations(db, frontier.filter((id) => id.startsWith("memory:")).map((id) => id.slice(7)), {
+        limit: 24, perSeed: 2, includeInactive,
+      });
+      truncated ||= candidates.truncated;
+      for (const relation of candidates.relations) {
+        const source = `memory:${relation.sourceMemoryId}`;
+        const target = `memory:${relation.targetMemoryId}`;
+        const id = `content:${sha256(JSON.stringify([source, target].sort()))}`;
+        if (edges.has(id)) continue;
+        if ((contentDegree.get(source) ?? 0) >= 2 || (contentDegree.get(target) ?? 0) >= 2) {
+          truncated = true;
+          continue;
+        }
+        // Respect explicit supersession rather than attaching a second possible link.
+        if ([...edges.values()].some((edge) => edge.relationType === "SUPERSEDES"
+          && ((edge.source === source && edge.target === target) || (edge.source === target && edge.target === source)))) continue;
+        if (edges.size >= MAX_EDGES) { truncated = true; break; }
+        const missing = Number(!nodes.has(source)) + Number(!nodes.has(target));
+        if (nodes.size + missing > limit) { truncated = true; continue; }
+        if (!addNode(memoryNode(getMemory(db, relation.sourceMemoryId)))
+          || !addNode(memoryNode(getMemory(db, relation.targetMemoryId)))) continue;
+        edges.set(id, {
+          id, source, target, relationType: "CONTENT_RELATED",
+          evidence: "Possible topical relation based on shared text; not a dependency, support, causality or agreement.",
+          sharedTerms: relation.sharedTerms, excerpts: relation.excerpts,
+        });
+        contentDegree.set(source, (contentDegree.get(source) ?? 0) + 1);
+        contentDegree.set(target, (contentDegree.get(target) ?? 0) + 1);
+        next.add(source); next.add(target);
+      }
+    }
     frontier = [...next].filter((id) => !visited.has(id));
   }
   return {
-    nodes: [...nodes.values()], edges: [...edges.values()], root: options.nodeId ?? null, truncated,
+    view, nodes: [...nodes.values()], edges: [...edges.values()], root: options.nodeId ?? null, truncated,
     counts: { nodes: nodes.size, edges: edges.size },
+    totals: { memories: total.count },
   };
 }
 
 export function memoryGraphNode(
-  db: SqliteDatabase, nodeId: string, options: { includeInactive?: boolean } = {},
+  db: SqliteDatabase, nodeId: string, options: { includeInactive?: boolean; includeSummaries?: boolean } = {},
 ): MemoryGraphNodeDetails {
-  const node = loadNode(db, nodeId, options.includeInactive ?? false);
+  const node = loadNode(db, nodeId, options.includeInactive ?? false, options.includeSummaries ?? false);
   if (node.nodeType === "memory") {
     const original = getMemory(db, nodeId.slice(7));
     const memory: MemoryRecord = {
@@ -211,11 +266,12 @@ export function memoryGraphNode(
   }
   if (node.nodeType === "scope") return { ...node, scope: decodeScope(nodeId), truncated: false };
   const key = decodeSource(nodeId);
-  const binding = sourceBinding(db, key, options.includeInactive ?? false)!;
+  const binding = sourceBinding(db, key, options.includeInactive ?? false, options.includeSummaries ?? false)!;
   const source = sourceEvidence(db, binding);
   const [kind, ref, bindingId] = key;
   const bindings = db.prepare(`SELECT ${BINDING_COLUMNS} FROM memory_sources ms JOIN memories m ON m.id=ms.memory_id
     WHERE ${options.includeInactive ? HISTORY : ACTIVE} AND ms.source_kind=? AND ms.source_ref IS ?
+      ${options.includeSummaries ? "" : "AND m.type <> 'task-summary'"}
       AND (? IS NULL OR ms.id=?) ORDER BY ms.created_at DESC,ms.id LIMIT 17`)
     .all(kind, ref, bindingId, bindingId) as BindingRow[];
   source.bindings = bindings.slice(0, 16).map((row) => ({
@@ -305,10 +361,10 @@ export function relatedGraphMemories(
   return result;
 }
 
-function seedNodes(db: SqliteDatabase, query: string, limit: number, inactive: boolean): {
+function seedNodes(db: SqliteDatabase, query: string, limit: number, inactive: boolean, summaries: boolean, evidence: boolean): {
   nodes: MemoryGraphNodeRecord[]; truncated: boolean;
 } {
-  const status = inactive ? HISTORY : ACTIVE;
+  const status = `${inactive ? HISTORY : ACTIVE} ${summaries ? "" : "AND m.type <> 'task-summary'"}`;
   if (!query) {
     const rows = db.prepare(`SELECT m.id FROM memories m WHERE ${status} ORDER BY m.updated_at DESC,m.id LIMIT ?`)
       .all(limit + 1) as Array<{ id: string }>;
@@ -334,13 +390,13 @@ function seedNodes(db: SqliteDatabase, query: string, limit: number, inactive: b
     }
   }
   const normalized = query.normalize("NFKC").toLowerCase();
-  const metadata = db.prepare(`SELECT m.id FROM memories m WHERE ${status} AND
+  const metadata = evidence ? db.prepare(`SELECT m.id FROM memories m WHERE ${status} AND
     (instr(lower(m.source_ref),?)>0 OR EXISTS(SELECT 1 FROM json_each(m.scope_json) WHERE instr(lower(value),?)>0))
-    ORDER BY m.updated_at DESC,m.id LIMIT ?`).all(normalized, normalized, limit + 1) as Array<{ id: string }>;
+    ORDER BY m.updated_at DESC,m.id LIMIT ?`).all(normalized, normalized, limit + 1) as Array<{ id: string }> : [];
   metadata.forEach(({ id }) => ids.add(id));
   const memories = [...ids].slice(0, limit).map((id) => memoryNode(getMemory(db, id)));
-  const tasks = db.prepare("SELECT id,substr(goal,1,241) AS goal,status FROM tasks WHERE instr(lower(goal),?)>0 ORDER BY updated_at DESC,id LIMIT ?")
-    .all(normalized, limit + 1) as Array<{ id: string; goal: string; status: string }>;
+  const tasks = evidence ? db.prepare("SELECT id,substr(goal,1,241) AS goal,status FROM tasks WHERE instr(lower(goal),?)>0 ORDER BY updated_at DESC,id LIMIT ?")
+    .all(normalized, limit + 1) as Array<{ id: string; goal: string; status: string }> : [];
   const nodes = [...memories, ...tasks.map((task): MemoryGraphNodeRecord => ({
     id: `task:${task.id}`, label: clipped(task.goal, 240), nodeType: "task", status: task.status,
   }))];
@@ -350,11 +406,12 @@ function seedNodes(db: SqliteDatabase, query: string, limit: number, inactive: b
 function connections(
   db: SqliteDatabase, node: MemoryGraphNodeRecord, inactive: boolean, allowed: Set<MemoryGraphRelation>,
   reverse: Map<string, Array<{ id: string }>>,
+  summaries: boolean,
 ): { items: Connection[]; truncated: boolean } {
   const items: Connection[] = [];
   let truncated = false;
   const add = (other: MemoryGraphNodeRecord, relation: MemoryGraphRelation, evidence: string, reverse = false): void => {
-    if (!allowed.has(relation)) return;
+    if (!allowed.has(relation) || (!summaries && other.memoryType === "task-summary")) return;
     const source = reverse ? other.id : node.id;
     const target = reverse ? node.id : other.id;
     items.push({ node: other, edge: {
@@ -395,10 +452,11 @@ function connections(
     let relation: MemoryGraphRelation;
     if (node.nodeType === "task") {
       relation = "PRODUCED_BY";
-      if (allowed.has(relation)) peers = memoryIdsForTask(db, node.id.slice(5), inactive, NEIGHBOR_LIMIT + 1);
+      if (allowed.has(relation)) peers = memoryIdsForTask(db, node.id.slice(5), inactive, NEIGHBOR_LIMIT + 1, !summaries);
     } else if (node.nodeType === "scope") {
       relation = "APPLIES_TO";
       if (allowed.has(relation)) peers = db.prepare(`SELECT m.id FROM memories m WHERE ${inactive ? HISTORY : ACTIVE}
+        ${summaries ? "" : "AND m.type <> 'task-summary'"}
         AND EXISTS(SELECT 1 FROM json_each(m.scope_json) WHERE value=?) ORDER BY m.updated_at DESC,m.id LIMIT ?`)
         .all(decodeScope(node.id), NEIGHBOR_LIMIT + 1) as Array<{ id: string }>;
     } else {
@@ -407,6 +465,7 @@ function connections(
         const [kind, ref, bindingId] = decodeSource(node.id);
         peers = db.prepare(`SELECT DISTINCT m.id FROM memory_sources ms CROSS JOIN memories m ON m.id=ms.memory_id
           WHERE ${inactive ? HISTORY : ACTIVE} AND ms.source_kind=? AND ms.source_ref IS ?
+          ${summaries ? "" : "AND m.type <> 'task-summary'"}
           AND (? IS NULL OR ms.id=?) ORDER BY m.updated_at DESC,m.id LIMIT ?`)
           .all(kind, ref, bindingId, bindingId, NEIGHBOR_LIMIT + 1) as Array<{ id: string }>;
       }
@@ -419,21 +478,25 @@ function connections(
   return { items, truncated };
 }
 
-function loadNode(db: SqliteDatabase, nodeId: string, inactive: boolean): MemoryGraphNodeRecord {
+function loadNode(db: SqliteDatabase, nodeId: string, inactive: boolean, summaries = false): MemoryGraphNodeRecord {
   if (!nodeId || nodeId.length > 8192) invalid("Invalid node ID.");
   if (nodeId.startsWith("memory:")) {
     const id = nodeId.slice(7);
-    if (visibleMemory(db, id, inactive)) return memoryNode(getMemory(db, id));
+    if (visibleMemory(db, id, inactive)) {
+      const memory = getMemory(db, id);
+      if (summaries || memory.type !== "task-summary") return memoryNode(memory);
+    }
   } else if (nodeId.startsWith("task:")) {
     const row = db.prepare("SELECT substr(goal,1,241) AS goal,status FROM tasks WHERE id=?").get(nodeId.slice(5)) as
       { goal: string; status: string } | undefined;
     if (row) return { id: nodeId, label: clipped(row.goal, 240), nodeType: "task", status: row.status };
   } else if (nodeId.startsWith("source:")) {
-    const binding = sourceBinding(db, decodeSource(nodeId), inactive);
+    const binding = sourceBinding(db, decodeSource(nodeId), inactive, summaries);
     if (binding) return sourceNode(db, binding);
   } else if (nodeId.startsWith("scope:")) {
     const scope = decodeScope(nodeId);
     const row = db.prepare(`SELECT m.id FROM memories m WHERE ${inactive ? HISTORY : ACTIVE}
+      ${summaries ? "" : "AND m.type <> 'task-summary'"}
       AND EXISTS(SELECT 1 FROM json_each(m.scope_json) WHERE value=?) LIMIT 1`).get(scope);
     if (row) return { id: nodeId, label: clipped(scope, 240), nodeType: "scope" };
   } else invalid("Unknown memory graph node type.");
@@ -456,10 +519,11 @@ function bindingsForMemory(db: SqliteDatabase, id: string): BindingRow[] {
     .all(id, MAX_BINDINGS + 1) as BindingRow[];
 }
 
-function sourceBinding(db: SqliteDatabase, key: SourceKey, inactive: boolean): BindingRow | undefined {
+function sourceBinding(db: SqliteDatabase, key: SourceKey, inactive: boolean, summaries: boolean): BindingRow | undefined {
   const [kind, ref, bindingId] = key;
   return db.prepare(`SELECT ${BINDING_COLUMNS} FROM memory_sources ms CROSS JOIN memories m ON m.id=ms.memory_id
     WHERE ${inactive ? HISTORY : ACTIVE} AND ms.source_kind=? AND ms.source_ref IS ?
+      ${summaries ? "" : "AND m.type <> 'task-summary'"}
       AND (? IS NULL OR ms.id=?) ORDER BY ms.created_at DESC,ms.id LIMIT 1`)
     .get(kind, ref, bindingId, bindingId) as BindingRow | undefined;
 }

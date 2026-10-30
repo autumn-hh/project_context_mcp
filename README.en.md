@@ -101,6 +101,7 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Task-ranked `project_context` assembly with related code symbols and a strictly enforced token budget
 - Independent local memory recall for conversational Chinese queries; exact duplicate knowledge is consolidated in context with source references, while relevant stale records are flagged for review. See [local memory recall](docs/local-memory-recall.md) for behavior, bounds, and regression cases.
 - The local project portrait includes a memory graph with sources, tasks, scopes, history, and two-hop exploration. MCP tools `memory_graph` and `memory_graph_node` expose the same evidence; task context can include bounded provenance-based memory neighbors. See [memory graph](docs/memory-graph.md).
+- The graph now defaults to sparse knowledge links, with shared terms and original excerpts labeled as possible topical relationships. Provenance is a separate view, task summaries are opt-in, and all graph-based context additions must match task content and scope.
 - Task-relevant scoped constraints while retaining project-wide constraints with an empty scope
 - Deterministic local quality evaluation for retrieval, context selection, memory candidates, and latency
 - Explicit project and output root allowlists with symlink-aware output validation

@@ -250,7 +250,10 @@ describe("Project Context MCP", () => {
       expect([decisions[0]!.id, ...supports.map((item) => item.id)].sort()).toEqual(ids.sort());
       expect((context.relevant as Array<Record<string, unknown>>).some((item) => ids.includes(item.id as string))).toBe(false);
       expect((await call(client, "memory_list", { projectId }) as unknown[])).toHaveLength(2);
-      const graph = object(await call(client, "memory_graph", { projectId, query: "备份保留期", depth: 2 }));
+      const knowledge = object(await call(client, "memory_graph", { projectId, query: "备份保留期" }));
+      expect(knowledge.view).toBe("knowledge");
+      expect((knowledge.nodes as Array<Record<string, unknown>>).every((node) => node.nodeType === "memory")).toBe(true);
+      const graph = object(await call(client, "memory_graph", { projectId, view: "evidence", query: "备份保留期", depth: 2 }));
       const nodes = graph.nodes as Array<Record<string, unknown>>;
       expect(nodes.filter((node) => node.nodeType === "memory")).toHaveLength(2);
       expect((graph.edges as Array<Record<string, unknown>>).every((edge) => edge.relationType === "SOURCED_FROM")).toBe(true);

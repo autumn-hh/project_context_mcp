@@ -1,7 +1,8 @@
 export const MEMORY_GRAPH_HTML = String.raw`
 <section id="portrait-memory-graph" class="memory-graph-panel" hidden aria-labelledby="memory-graph-heading">
-  <header class="memory-graph-heading"><div><h2 id="memory-graph-heading">记忆关系</h2><p>查看本项目记忆的来源、任务和演变依据。</p></div><span class="memory-graph-local">本机项目</span></header>
+  <header class="memory-graph-heading"><div><h2 id="memory-graph-heading">记忆关系</h2><p id="memory-graph-description">查看记忆之间的主题线索，需要核对出处时再进入来源追溯。</p></div><span class="memory-graph-local">本机项目</span></header>
   <div class="memory-graph-toolbar">
+    <div class="memory-graph-mode"><label for="memory-graph-view">查看方式</label><select id="memory-graph-view"><option value="knowledge" selected>知识关联</option><option value="evidence">来源追溯</option></select></div>
     <form id="memory-graph-search-form" class="memory-graph-search" role="search">
       <label class="sr-only" for="memory-graph-query">搜索记忆关键词</label>
       <input id="memory-graph-query" type="search" maxlength="200" placeholder="搜索记忆关键词" autocomplete="off">
@@ -11,17 +12,20 @@ export const MEMORY_GRAPH_HTML = String.raw`
   </div>
   <div class="memory-graph-filters">
     <fieldset id="memory-graph-relations"><legend>显示关系</legend>
-      <label><input type="checkbox" value="SOURCED_FROM" checked>来源</label>
+      <label data-memory-view="knowledge"><input type="checkbox" value="CONTENT_RELATED" checked>可能相关</label>
+      <label data-memory-view="evidence" hidden><input type="checkbox" value="SOURCED_FROM" checked>来源</label>
       <label><input type="checkbox" value="SUPERSEDES" checked>替代</label>
-      <label><input type="checkbox" value="PRODUCED_BY" checked>任务</label>
-      <label><input type="checkbox" value="APPLIES_TO" checked>适用范围</label>
+      <label data-memory-view="evidence" hidden><input type="checkbox" value="PRODUCED_BY" checked>任务</label>
+      <label data-memory-view="evidence" hidden><input type="checkbox" value="APPLIES_TO" checked>适用范围</label>
     </fieldset>
     <label class="memory-graph-history"><input id="memory-graph-history" type="checkbox">显示过期、冲突及已替代记忆</label>
+    <label id="memory-graph-summaries-label" hidden><input id="memory-graph-summaries" type="checkbox">包含任务摘要</label>
   </div>
   <p id="memory-graph-notice" class="memory-graph-notice" role="status" hidden></p>
   <div class="memory-graph-workspace">
     <div class="memory-graph-main">
-      <div class="memory-graph-legend" aria-label="节点类型"><span class="memory-legend-memory">记忆</span><span class="memory-legend-task">任务</span><span class="memory-legend-source">来源</span><span class="memory-legend-scope">范围</span><span>箭头表示关系方向</span></div>
+      <div id="memory-graph-legend" class="memory-graph-legend" aria-label="图谱说明"><span class="memory-legend-memory">记忆</span><span>虚线表示可能相关 · 箭头表示替代</span></div>
+      <p class="memory-graph-canvas-hint">拖动画布查看邻居，滚轮缩放；节点列表可查看完整名称并定位节点。</p>
       <div class="memory-graph-canvas-wrap">
         <div id="memory-graph-canvas" role="img" aria-label="本项目记忆关系图；可使用下方节点列表查看相同内容"></div>
         <div id="memory-graph-message" class="memory-graph-message" role="status"><span>选择项目后读取记忆关系</span></div>
@@ -32,6 +36,7 @@ export const MEMORY_GRAPH_HTML = String.raw`
       <header><h3 id="memory-graph-detail-title">选择一个节点</h3></header>
       <div id="memory-graph-detail-body"><p class="memory-graph-muted">点击图中节点或下方列表，查看记忆内容与出处。点击连线查看关系依据。</p></div>
       <div class="memory-graph-expand"><button id="memory-graph-expand-one" type="button" class="secondary-button" disabled>展开一层</button><button id="memory-graph-expand-two" type="button" class="secondary-button" disabled>展开两层</button></div>
+      <button id="memory-graph-trace" type="button" class="secondary-button memory-graph-trace" hidden disabled>追溯此记忆</button>
     </aside>
   </div>
   <footer class="memory-graph-footer"><span id="memory-graph-status">尚未读取</span><span id="memory-graph-scope">记忆概览</span></footer>
@@ -48,6 +53,9 @@ export const MEMORY_GRAPH_CSS = String.raw`
 .memory-graph-heading p { margin:6px 0; color:var(--muted); font-size:12px; }
 .memory-graph-local { flex:0 0 auto; border:1px solid var(--line); border-radius:20px; padding:5px 10px; color:var(--muted); font-size:11px; }
 .memory-graph-toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:10px; padding:8px 24px 12px; }
+.memory-graph-mode { display:flex; align-items:center; gap:8px; min-width:0; }
+.memory-graph-mode label { color:var(--muted); font-size:12px; white-space:nowrap; }
+.memory-graph-mode select { width:140px; min-width:0; }
 .memory-graph-search { display:grid; grid-template-columns:minmax(0,1fr) auto; flex:1 1 300px; max-width:620px; gap:8px; min-width:0; }
 .memory-graph-search input { min-width:0; }
 .memory-graph-tools { display:flex; flex-wrap:wrap; gap:8px; }
@@ -59,8 +67,9 @@ export const MEMORY_GRAPH_CSS = String.raw`
 .memory-graph-notice { margin:12px 24px 0; padding:10px 12px; border:1px solid #dfc594; border-radius:8px; background:#fff9ed; color:#795519; font-size:12px; overflow-wrap:anywhere; }
 .memory-graph-workspace { display:grid; grid-template-columns:minmax(0,1fr) minmax(270px,340px); min-width:0; }
 .memory-graph-main { min-width:0; }
+.memory-graph-canvas-hint { margin:0; padding:0 18px 10px; font-size:11px; line-height:1.6; color:var(--muted); overflow-wrap:anywhere; }
 .memory-graph-legend { display:flex; flex-wrap:wrap; gap:8px 18px; padding:12px 18px; color:var(--muted); font-size:11px; }
-.memory-graph-legend span:not(:last-child)::before { content:""; display:inline-block; width:9px; height:9px; margin-right:5px; border-radius:2px; background:#226a52; }
+.memory-graph-legend [class^=memory-legend-]::before { content:""; display:inline-block; width:9px; height:9px; margin-right:5px; border-radius:2px; background:#226a52; }
 .memory-graph-legend .memory-legend-task::before { background:#3d70a1 !important; }
 .memory-graph-legend .memory-legend-source::before { background:#b07825 !important; }
 .memory-graph-legend .memory-legend-scope::before { background:#7b6a98 !important; }
@@ -79,7 +88,7 @@ export const MEMORY_GRAPH_CSS = String.raw`
 .memory-graph-node strong,.memory-graph-node small { display:block; width:100%; overflow-wrap:anywhere; white-space:normal; }
 .memory-graph-node:hover { background:#f1f6f3; }
 .memory-graph-node[aria-pressed=true] { background:#e1eee7; box-shadow:inset 3px 0 #176b4d; }
-#portrait-memory-graph button:focus-visible,#portrait-memory-graph input:focus-visible,#portrait-memory-graph summary:focus-visible { outline:3px solid #286fa5; outline-offset:-3px; }
+#portrait-memory-graph button:focus-visible,#portrait-memory-graph input:focus-visible,#portrait-memory-graph select:focus-visible,#portrait-memory-graph summary:focus-visible { outline:3px solid #286fa5; outline-offset:-3px; }
 .memory-graph-detail { min-width:0; padding:18px; border-left:1px solid var(--line); background:#fff; scroll-margin-top:100px; }
 .memory-graph-detail h3 { scroll-margin-top:100px; }
 .memory-graph-detail header { padding-bottom:12px; border-bottom:1px solid var(--line); }
@@ -96,6 +105,10 @@ export const MEMORY_GRAPH_CSS = String.raw`
 .memory-graph-evidence:hover { background:#edf4ef; }
 .memory-graph-expand { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:16px; }
 .memory-graph-expand button { min-width:0; white-space:normal; }
+.memory-graph-trace { width:100%; min-width:0; white-space:normal; margin-top:8px; }
+.memory-graph-terms { display:flex; flex-wrap:wrap; gap:6px; margin:10px 0; }
+.memory-graph-term { max-width:100%; padding:4px 7px; border:1px solid var(--line); border-radius:6px; font-size:11px; line-height:1.6; background:var(--surface-muted); overflow-wrap:anywhere; }
+.memory-graph-related-note { border-left:3px solid #7b6a98; padding:8px 10px; background:#f6f3f9; }
 .memory-graph-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 16px; padding:12px 18px; border-top:1px solid var(--line); color:var(--muted); font-size:11px; }
 .memory-graph-footer span { min-width:0; overflow-wrap:anywhere; }
 @media(max-width:1000px) { .memory-graph-workspace { grid-template-columns:minmax(0,1fr) minmax(250px,300px); } .memory-graph-node-list { grid-template-columns:1fr; } }
@@ -103,6 +116,8 @@ export const MEMORY_GRAPH_CSS = String.raw`
   .memory-graph-heading { padding:16px 12px 6px; align-items:flex-start; }
   .memory-graph-heading h2 { font-size:16px; }
   .memory-graph-toolbar { padding:8px 12px 12px; }
+  .memory-graph-mode { flex-basis:100%; }
+  .memory-graph-mode select { flex:1; }
   .memory-graph-search { flex-basis:100%; max-width:none; }
   .memory-graph-tools { width:100%; display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); }
   .memory-graph-tools button { min-width:0; padding-inline:6px; white-space:normal; }
@@ -114,34 +129,59 @@ export const MEMORY_GRAPH_CSS = String.raw`
   .memory-graph-detail { border-left:0; border-top:1px solid var(--line); padding:16px 12px; scroll-margin-top:160px; }
   .memory-graph-detail h3 { scroll-margin-top:160px; }
   .memory-graph-legend { padding:10px 12px; }
+  .memory-graph-canvas-hint { padding-inline:12px; }
 }
 `;
 
 export const MEMORY_GRAPH_JS = String.raw`
-  var memoryGraphState = { projectId:null, sequence:0, detailSequence:0, controller:null, detailController:null, cy:null, data:null, root:null, depth:1, selectedId:null, loading:false };
-  var memoryRelationLabels = { SOURCED_FROM:"来源于", SUPERSEDES:"替代", PRODUCED_BY:"由任务产生", APPLIES_TO:"适用于" };
+  var memoryGraphState = { projectId:null, sequence:0, detailSequence:0, controller:null, detailController:null, cy:null, data:null, root:null, depth:1, selectedId:null, loading:false, view:"knowledge" };
+  var memoryRelationLabels = { CONTENT_RELATED:"可能相关", SOURCED_FROM:"来源于", SUPERSEDES:"替代", PRODUCED_BY:"由任务产生", APPLIES_TO:"适用于" };
   function mgEl(id) { return document.getElementById("memory-graph-" + id); }
   function memoryGraphBase(projectId) { return "/api/projects/" + encodeURIComponent(projectId) + "/memory-graph"; }
   function memoryGraphIsCurrent(projectId, sequence) { return memoryGraphState.projectId === projectId && els["portrait-project"].value === projectId && memoryGraphState.sequence === sequence; }
   function bindMemoryGraphEvents() {
+    mgEl("view").addEventListener("change", function() { setMemoryGraphView(mgEl("view").value,null); });
     mgEl("search-form").addEventListener("submit", function(event) { event.preventDefault(); loadMemoryGraph(null); });
     mgEl("overview").addEventListener("click", function() { mgEl("query").value=""; loadMemoryGraph(null); });
     mgEl("refresh").addEventListener("click", function() { loadMemoryGraph(memoryGraphState.root, memoryGraphState.depth); });
-    mgEl("fit").addEventListener("click", function() { if(memoryGraphState.cy) memoryGraphState.cy.fit(undefined,38); });
+    mgEl("fit").addEventListener("click", function() { fitMemoryGraphReadable(memoryGraphState.cy); });
     mgEl("history").addEventListener("change", function() { loadMemoryGraph(null); });
+    mgEl("summaries").addEventListener("change", function() { loadMemoryGraph(null); });
     mgEl("relations").addEventListener("change", function() {
       loadMemoryGraph(memoryGraphState.root,memoryGraphState.depth);
     });
     mgEl("expand-one").addEventListener("click", function() { if(memoryGraphState.selectedId) loadMemoryGraph(memoryGraphState.selectedId,1); });
     mgEl("expand-two").addEventListener("click", function() { if(memoryGraphState.selectedId) loadMemoryGraph(memoryGraphState.selectedId,2); });
+    mgEl("trace").addEventListener("click", function() {
+      if(memoryGraphState.selectedId && memoryGraphState.selectedId.indexOf("memory:")===0) setMemoryGraphView("evidence",memoryGraphState.selectedId);
+    });
     window.addEventListener("resize", function() { if(memoryGraphState.cy) memoryGraphState.cy.resize(); });
   }
-  function memoryGraphRelations() { return Array.from(mgEl("relations").querySelectorAll("input:checked")).map(function(input){return input.value;}); }
+  function memoryGraphRelations() {
+    return Array.from(mgEl("relations").querySelectorAll("input:checked")).filter(function(input){return !input.parentElement.hidden;}).map(function(input){return input.value;});
+  }
+  function updateMemoryGraphView() {
+    var evidence=memoryGraphState.view==="evidence";
+    mgEl("view").value=memoryGraphState.view;
+    mgEl("relations").querySelectorAll("[data-memory-view]").forEach(function(label){label.hidden=label.dataset.memoryView!==memoryGraphState.view;});
+    mgEl("summaries-label").hidden=!evidence;mgEl("summaries").disabled=!evidence;
+    if(!evidence)mgEl("summaries").checked=false;
+    mgEl("description").textContent=evidence?"按需核对记忆的来源、任务和演变依据。":"查看记忆之间的主题线索，需要核对出处时再进入来源追溯。";
+    var legend=mgEl("legend");legend.replaceChildren(element("span","memory-legend-memory","记忆"));
+    if(evidence){legend.append(element("span","memory-legend-task","任务"),element("span","memory-legend-source","来源"),element("span","memory-legend-scope","范围"));}
+    legend.append(element("span","",evidence?"箭头表示记录中的关系方向":"虚线表示可能相关 · 箭头表示替代"));
+  }
+  function setMemoryGraphView(view, root) {
+    memoryGraphState.view=view==="evidence"?"evidence":"knowledge";updateMemoryGraphView();
+    if(memoryGraphState.view==="knowledge" && root && root.indexOf("memory:")!==0)root=null;
+    loadMemoryGraph(root||null,1);
+  }
   function memoryGraphClearDetail(message) {
     memoryGraphState.selectedId=null;
     mgEl("detail-title").textContent="选择一个节点";
     mgEl("detail-body").replaceChildren(element("p","memory-graph-muted",message||"点击图中节点或下方列表，查看记忆内容与出处。点击连线查看关系依据。"));
     mgEl("expand-one").disabled=true; mgEl("expand-two").disabled=true;
+    mgEl("trace").hidden=true;mgEl("trace").disabled=true;
   }
   function resetMemoryGraph() {
     memoryGraphState.sequence++; memoryGraphState.detailSequence++;
@@ -151,6 +191,7 @@ export const MEMORY_GRAPH_JS = String.raw`
     memoryGraphState.cy=null; memoryGraphState.data=null; memoryGraphState.projectId=null;
     memoryGraphState.root=null; memoryGraphState.depth=1; memoryGraphState.loading=false;
     if(!mgEl("nodes")) return;
+    memoryGraphState.view="knowledge";updateMemoryGraphView();
     mgEl("query").value=""; mgEl("nodes").replaceChildren(); mgEl("node-count").textContent="0";
     mgEl("notice").hidden=true; mgEl("status").textContent="尚未读取"; mgEl("scope").textContent="记忆概览";
     mgEl("fit").disabled=true; memoryGraphClearDetail();
@@ -164,12 +205,13 @@ export const MEMORY_GRAPH_JS = String.raw`
     var projectId=els["portrait-project"].value;
     if(projectId!==memoryGraphState.projectId) { resetMemoryGraph(); loadMemoryGraph(null); return; }
     if(force || !memoryGraphState.data) { loadMemoryGraph(memoryGraphState.root,memoryGraphState.depth); return; }
-    setTimeout(function(){if(memoryGraphState.cy){memoryGraphState.cy.resize();memoryGraphState.cy.fit(undefined,38);}},0);
+    setTimeout(function(){if(memoryGraphState.cy){memoryGraphState.cy.resize();fitMemoryGraphReadable(memoryGraphState.cy);}},0);
   }
   async function loadMemoryGraph(root, depth) {
     var projectId=els["portrait-project"].value;
     if(!projectId) { resetMemoryGraph(); return; }
     if(memoryGraphState.projectId && memoryGraphState.projectId!==projectId) resetMemoryGraph();
+    if(memoryGraphState.view==="knowledge" && root && root.indexOf("memory:")!==0)root=null;
     memoryGraphState.projectId=projectId;
     memoryGraphState.root=root||null; memoryGraphState.depth=depth||1;
     var sequence=++memoryGraphState.sequence;
@@ -183,7 +225,7 @@ export const MEMORY_GRAPH_JS = String.raw`
     mgEl("notice").hidden=true; mgEl("fit").disabled=true;
     memoryGraphClearDetail("正在读取关系，请稍候。"); memoryGraphMessage("正在读取记忆关系…");
     mgEl("status").textContent="正在读取"; mgEl("scope").textContent=root?"邻居展开":"记忆概览";
-    var params=new URLSearchParams({limit:"80",includeInactive:String(mgEl("history").checked)});
+    var params=new URLSearchParams({limit:"24",view:memoryGraphState.view,includeSummaries:String(memoryGraphState.view==="evidence"&&mgEl("summaries").checked),includeInactive:String(mgEl("history").checked)});
     if(root){params.set("node",root);params.set("depth",String(depth||1));}
     else if(mgEl("query").value.trim())params.set("query",mgEl("query").value.trim());
     var relations=memoryGraphRelations();
@@ -210,10 +252,11 @@ export const MEMORY_GRAPH_JS = String.raw`
     memoryGraphClearDetail();
     renderMemoryGraphNodes();
     mgEl("node-count").textContent=String(data.nodes.length);
-    mgEl("status").textContent="当前展示 "+data.nodes.length+" 个节点 · "+data.edges.length+" 条关系";
-    mgEl("scope").textContent=data.root?"展开 "+memoryGraphState.depth+" 层邻居":mgEl("query").value.trim()?"关键词结果":"记忆概览";
+    var total=data.totals&&Number.isFinite(data.totals.memories)?data.totals.memories:null;
+    mgEl("status").textContent="当前展示 "+data.nodes.length+" 个节点 · "+data.edges.length+" 条关系"+(total===null?"":"；本项目可浏览 "+total+" 条记忆"+(memoryGraphState.view==="evidence"&&mgEl("summaries").checked?"（含摘要）":"（不含摘要）"));
+    mgEl("scope").textContent=(memoryGraphState.view==="evidence"?"来源追溯":"知识关联")+" · "+(data.root?"展开 "+memoryGraphState.depth+" 层邻居":mgEl("query").value.trim()?"关键词结果":"概览");
     mgEl("notice").hidden=!data.truncated;
-    mgEl("notice").textContent="当前结果只展示部分节点或关系。可搜索更具体的记忆，或选中一个节点展开邻居。";
+    mgEl("notice").textContent="当前为局部视图，最多展示 24 个节点。可搜索具体主题，或选中一条记忆展开邻居。";
     if(!data.nodes.length){memoryGraphMessage("没有符合条件的记忆关系。\n可修改关键词，或开启“显示过期、冲突及已替代记忆”。");return;}
     if(typeof window.cytoscape!=="function"){memoryGraphMessage("图形引擎未能加载。仍可使用下方节点列表查看内容与关系。");return;}
     memoryGraphMessage("");
@@ -221,15 +264,16 @@ export const MEMORY_GRAPH_JS = String.raw`
     // Prefer readable, deterministic cells. Labels are part of node dimensions;
     // a wide canvas can hold more columns, while narrow screens keep fewer columns.
     var ratio=Math.max(.6,Math.min(1.5,canvasWidth/canvasHeight));
-    var columns=Math.max(1,Math.ceil(Math.sqrt(data.nodes.length*ratio)));
+    var columns=Math.max(1,Math.min(Math.floor(canvasWidth/170)||1,Math.ceil(Math.sqrt(data.nodes.length*ratio))));
     var rows=Math.max(1,Math.ceil(data.nodes.length/columns));
     if(data.nodes.length<=9&&canvasWidth>=650){columns=Math.min(3,data.nodes.length);rows=Math.ceil(data.nodes.length/columns);}
+    var gridWidth=Math.max(canvasWidth-70,columns*190),gridHeight=Math.max(canvasHeight-70,rows*135);
     var cy=window.cytoscape({
       container:mgEl("canvas"),minZoom:.12,maxZoom:3,boxSelectionEnabled:false,
       elements:data.nodes.map(function(node){return{group:"nodes",data:Object.assign({},node,{displayLabel:Array.from(node.label||"").slice(0,24).join("")+(Array.from(node.label||"").length>24?"…":"")})};})
         .concat(data.edges.map(function(edge){return{group:"edges",data:Object.assign({},edge,{displayRelation:memoryRelationLabels[edge.relationType]||edge.relationType})};})),
       style:memoryGraphStyles(),
-      layout:{name:"grid",animate:false,fit:true,padding:35,rows:rows,cols:columns,avoidOverlap:true,avoidOverlapPadding:16,nodeDimensionsIncludeLabels:true,condense:false}
+      layout:{name:"grid",animate:false,fit:false,padding:35,rows:rows,cols:columns,avoidOverlap:true,avoidOverlapPadding:20,nodeDimensionsIncludeLabels:true,condense:false,boundingBox:{x1:35,y1:35,w:gridWidth,h:gridHeight}}
     });
     memoryGraphState.cy=cy;
     mgEl("fit").disabled=false;
@@ -237,17 +281,25 @@ export const MEMORY_GRAPH_JS = String.raw`
     cy.on("tap","edge",function(event){selectMemoryGraphEdge(event.target.id());});
     cy.on("mouseover","node,edge",function(event){event.target.addClass("hovered");});
     cy.on("mouseout","node,edge",function(event){event.target.removeClass("hovered");});
-    setTimeout(function(){if(memoryGraphState.cy===cy){cy.resize();cy.fit(undefined,38);}},0);
+    setTimeout(function(){if(memoryGraphState.cy===cy){cy.resize();fitMemoryGraphReadable(cy);}},0);
+  }
+  function fitMemoryGraphReadable(cy) {
+    if(!cy||!cy.nodes().length)return;
+    cy.fit(undefined,35);
+    // Keep labels legible instead of shrinking a dense graph into an overview.
+    // The viewport may show a subset; pan, zoom, or use the complete node list.
+    if(cy.zoom()<.85){cy.zoom(.85);cy.center();}
   }
   function memoryGraphStyles() {
     return [
-      {selector:"node",style:{"width":34,"height":34,"background-color":"#226a52","border-width":1,"border-color":"#164d3b","label":"data(displayLabel)","font-size":12,"font-family":"Segoe UI, Microsoft YaHei, sans-serif","text-valign":"bottom","text-margin-y":8,"text-wrap":"wrap","text-overflow-wrap":"anywhere","text-max-width":148,"color":"#26312c"}},
+      {selector:"node",style:{"width":34,"height":34,"background-color":"#226a52","border-width":1,"border-color":"#164d3b","label":"data(displayLabel)","font-size":13.5,"font-family":"Segoe UI, Microsoft YaHei, sans-serif","text-valign":"bottom","text-margin-y":8,"text-wrap":"wrap","text-overflow-wrap":"anywhere","text-max-width":148,"color":"#26312c"}},
       {selector:"node[nodeType='task']",style:{"shape":"round-rectangle","background-color":"#3d70a1","border-color":"#2d5072"}},
       {selector:"node[nodeType='source']",style:{"shape":"diamond","background-color":"#b07825","border-color":"#80571d"}},
       {selector:"node[nodeType='scope']",style:{"shape":"hexagon","background-color":"#7b6a98","border-color":"#56466e"}},
       {selector:"node[status='stale'],node[status='conflicted'],node[status='superseded']",style:{"border-style":"dashed","border-width":3,"background-opacity":.45}},
       {selector:"edge",style:{"curve-style":"bezier","line-color":"#99aca2","target-arrow-color":"#99aca2","target-arrow-shape":"triangle","arrow-scale":.8,"width":1.5,"label":"","font-size":9,"text-background-color":"#f6f9f7","text-background-opacity":.95,"text-background-padding":3,"color":"#68776f"}},
       {selector:"edge[relationType='SUPERSEDES']",style:{"line-color":"#9a6a28","target-arrow-color":"#9a6a28","line-style":"dashed"}},
+      {selector:"edge[relationType='CONTENT_RELATED']",style:{"line-color":"#85739e","target-arrow-shape":"none","source-arrow-shape":"none","line-style":"dashed"}},
       {selector:".hovered",style:{"overlay-color":"#73968a","overlay-opacity":.12,"overlay-padding":6}},
       {selector:"edge.hovered,edge:selected",style:{"label":"data(displayRelation)"}},
       {selector:"node:selected",style:{"border-color":"#152a20","border-width":4,"overlay-color":"#176b4d","overlay-opacity":.12,"overlay-padding":5}},
@@ -267,7 +319,7 @@ export const MEMORY_GRAPH_JS = String.raw`
   }
   function memoryGraphMarkSelection(id) {
     mgEl("nodes").querySelectorAll("button").forEach(function(button){button.setAttribute("aria-pressed",String(button.dataset.nodeId===id));});
-    if(memoryGraphState.cy){memoryGraphState.cy.elements().unselect();memoryGraphState.cy.getElementById(id).select();}
+    if(memoryGraphState.cy){memoryGraphState.cy.elements().unselect();var selected=memoryGraphState.cy.getElementById(id);selected.select();if(selected.length&&selected.isNode())memoryGraphState.cy.center(selected);}
   }
   async function selectMemoryGraphNode(id) {
     if(memoryGraphState.loading||!memoryGraphState.data)return;
@@ -278,11 +330,14 @@ export const MEMORY_GRAPH_JS = String.raw`
     memoryGraphState.selectedId=id;memoryGraphMarkSelection(id);
     mgEl("detail-title").textContent=node.label;mgEl("detail-body").replaceChildren(element("p","memory-graph-muted","正在读取详情…"));
     mgEl("expand-one").disabled=true;mgEl("expand-two").disabled=true;
+    mgEl("trace").hidden=true;mgEl("trace").disabled=true;
     try {
-      var detail=await fetchJson(memoryGraphBase(projectId)+"/nodes/"+encodeURIComponent(id)+"?includeInactive="+mgEl("history").checked,{signal:controller.signal});
+      var detail=await fetchJson(memoryGraphBase(projectId)+"/nodes/"+encodeURIComponent(id)+"?includeInactive="+mgEl("history").checked+"&includeSummaries="+String(memoryGraphState.view==="evidence"&&mgEl("summaries").checked),{signal:controller.signal});
       if(!memoryGraphIsCurrent(projectId,sequence)||detailSequence!==memoryGraphState.detailSequence)return;
       renderMemoryGraphDetail(detail);
       mgEl("expand-one").disabled=false;mgEl("expand-two").disabled=false;
+      mgEl("trace").hidden=detail.nodeType!=="memory"||memoryGraphState.view==="evidence";
+      mgEl("trace").disabled=mgEl("trace").hidden;
       memoryGraphRevealDetail();
     }catch(error){
       if(!memoryGraphIsCurrent(projectId,sequence)||detailSequence!==memoryGraphState.detailSequence||error.name==="AbortError")return;
@@ -352,7 +407,7 @@ export const MEMORY_GRAPH_JS = String.raw`
     if(!edges.length)mgEl("detail-body").append(element("p","memory-graph-muted","当前视图未包含相邻关系，可展开邻居查看。"));
     edges.forEach(function(edge){
       var other=data.nodes.find(function(node){return node.id===(edge.source===id?edge.target:edge.source);});
-      var direction=edge.source===id?" → ":" ← ";
+      var direction=edge.relationType==="CONTENT_RELATED"?" · ":edge.source===id?" → ":" ← ";
       var button=element("button","memory-graph-evidence",(memoryRelationLabels[edge.relationType]||edge.relationType)+direction+(other?other.label:"关联节点"));
       button.type="button";button.addEventListener("click",function(){selectMemoryGraphEdge(edge.id);});mgEl("detail-body").append(button);
     });
@@ -364,11 +419,21 @@ export const MEMORY_GRAPH_JS = String.raw`
     memoryGraphClearDetail();memoryGraphMarkSelection(id);
     mgEl("detail-title").textContent=(memoryRelationLabels[edge.relationType]||edge.relationType)+" · 关系依据";
     var body=mgEl("detail-body");body.replaceChildren();
-    [["source","起点"],["target","终点"]].forEach(function(pair){
+    var related=edge.relationType==="CONTENT_RELATED";
+    if(related)body.append(element("p","memory-graph-related-note","这两条记忆具有共同的词面线索，仅表示可能相关。它不证明依赖、支持或因果关系，请对照两端原文判断。"));
+    [["source",related?"记忆一":"起点"],["target",related?"记忆二":"终点"]].forEach(function(pair){
       var node=data.nodes.find(function(item){return item.id===edge[pair[0]];});
       if(node){var button=element("button","memory-graph-evidence",pair[1]+"："+node.label);button.type="button";button.addEventListener("click",function(){selectMemoryGraphNode(node.id);});body.append(button);}
     });
-    memoryGraphSection("记录依据",edge.evidence);
+    if(related){
+      if(Array.isArray(edge.sharedTerms)&&edge.sharedTerms.length){
+        body.append(element("h4","","共同词项"));
+        var terms=element("div","memory-graph-terms");
+        edge.sharedTerms.forEach(function(term){terms.append(element("span","memory-graph-term",term));});body.append(terms);
+      }
+      if(edge.excerpts){memoryGraphSection("记忆一 · 原文线索",edge.excerpts.source);memoryGraphSection("记忆二 · 原文线索",edge.excerpts.target);}
+    }
+    if(!related)memoryGraphSection("记录依据",edge.evidence);
     memoryGraphRevealDetail();
   }
 `;
