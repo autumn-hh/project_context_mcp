@@ -1,6 +1,6 @@
 {
   "name": "project-context-mcp",
-  "version": "0.10.4",
+  "version": "0.11.0",
   "description": "Local project memory for coding agents. Optional backup and sync.",
   "type": "module",
   "bin": {
@@ -19,6 +19,7 @@
     "docs/team-service.md",
     "docs/search-extensions.md",
     "docs/local-memory-recall.md",
+    "docs/memory-graph.md",
     "docs/remote-storage-team-sync-roadmap.md",
     "docs/remote-storage-team-sync-execution-plan.md"
   ],

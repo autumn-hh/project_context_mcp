@@ -191,4 +191,32 @@ describe("local memory context recall", () => {
     expect(small.decisions[0]).toMatchObject({ confidence: 0.5, content: "Database backup retention is seven days." });
     expect(listMemories(db, "active", 100)).toHaveLength(30);
   });
+
+  it("recalls a lexically unrelated old decision through explicit shared evidence", () => {
+    const seed = memory({ sourceRef: "meeting:retention", scope: ["src/storage"] });
+    const neighbor = memory({
+      title: "Deletion approval", content: "Owners must approve erasure.", sourceRef: "meeting:retention",
+      scope: ["src/storage"],
+    });
+    bury(neighbor);
+    memory({ title: "Image approval", content: "Owners must approve thumbnails.", sourceRef: "meeting:retention", scope: ["src/images"] });
+    const context = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 20_000);
+    expect(context.decisions.find((item) => item.id === neighbor.id)).toMatchObject({
+      graphRecall: { fromMemoryId: seed.id, relation: "same-source" },
+    });
+    expect(JSON.stringify(context)).not.toContain("Image approval");
+    expect(context.relevant.some((item) => item.id === neighbor.id)).toBe(false);
+    const limited = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 500);
+    expect(limited.budget.usedTokens).toBeLessThanOrEqual(500);
+  });
+
+  it("does not use shared scope or missing provenance to invent a memory relation", () => {
+    memory({ scope: ["src/storage"] });
+    const unrelated = memory({
+      title: "Deletion approval", content: "Owners must approve erasure.", scope: ["src/storage"],
+    });
+    bury(unrelated);
+    const context = buildProjectContext(db, project, "backup retention src/storage/backup.ts", 20_000);
+    expect(JSON.stringify(context)).not.toContain(unrelated.id);
+  });
 });

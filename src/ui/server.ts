@@ -12,6 +12,7 @@ import { userMemoryScopeSchema } from "../memory/user-memory-service.js";
 import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { WORKSPACE_THEME_CSS } from "./workspace-theme.js";
 import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
+import { memoryGraphInputSchema, memoryGraphNodeIdSchema } from "../memory/graph-input.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
 import { IndexPreviewJobs } from "./index-preview-jobs.js";
@@ -528,6 +529,27 @@ async function routeRequest(
       await withApp(response, (app) => action === "complete"
         ? app.completeTask(projectId, taskId, undefined, { source: "web" })
         : app.cancelTask(projectId, taskId, { source: "web" }));
+      return;
+    }
+    const memoryGraphMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memory-graph(?:\/nodes\/([^/]+))?$/);
+    if (request.method === "GET" && memoryGraphMatch) {
+      const projectId = decodeSegment(memoryGraphMatch[1]!);
+      const includeInactive = z.enum(["true", "false"]).parse(url.searchParams.get("includeInactive") ?? "false") === "true";
+      if (memoryGraphMatch[2]) {
+        const nodeId = memoryGraphNodeIdSchema.parse(decodeSegment(memoryGraphMatch[2]));
+        await withApp(response, (app) => app.memoryGraphNode(projectId, nodeId, { includeInactive }));
+      } else {
+        const relations = url.searchParams.getAll("relation");
+        const input = memoryGraphInputSchema.parse({
+          ...(url.searchParams.has("query") ? { query: url.searchParams.get("query") } : {}),
+          ...(url.searchParams.has("node") ? { nodeId: url.searchParams.get("node") } : {}),
+          depth: Number(url.searchParams.get("depth") ?? "1"),
+          limit: Number(url.searchParams.get("limit") ?? "80"),
+          includeInactive,
+          ...(relations.length ? { relationTypes: relations.length === 1 && relations[0] === "none" ? [] : relations } : {}),
+        });
+        await withApp(response, (app) => app.memoryGraph(projectId, input));
+      }
       return;
     }
     const graphMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/graph$/);

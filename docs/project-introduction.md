@@ -62,7 +62,7 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 
 ## MCP 工具链
 
-项目当前提供 49 个本地 stdio MCP 工具；新增远程备份恢复2项、同步5项、增强搜索与定义查询2项。团队 HTTP 工具按角色提供，见 [团队服务](team-service.md)。
+项目当前提供 51 个本地 stdio MCP 工具；包括远程备份恢复2项、同步5项、增强搜索与定义查询2项，以及记忆图谱与节点详情2项。记忆图谱见 [使用说明](memory-graph.md)；团队 HTTP 工具按角色提供，见 [团队服务](team-service.md)。
 
 ### 存储与项目管理
 

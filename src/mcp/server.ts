@@ -17,6 +17,7 @@ import { taskQuerySchema } from "../tasks/task-query.js";
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { searchWithEmbeddings } from "../search/embeddings.js";
 import { lspDefinition } from "../lsp/bridge.js";
+import { memoryGraphInputShape, memoryGraphNodeIdSchema } from "../memory/graph-input.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -247,6 +248,29 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, task, budgetTokens }) => withApp(async (app) => {
     await app.watchFlush(projectId);
     return app.context(projectId, task, budgetTokens);
+  }));
+
+  server.registerTool("memory_graph", {
+    description: "Explore a bounded local memory graph of sourced knowledge, tasks, scopes and superseding decisions. Query or expand a node by one/two hops; history is opt-in. Relations reflect stored evidence, not inferred truth.",
+    outputSchema,
+    inputSchema: { projectId: z.string().min(1), ...memoryGraphInputShape },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId, ...options }) => withApp(async (app) => {
+    await app.watchFlush(projectId);
+    return app.memoryGraph(projectId, options);
+  }));
+
+  server.registerTool("memory_graph_node", {
+    description: "Read a local memory graph node and its stored source evidence. Does not read arbitrary files or accept candidates.",
+    outputSchema,
+    inputSchema: {
+      projectId: z.string().min(1), nodeId: memoryGraphNodeIdSchema,
+      includeInactive: z.boolean().default(false),
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  }, ({ projectId, nodeId, includeInactive }) => withApp(async (app) => {
+    await app.watchFlush(projectId);
+    return app.memoryGraphNode(projectId, nodeId, { includeInactive });
   }));
 
   server.registerTool("memory_remember", {

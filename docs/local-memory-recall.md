@@ -6,7 +6,7 @@
 
 参考 Hindsight 官方 [Recall](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/retrieval.md) 和 [Observations](https://github.com/vectorize-io/hindsight/blob/main/hindsight-docs/docs/developer/observations.mdx)：记忆应有独立的召回通道，重复结论不应占满上下文，结论必须能追溯原始来源。
 
-本实现使用本地词项匹配，没有安装 Hindsight，没有接入其 LLM、embedding 或 cross-encoder，也不具备自动理解同义改写、识别矛盾或生成新事实的能力。所有验证数据均为合成数据。
+本实现使用本地词项匹配，没有安装 Hindsight，没有接入其 LLM、embedding 或 cross-encoder，也不具备自动理解同义改写、识别矛盾或生成新事实的能力。所有验证数据均为合成数据。0.11.0 增加了有证据的[记忆图谱](memory-graph.md)补充召回：最多从 5 条命中的记忆沿明确来源/任务关系补充 4 条活跃知识，仍检查适用范围；`graphRecall` 标明召回路径。
 
 ## 行为
 

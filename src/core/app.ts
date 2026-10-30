@@ -66,6 +66,7 @@ import {
 } from "../context/context-service.js";
 import type { z } from "zod/v4";
 import { ProjectContextError } from "../shared/errors.js";
+import { memoryGraph, memoryGraphNode, type MemoryGraphOptions } from "../memory/graph-service.js";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { authorizeOutputPath } from "../security/path-policy.js";
@@ -571,6 +572,14 @@ export class ProjectContextApp {
 
   graphOverview(projectId: string, options: GraphOptions = {}): Record<string, unknown> {
     return this.withDb(projectId, (db) => graphOverview(db, options));
+  }
+
+  memoryGraph(projectId: string, options: MemoryGraphOptions = {}) {
+    return this.withDb(projectId, (db) => memoryGraph(db, options));
+  }
+
+  memoryGraphNode(projectId: string, nodeId: string, options: { includeInactive?: boolean } = {}) {
+    return this.withDb(projectId, (db) => memoryGraphNode(db, nodeId, options));
   }
 
   graphNeighbors(

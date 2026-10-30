@@ -100,6 +100,7 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Local-workbench actions for candidate review, stale-memory cleanup, task completion/cancellation, indexing, and watcher control
 - Task-ranked `project_context` assembly with related code symbols and a strictly enforced token budget
 - Independent local memory recall for conversational Chinese queries; exact duplicate knowledge is consolidated in context with source references, while relevant stale records are flagged for review. See [local memory recall](docs/local-memory-recall.md) for behavior, bounds, and regression cases.
+- The local project portrait includes a memory graph with sources, tasks, scopes, history, and two-hop exploration. MCP tools `memory_graph` and `memory_graph_node` expose the same evidence; task context can include bounded provenance-based memory neighbors. See [memory graph](docs/memory-graph.md).
 - Task-relevant scoped constraints while retaining project-wide constraints with an empty scope
 - Deterministic local quality evaluation for retrieval, context selection, memory candidates, and latency
 - Explicit project and output root allowlists with symlink-aware output validation
@@ -441,7 +442,7 @@ The client starts the server from its MCP configuration and follows its global i
 
 For client-specific configuration, see the official Codex documentation for [MCP](https://developers.openai.com/codex/mcp/) and [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/), or the Claude Code [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) documentation.
 
-## MCP Tools (49, local stdio)
+## MCP Tools (51, local stdio)
 
 - project_backup_remote, project_restore_remote
 - sync_status, sync_push, sync_pull, sync_conflicts, sync_resolve
@@ -455,6 +456,7 @@ For client-specific configuration, see the official Codex documentation for [MCP
 - `project_doctor`, `project_backup`, `project_backup_encrypted`, `project_export`
 - `project_storage`, `project_cleanup`, `project_maintenance_configure`
 - `memory_remember`, `memory_list`, `memory_update_status`
+- `memory_graph`, `memory_graph_node`
 - `memory_candidates`, `memory_candidate_accept`, `memory_candidate_reject`
 - `user_memory_remember`, `user_memory_list`, `user_memory_update_status`
 - `task_start`, `task_checkpoint`, `task_list`, `task_query`, `task_history`, `task_complete`, `task_cancel`

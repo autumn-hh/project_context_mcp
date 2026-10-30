@@ -98,6 +98,7 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 本地工作台支持候选接受/拒绝、过期记忆清理、任务完成/取消以及索引监听控制
 - `project_context` 按任务相关性组装上下文，包含关联代码符号并严格执行 Token 预算
 - 本地记忆独立召回，支持中文长问句；上下文按精确标题、类型、结论、理由和范围合并重复记录并保留来源，相关过期记录仅提示复核。实现、边界和前后对照见[本地记忆召回](docs/local-memory-recall.md)。
+- “项目画像 → 记忆关系”展示记忆、来源、任务和范围节点，可搜索、查看证据及展开两层邻居；MCP 支持 `memory_graph`、`memory_graph_node`，上下文可沿明确来源补充相关知识。见[记忆图谱](docs/memory-graph.md)。
 - 选择与任务相关的作用域约束，同时保留作用域为空的项目级约束
 - 个人记忆仅在任务词命中时进入上下文，最多使用请求 Token 预算的 20%；项目决策、约束按类型保留候选名额。任务摘要默认排除，回顾相关任务或指定任务 ID 时才召回；极小预算可能不足以保留完整记录。
 - 工作台分别展示长期知识、任务摘要及两类待审核候选；“整理并接受”允许明确编辑标题、结论与类型，原候选保留为审核证据。MCP `memory_candidate_accept` 可选传入 `review: { title, content, type }`，原调用仍兼容。
@@ -451,7 +452,7 @@ project_context
 
 客户端配置细节可参考对应官方文档：Codex 的 [MCP](https://developers.openai.com/codex/mcp/) 与 [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/)，以及 Claude Code 的 [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) 文档。
 
-## MCP 工具（49 个，本地 stdio）
+## MCP 工具（51 个，本地 stdio）
 
 - project_backup_remote、project_restore_remote
 - sync_status、sync_push、sync_pull、sync_conflicts、sync_resolve
@@ -465,6 +466,7 @@ project_context
 - `project_doctor`、`project_backup`、`project_backup_encrypted`、`project_export`
 - `project_storage`、`project_cleanup`、`project_maintenance_configure`
 - `memory_remember`、`memory_list`、`memory_update_status`
+- `memory_graph`、`memory_graph_node`
 - `memory_candidates`、`memory_candidate_accept`、`memory_candidate_reject`
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`
 - `task_start`、`task_checkpoint`、`task_list`、`task_query`、`task_history`、`task_complete`、`task_cancel`

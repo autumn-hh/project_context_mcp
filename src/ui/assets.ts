@@ -1,5 +1,6 @@
 import { TEAM_EDITOR_HTML, TEAM_WORKSPACE_CSS, TEAM_WORKSPACE_JS } from "./team-workspace-assets.js";
 import { REMOTE_BACKUP_HTML, TEAM_WORKSPACE_HTML, REMOTE_BACKUP_CSS, REMOTE_BACKUP_JS } from "./remote-backup-assets.js";
+import { MEMORY_GRAPH_HTML, MEMORY_GRAPH_CSS, MEMORY_GRAPH_JS } from "./memory-graph-assets.js";
 
 export const UI_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
@@ -52,10 +53,12 @@ export const UI_HTML = String.raw`<!doctype html>
         <nav class="portrait-mode-tabs" aria-label="项目画像模式">
           <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
           <button class="portrait-mode" data-portrait-mode="graph" aria-pressed="false" type="button">代码关系</button>
+          <button class="portrait-mode" data-portrait-mode="memory-graph" aria-pressed="false" type="button">记忆关系</button>
           <button class="portrait-mode" data-portrait-mode="maintenance" aria-pressed="false" type="button">索引与存储</button>
           <button class="portrait-mode" data-portrait-mode="backup" aria-pressed="false" type="button">备份与同步</button>
         </nav>
         ${REMOTE_BACKUP_HTML}
+        ${MEMORY_GRAPH_HTML}
         <div id="portrait-overview" class="portrait-grid">
           <div class="portrait-column">
           <section class="portrait-section"><header><div><span class="panel-label">ACTIVE WORK</span><h2>进行中的任务</h2></div><button id="portrait-all-tasks" class="secondary-button" type="button">查看全部任务</button></header><div id="portrait-tasks" class="portrait-list"></div></section>
@@ -934,6 +937,7 @@ dialog p { color: var(--muted); line-height: 1.5; }
 }
 ${REMOTE_BACKUP_CSS}
 ${TEAM_WORKSPACE_CSS}
+${MEMORY_GRAPH_CSS}
 `;
 
 export const UI_JS = String.raw`(function () {
@@ -1006,6 +1010,7 @@ export const UI_JS = String.raw`(function () {
 
   function bindEvents() {
     bindRemoteBackupEvents();
+    bindMemoryGraphEvents();
     els["candidate-cancel"].addEventListener("click", function () { els["candidate-dialog"].close(); });
     els["candidate-form"].addEventListener("submit", saveReviewedCandidate);
     document.querySelectorAll(".tab").forEach(function (button) {
@@ -1775,6 +1780,7 @@ export const UI_JS = String.raw`(function () {
       state.portrait = portrait;
       state.portraitProjectId = projectId;
       if (els["portrait-content"].dataset.mode === "backup" && !silent) loadRemoteBackups();
+      if (els["portrait-content"].dataset.mode === "memory-graph" && !silent) showMemoryGraph(force);
       if (state.ignoreProjectId !== projectId) await loadIgnoreRules(projectId, silent);
       if (maintenanceProjectId !== projectId || (!silent && force)) await loadMaintenance(projectId);
     } catch (error) {
@@ -2918,12 +2924,14 @@ export const UI_JS = String.raw`(function () {
   }
 
   function setPortraitMode(mode) {
-    if (["overview", "graph", "maintenance", "backup"].indexOf(mode) < 0) return;
+    if (["overview", "graph", "memory-graph", "maintenance", "backup"].indexOf(mode) < 0) return;
     els["portrait-content"].dataset.mode = mode;
     els["portrait-overview"].hidden = mode !== "overview";
     els["portrait-graph"].hidden = mode !== "graph";
     els["portrait-maintenance"].hidden = mode !== "maintenance";
     document.getElementById("portrait-backup").hidden = mode !== "backup";
+    document.getElementById("portrait-memory-graph").hidden = mode !== "memory-graph";
+    if (mode === "memory-graph") showMemoryGraph(false);
     if (mode === "backup") loadRemoteBackups();
     document.querySelectorAll(".portrait-mode").forEach(function (button) {
       button.classList.toggle("active", button.dataset.portraitMode === mode);
@@ -3183,6 +3191,7 @@ export const UI_JS = String.raw`(function () {
   }
 
   function resetGraph() {
+    resetMemoryGraph();
     if (state.graphCy) state.graphCy.destroy();
     state.graphCy = null; state.graphProjectId = null; state.graphRoot = null;
     state.graphScope = "files"; state.graphSelectedId = null;
@@ -3198,6 +3207,7 @@ export const UI_JS = String.raw`(function () {
 
   ${REMOTE_BACKUP_JS}
   ${TEAM_WORKSPACE_JS}
+  ${MEMORY_GRAPH_JS}
 
   function switchView(view) {
     ["portrait", "task", "rules", "context", "team"].forEach(function (name) { document.getElementById(name + "-view").hidden = name !== view; });
@@ -3206,6 +3216,7 @@ export const UI_JS = String.raw`(function () {
       if (!state.deferredRefresh) state.deferredRefresh = refresh(false).finally(function () { state.deferredRefresh = null; });
       state.deferredRefresh.then(function () { if (view === "portrait" && !document.getElementById("portrait-view").hidden) loadPortrait(false); }).catch(function (error) { toast(error.message || String(error), true); });
     } else if (view === "portrait") loadPortrait(false);
+    if (view === "portrait" && els["portrait-content"].dataset.mode === "memory-graph") showMemoryGraph(false);
     if (view === "task") loadTaskView(false, false);
     if (view === "team") loadConnectionStatus().then(loadTeamShares);
   }

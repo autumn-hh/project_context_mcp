@@ -6,12 +6,15 @@ import { searchProject, type SearchHit } from "../search/search-service.js";
 import type { UserMemoryRecord } from "../memory/user-memory-service.js";
 import { taskOverlap, taskTokens as tokens } from "../shared/task-relevance.js";
 import { recallMemories } from "../memory/recall-service.js";
+import { relatedGraphMemories, type GraphMemoryRecall } from "../memory/graph-service.js";
 
 type SupportingMemory = Pick<MemoryRecord, "id" | "sourceKind" | "sourceRef" | "confidence">;
+type GraphRecallEvidence = Omit<GraphMemoryRecall, "memory">;
 
 export interface ContextMemory extends MemoryRecord {
   /** Other active records with exactly the same title, type, conclusion, reason and scope. */
   supportingMemories?: SupportingMemory[];
+  graphRecall?: GraphRecallEvidence;
 }
 
 export interface ContextSearchHit extends SearchHit {
@@ -20,6 +23,7 @@ export interface ContextSearchHit extends SearchHit {
   sourceKind?: string;
   confidence?: number;
   supportingMemories?: SupportingMemory[];
+  graphRecall?: GraphRecallEvidence;
 }
 
 export interface ProjectContext {
@@ -87,7 +91,19 @@ export function buildProjectContext(
       memoryScores.set(id, 1);
     }
   }
-  const memories = memoryCandidates(db, relevantMemoryIds, recallSummaries);
+  const graphEvidence = new Map<string, GraphRecallEvidence>();
+  const seeds = [...memoryScores.keys()].filter((id) => getMemory(db, id).type !== "task-summary").slice(0, 5);
+  const graphMatches = relatedGraphMemories(db, seeds, 4, (memory) => (
+    !relevantMemoryIds.has(memory.id) && accepts(memory)
+  ));
+  for (const { memory, fromMemoryId, viaNodeId, relation } of graphMatches) {
+    relevantMemoryIds.add(memory.id);
+    memoryScores.set(memory.id, (memoryScores.get(fromMemoryId) ?? 1) * 0.35);
+    graphEvidence.set(memory.id, { fromMemoryId, viaNodeId, relation });
+  }
+  const memories: ContextMemory[] = memoryCandidates(db, relevantMemoryIds, recallSummaries).map((memory) => ({
+    ...memory, ...(graphEvidence.has(memory.id) ? { graphRecall: graphEvidence.get(memory.id)! } : {}),
+  }));
   const taskTokens = tokens(task);
   const rankMemory = (memory: MemoryRecord): number => {
     if (!accepts(memory)) return Number.NEGATIVE_INFINITY;
@@ -141,6 +157,7 @@ export function buildProjectContext(
       status: memory.status, memoryType: memory.type, scope: memory.scope,
       sourceKind: memory.sourceKind, confidence: memory.confidence,
       ...(memory.supportingMemories ? { supportingMemories: memory.supportingMemories } : {}),
+      ...(memory.graphRecall ? { graphRecall: memory.graphRecall } : {}),
     })),
     ...codeHits,
   ].sort((a, b) => b.score - a.score).slice(0, SEARCH_HIT_CANDIDATE_LIMIT);
@@ -331,7 +348,7 @@ function pathMatchesScope(path: string, scope: string): boolean {
     || target.endsWith(`/${source}`);
 }
 
-function groupIdenticalMemories(memories: MemoryRecord[]): ContextMemory[] {
+function groupIdenticalMemories(memories: ContextMemory[]): ContextMemory[] {
   const groups = new Map<string, ContextMemory>();
   for (const memory of memories) {
     // Deliberately exact: do not normalize case, punctuation, numbers, negation,

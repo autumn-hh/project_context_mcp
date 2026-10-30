@@ -57,7 +57,7 @@ describe("Project Context MCP", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(49);
+      expect(tools.tools).toHaveLength(51);
       expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["project_backup_remote", "project_restore_remote"]));
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
@@ -218,7 +218,7 @@ describe("Project Context MCP", () => {
     const client = new Client({ name: "stdio-test", version: "1.0.0" });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(49);
+      expect((await client.listTools()).tools).toHaveLength(51);
       const status = await client.callTool({ name: "storage_status", arguments: {} });
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {
@@ -250,6 +250,14 @@ describe("Project Context MCP", () => {
       expect([decisions[0]!.id, ...supports.map((item) => item.id)].sort()).toEqual(ids.sort());
       expect((context.relevant as Array<Record<string, unknown>>).some((item) => ids.includes(item.id as string))).toBe(false);
       expect((await call(client, "memory_list", { projectId }) as unknown[])).toHaveLength(2);
+      const graph = object(await call(client, "memory_graph", { projectId, query: "备份保留期", depth: 2 }));
+      const nodes = graph.nodes as Array<Record<string, unknown>>;
+      expect(nodes.filter((node) => node.nodeType === "memory")).toHaveLength(2);
+      expect((graph.edges as Array<Record<string, unknown>>).every((edge) => edge.relationType === "SOURCED_FROM")).toBe(true);
+      expect(object(await call(client, "memory_graph_node", { projectId, nodeId: `memory:${ids[0]}` })))
+        .toMatchObject({ nodeType: "memory", memory: { id: ids[0], title: "数据库备份保留期" } });
+      expect((await client.callTool({ name: "memory_graph", arguments: { projectId, depth: 3 } })).isError).toBe(true);
+      expect((await client.callTool({ name: "memory_graph_node", arguments: { projectId, nodeId: "memory:missing" } })).isError).toBe(true);
     } finally {
       await client.close();
       await server.close();
