@@ -5,16 +5,32 @@ import { listTasks, type TaskRecord } from "../tasks/task-service.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import type { UserMemoryRecord } from "../memory/user-memory-service.js";
 import { taskOverlap, taskTokens as tokens } from "../shared/task-relevance.js";
+import { recallMemories } from "../memory/recall-service.js";
+
+type SupportingMemory = Pick<MemoryRecord, "id" | "sourceKind" | "sourceRef" | "confidence">;
+
+export interface ContextMemory extends MemoryRecord {
+  /** Other active records with exactly the same title, type, conclusion, reason and scope. */
+  supportingMemories?: SupportingMemory[];
+}
+
+export interface ContextSearchHit extends SearchHit {
+  memoryType?: MemoryRecord["type"];
+  scope?: string[];
+  sourceKind?: string;
+  confidence?: number;
+  supportingMemories?: SupportingMemory[];
+}
 
 export interface ProjectContext {
   project: Pick<ProjectRecord, "id" | "name" | "rootPath" | "remoteUrl">;
   task: string;
-  constraints: MemoryRecord[];
-  decisions: MemoryRecord[];
-  lessons: MemoryRecord[];
+  constraints: ContextMemory[];
+  decisions: ContextMemory[];
+  lessons: ContextMemory[];
   userMemories: UserMemoryRecord[];
   activeTasks: TaskRecord[];
-  relevant: SearchHit[];
+  relevant: ContextSearchHit[];
   codeRelations: Array<{
     from: string;
     to: string;
@@ -44,39 +60,58 @@ export function buildProjectContext(
   budgetTokens = DEFAULT_CONTEXT_BUDGET_TOKENS,
   userMemories: UserMemoryRecord[] = [],
 ): ProjectContext {
-  // Search first so older but task-relevant memories are not hidden by a recent,
-  // unrelated history page. The bounded recent list only fills project-wide gaps.
+  // Search code and knowledge independently so code hits cannot consume the
+  // memory quota. Only indexed sources can establish a scope, never a memory itself.
   const recallSummaries = /task_[a-z0-9]+|(?:回顾|复盘|恢复|继续).{0,30}(?:任务|工作)|(?:review|recap|resume|continue)\s+(?:the\s+)?(?:task|work)/iu.test(task);
-  const relevant = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT, undefined, {
+  const searched = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT, undefined, {
     excludeTaskSummaries: !recallSummaries,
-  }).filter((hit) => {
-    if (hit.kind !== "memory" || !recallSummaries) return true;
-    const memory = getMemory(db, hit.id);
-    return memory.type !== "task-summary" || summaryMatches(memory, task);
   });
-  const relevantMemoryIds = new Set(relevant.filter((hit) => hit.kind === "memory").map((hit) => hit.id));
+  const codeHits = searched.filter((hit) => hit.kind !== "memory");
+  const accepts = (memory: MemoryRecord): boolean => memory.type === "task-summary"
+    ? recallSummaries && summaryMatches(memory, task)
+    : scopeMatches(memory, task, codeHits);
+  const recalled = recallMemories(db, task, { includeTaskSummaries: recallSummaries, accepts });
+  const memoryScores = new Map(recalled.map(({ memory, score }) => [memory.id, score]));
+  // Retain the existing mixed search's fuzzy Latin matches as a fallback.
+  for (const hit of searched.filter((item) => item.kind === "memory")) {
+    if (!memoryScores.has(hit.id) && accepts(getMemory(db, hit.id))) memoryScores.set(hit.id, hit.score * 0.5);
+  }
+  const relevantMemoryIds = new Set(memoryScores.keys());
   for (const taskId of task.match(/task_[a-z0-9]+/giu) ?? []) {
     const ids = db.prepare(`
       SELECT id FROM memories WHERE status = 'active' AND type = 'task-summary' AND source_ref = ?
       ORDER BY updated_at DESC LIMIT 4
     `).all(`task:${taskId}`) as Array<{ id: string }>;
-    for (const { id } of ids) relevantMemoryIds.add(id);
+    for (const { id } of ids) {
+      relevantMemoryIds.add(id);
+      memoryScores.set(id, 1);
+    }
   }
   const memories = memoryCandidates(db, relevantMemoryIds, recallSummaries);
   const taskTokens = tokens(task);
   const rankMemory = (memory: MemoryRecord): number => {
+    if (!accepts(memory)) return Number.NEGATIVE_INFINITY;
     if (memory.type === "task-summary") {
       return recallSummaries && summaryMatches(memory, task) ? 100 : Number.NEGATIVE_INFINITY;
     }
-    if (!scopeMatches(memory, task, relevant)) return Number.NEGATIVE_INFINITY;
-    return (relevantMemoryIds.has(memory.id) ? 100 : 0)
+    return (memoryScores.get(memory.id) ?? 0) * 100 + (memory.scope.length ? 1 : 0)
       + taskOverlap(taskTokens, `${memory.title} ${memory.content} ${memory.scope.join(" ")}`);
   };
-  const ranked = [...memories].sort((a, b) => rankMemory(b) - rankMemory(a));
+  const ranked = groupIdenticalMemories([...memories].filter(accepts).sort((a, b) => (
+    rankMemory(b) - rankMemory(a) || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id)
+  )));
   const staleCount = count(db, "SELECT COUNT(*) AS count FROM memories WHERE status IN ('stale', 'conflicted')");
   const failedIndexCount = count(db, "SELECT COUNT(*) AS count FROM index_runs WHERE status = 'failed'");
   const warnings: string[] = [];
   if (staleCount > 0) warnings.push(`${staleCount} memories are stale or conflicted and require review.`);
+  if (staleCount > 0) {
+    const review = recallMemories(db, task, {
+      limit: 3, needsReview: true, includeTaskSummaries: recallSummaries, accepts,
+    });
+    if (review.length) warnings.push(`Task-related memories excluded pending review: ${
+      review.map(({ memory }) => `${memory.id} (${memory.status})`).join(", ")
+    }.`);
+  }
   if (failedIndexCount > 0) warnings.push(`${failedIndexCount} index runs failed; project search may be incomplete.`);
 
   const context: ProjectContext = {
@@ -93,11 +128,22 @@ export function buildProjectContext(
     ).slice(0, 10),
     userMemories: rankUserMemories(userMemories, task).slice(0, 50),
     activeTasks: rankTasks(listTasks(db, "in_progress", TASK_CANDIDATE_LIMIT), taskTokens).slice(0, TASK_CONTEXT_LIMIT),
-    relevant,
-    codeRelations: relatedCode(db, relevant),
+    relevant: [],
+    codeRelations: relatedCode(db, codeHits),
     warnings,
     budget: { requestedTokens: budgetTokens, usedTokens: 0, truncated: false },
   };
+  const selectedIds = new Set([...context.constraints, ...context.decisions, ...context.lessons].map((item) => item.id));
+  context.relevant = [
+    ...ranked.filter((memory) => rankMemory(memory) > 0 && !selectedIds.has(memory.id)).map((memory): ContextSearchHit => ({
+      kind: "memory", id: memory.id, title: memory.title, content: memory.content,
+      source: memory.sourceRef, startLine: null, score: memoryScores.get(memory.id) ?? 0,
+      status: memory.status, memoryType: memory.type, scope: memory.scope,
+      sourceKind: memory.sourceKind, confidence: memory.confidence,
+      ...(memory.supportingMemories ? { supportingMemories: memory.supportingMemories } : {}),
+    })),
+    ...codeHits,
+  ].sort((a, b) => b.score - a.score).slice(0, SEARCH_HIT_CANDIDATE_LIMIT);
   return fitBudget(context);
 }
 
@@ -117,6 +163,15 @@ function fitBudget(context: ProjectContext): ProjectContext {
   copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
   if (copy.budget.usedTokens <= copy.budget.requestedTokens) return copy;
   copy.budget.truncated = true;
+  // Keep the representative's source intact; extra duplicate provenance is
+  // optional under a tight budget, just like other omitted context records.
+  for (const item of [...copy.constraints, ...copy.decisions, ...copy.lessons, ...copy.relevant]) {
+    while (copy.budget.usedTokens > copy.budget.requestedTokens && item.supportingMemories?.length) {
+      item.supportingMemories.pop();
+      if (!item.supportingMemories.length) delete item.supportingMemories;
+      copy.budget.usedTokens = estimateTokens(JSON.stringify(copy));
+    }
+  }
   const groups = [
     { items: copy.activeTasks, reserve: 0 },
     { items: copy.userMemories, reserve: 0 },
@@ -241,10 +296,16 @@ function scopeMatches(memory: MemoryRecord, task: string, relevant: SearchHit[])
   if (memory.scope.length === 0) return true;
   const normalizedTask = normalizeScopeText(task);
   const taskTokens = tokens(task);
+  const explicitPaths = normalizedTask.match(/(?:[a-z]:)?(?:[\p{L}\p{N}_@.$~+-]+\/)+[\p{L}\p{N}_@.$~+-]+/gu) ?? [];
   return memory.scope.some((scope) => {
     const normalizedScope = normalizeScopeText(scope);
     if (!normalizedScope) return false;
-    if (normalizedTask.includes(normalizedScope)) return true;
+    // An explicit file/directory target takes precedence over fuzzy word matches
+    // and incidental search hits. "src/storagex" is not inside "src/storage".
+    if (normalizedScope.includes("/") && explicitPaths.length) {
+      return explicitPaths.some((path) => pathMatchesScope(path, normalizedScope));
+    }
+    if (!normalizedScope.includes("/") && taskTokens.includes(normalizedScope)) return true;
     const scopeTokens = normalizedScope.split(/[\\/._-]+/u).filter((token) => (
       token.length >= 3 && !SCOPE_STOP_WORDS.has(token)
     ));
@@ -254,13 +315,39 @@ function scopeMatches(memory: MemoryRecord, task: string, relevant: SearchHit[])
       || scopeToken.startsWith(taskToken)
     )))) return true;
     return relevant.some((hit) => {
-      if (!hit.source) return false;
+      if (hit.kind === "memory" || !hit.source) return false;
       const source = normalizeScopeText(hit.source);
-      return source === normalizedScope
-        || source.endsWith(`/${normalizedScope}`)
-        || normalizedScope.endsWith(`/${source}`);
+      return pathMatchesScope(source, normalizedScope);
     });
   });
+}
+
+function pathMatchesScope(path: string, scope: string): boolean {
+  const source = path.replace(/^\.\//u, "").replace(/\/+$/u, "");
+  const target = scope.replace(/^\.\//u, "").replace(/\/+$/u, "");
+  if (!source || !target) return false;
+  return source === target || source.startsWith(`${target}/`)
+    || source.endsWith(`/${target}`) || source.includes(`/${target}/`)
+    || target.endsWith(`/${source}`);
+}
+
+function groupIdenticalMemories(memories: MemoryRecord[]): ContextMemory[] {
+  const groups = new Map<string, ContextMemory>();
+  for (const memory of memories) {
+    // Deliberately exact: do not normalize case, punctuation, numbers, negation,
+    // code whitespace or reasons. Different scopes and types remain distinct.
+    // Task summaries describe separate executions and must not be consolidated.
+    const key = memory.type === "task-summary" ? memory.id
+      : JSON.stringify([memory.type, memory.title, memory.content, memory.reason, [...new Set(memory.scope)].sort()]);
+    const existing = groups.get(key);
+    if (!existing) groups.set(key, { ...memory });
+    else {
+      (existing.supportingMemories ??= []).push({
+        id: memory.id, sourceKind: memory.sourceKind, sourceRef: memory.sourceRef, confidence: memory.confidence,
+      });
+    }
+  }
+  return [...groups.values()];
 }
 
 function normalizeScopeText(value: string): string {

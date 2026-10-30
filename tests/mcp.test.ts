@@ -226,6 +226,36 @@ describe("Project Context MCP", () => {
     }
   });
 
+  it("returns consolidated sourced knowledge through MCP while retaining original memories", async () => {
+    const server = createMcpServer();
+    const client = new Client({ name: "memory-recall-test", version: "1.0.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const projectId = object(await call(client, "project_open", { root: projectRoot })).id as string;
+      const ids: string[] = [];
+      for (const sourceRef of ["meeting:one", "meeting:two"]) {
+        const record = await call(client, "memory_remember", {
+          projectId, type: "decision", title: "数据库备份保留期",
+          content: "数据库备份保存七天，每天创建一个快照。", sourceKind: "user", sourceRef,
+        });
+        ids.push(object(record).id as string);
+      }
+      const context = object(await call(client, "project_context", {
+        projectId, task: "请帮我查一下我们之前关于数据库备份保存多久的决定是什么",
+      }));
+      const decisions = context.decisions as Array<Record<string, unknown>>;
+      expect(decisions).toHaveLength(1);
+      const supports = decisions[0]!.supportingMemories as Array<Record<string, unknown>>;
+      expect([decisions[0]!.id, ...supports.map((item) => item.id)].sort()).toEqual(ids.sort());
+      expect((context.relevant as Array<Record<string, unknown>>).some((item) => ids.includes(item.id as string))).toBe(false);
+      expect((await call(client, "memory_list", { projectId }) as unknown[])).toHaveLength(2);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it("bounds implicit context results and avoids duplicating large text payloads", async () => {
     const server = createMcpServer();
     const client = new Client({ name: "context-size-test", version: "1.0.0" });
