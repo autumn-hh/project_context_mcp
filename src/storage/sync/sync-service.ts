@@ -62,6 +62,9 @@ export async function transferSync(app: ProjectContextApp, projectId: string, di
   try {
     db = app.projects.projectDatabase(projectId);
     const config = configuration(db);
+    const identity = syncStatus(db);
+    if (!identity.configured) throw new ProjectContextError("SYNC_NOT_CONFIGURED", "Missing sync identity.");
+    initializeSync(db, identity.syncId, identity.deviceId);
     const bridge = (apply = false) => {
       const registry = openDatabase(join(app.storageRoot, "registry.db"));
       try {

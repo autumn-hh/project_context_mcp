@@ -8,6 +8,7 @@ import { remoteFixture } from "./helpers/remote-fixture.js";
 import { openDatabase } from "../src/storage/database.js";
 import { applyRuleProjection, drainRuleOutbox } from "../src/storage/sync/rule-bridge.js";
 import { receiveEvents, outgoingEvents } from "../src/storage/sync/event-store.js";
+import { knowledgeSnapshot, proposeMemoryKnowledge, reviewMemoryKnowledge } from "../src/memory/knowledge-service.js";
 
 describe("two-device encrypted synchronization", () => {
   let root: string; let a: ProjectContextApp; let b: ProjectContextApp; let pa: string; let pb: string;
@@ -55,6 +56,36 @@ describe("two-device encrypted synchronization", () => {
     expect(a.syncStatus(pa)).toMatchObject({ pending: 2 }); expect(a.memories(pa)).toHaveLength(1);
     process.env.SYNC_FIXTURE_SECRET = "fixture-secret"; await a.syncPush(pa); await b.syncPull(pb);
     expect(b.memories(pb)[0]!.title).toBe("离线");
+  });
+
+  it("upgrades existing synchronization on transfer and encrypts complete reviewed knowledge", async () => {
+    const memory = a.remember(pa, { type: "decision", title: "Cache policy", content: "Cache API uses Redis.", sourceKind: "user" });
+    await a.syncPush(pa); await b.syncPull(pb);
+    const dbA = a.projects.projectDatabase(pa);
+    try {
+      // Simulate an existing replica whose schema was migrated while its sync
+      // triggers still predate the knowledge table. No configureSync retry.
+      for (const operation of ["insert", "update", "delete"]) dbA.exec(`DROP TRIGGER sync_memory_knowledge_${operation}`);
+      const annotation = proposeMemoryKnowledge(dbA, memory.id, {
+        entities: [
+          { key: "api", name: "Cache API", type: "service", aliases: ["KNOWLEDGE_ALIAS_SENTINEL"], evidence: memory.content },
+          { key: "redis", name: "Redis", type: "storage", aliases: [], evidence: memory.content },
+        ],
+        relations: [{ from: "api", to: "redis", type: "uses", evidence: memory.content }],
+      });
+      reviewMemoryKnowledge(dbA, { id: annotation.id, action: "accept", expectedVersion: annotation.version });
+      expect(outgoingEvents(dbA)).toEqual([]);
+    } finally { dbA.close(); }
+    expect((await a.syncPush(pa)).events).toBe(1);
+    expect([...remote.objects.values()].some((object) => object.bytes.includes(Buffer.from("KNOWLEDGE_ALIAS_SENTINEL")))).toBe(false);
+    expect((await b.syncPull(pb)).events).toBe(1);
+    const dbB = b.projects.projectDatabase(pb);
+    try {
+      const snapshot = knowledgeSnapshot(dbB);
+      expect(snapshot.relations).toHaveLength(1);
+      expect(snapshot.entities.flatMap((entity) => entity.aliases)).toContain("KNOWLEDGE_ALIAS_SENTINEL");
+    } finally { dbB.close(); }
+    expect((await a.syncPush(pa)).events).toBe(0);
   });
 
   it("syncs project rule revisions and excludes personal rules without crossing local project identities", async () => {

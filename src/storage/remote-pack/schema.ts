@@ -3,11 +3,12 @@ import { memoryStatusSchema, memoryTypeSchema } from "../../memory/memory-servic
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../../memory/user-memory-service.js";
 import { PROJECT_SCHEMA_VERSION } from "../schema.js";
 import { ProjectContextError } from "../../shared/errors.js";
+import { knowledgeRowSchema } from "../../memory/knowledge-schema.js";
 
 export const PACK_MAGIC = Buffer.from("PCMPACK1\n", "ascii");
 export const PACK_LIMITS = { manifest: 1024 * 1024, shard: 16 * 1024 * 1024, row: 8 * 1024 * 1024,
   total: 1024 * 1024 * 1024, shards: 16384 } as const;
-export const TABLES = ["memories", "memory_sources", "memory_candidates", "tasks",
+export const TABLES = ["memories", "memory_knowledge", "memory_sources", "memory_candidates", "tasks",
   "task_events", "task_checkpoint_requests", "user_memories"] as const;
 export type PackTable = typeof TABLES[number];
 const text = z.string().max(PACK_LIMITS.row);
@@ -31,6 +32,7 @@ const memoryFields = { id, type: memoryTypeSchema, title: text, content: text, r
 export const rowSchemas = {
   memories: z.object({ ...memoryFields, status: memoryStatusSchema, scope_json: json(z.array(text)),
     source_ref: nullableText, supersedes_id: id.nullable() }).strict(),
+  memory_knowledge: knowledgeRowSchema,
   memory_sources: z.object({ id, memory_id: id, source_kind: text, source_ref: nullableText,
     source_id: z.null(), source_hash: nullableText, start_line: z.number().int().positive().nullable(),
     end_line: z.number().int().positive().nullable(), git_commit: nullableText, created_at: timestamp,
@@ -51,13 +53,17 @@ export const rowSchemas = {
 
 export const manifestSchema = z.object({
   format: z.literal("project-context-knowledge-pack"), version: z.literal(1), kind: z.literal("snapshot"),
-  schemaVersion: z.literal(PROJECT_SCHEMA_VERSION), createdAt: timestamp,
+  schemaVersion: z.union([z.literal(9), z.literal(PROJECT_SCHEMA_VERSION)]), createdAt: timestamp,
   sourceProject: z.object({ id, name: text }).strict(),
   policy: z.object({ codeIndex: z.literal(false), sourceExcerpts: z.boolean(),
     userRules: z.literal("explicit-selection"), registrySnapshotAt: timestamp.nullable() }).strict(),
   shards: z.array(z.object({ table: z.enum(TABLES), rows: z.number().int().positive(),
     bytes: z.number().int().positive().max(PACK_LIMITS.shard), sha256: hash }).strict()).max(PACK_LIMITS.shards),
-}).strict();
+}).strict().superRefine((manifest, context) => {
+  if (manifest.schemaVersion < 10 && manifest.shards.some((shard) => shard.table === "memory_knowledge")) {
+    context.addIssue({ code: "custom", message: "Schema 9 packages cannot contain entity knowledge." });
+  }
+});
 export type PackManifest = z.infer<typeof manifestSchema>;
 export type PackRow = Record<string, string | number | null>;
 export function invalidPack(message: string): never {

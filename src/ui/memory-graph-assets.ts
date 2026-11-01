@@ -1,8 +1,10 @@
+import { MEMORY_KNOWLEDGE_HTML, MEMORY_KNOWLEDGE_CSS, MEMORY_KNOWLEDGE_JS } from "./memory-knowledge-assets.js";
+
 export const MEMORY_GRAPH_HTML = String.raw`
 <section id="portrait-memory-graph" class="memory-graph-panel" hidden aria-labelledby="memory-graph-heading">
   <header class="memory-graph-heading"><div><h2 id="memory-graph-heading">记忆关系</h2><p id="memory-graph-description">查看记忆之间的主题线索，需要核对出处时再进入来源追溯。</p></div><span class="memory-graph-local">本机项目</span></header>
   <div class="memory-graph-toolbar">
-    <div class="memory-graph-mode"><label for="memory-graph-view">查看方式</label><select id="memory-graph-view"><option value="knowledge" selected>知识关联</option><option value="evidence">来源追溯</option></select></div>
+    <div class="memory-graph-mode"><label for="memory-graph-view">查看方式</label><select id="memory-graph-view"><option value="knowledge" selected>知识关联</option><option value="evidence">来源追溯</option><option value="entities">实体关系</option></select></div>
     <form id="memory-graph-search-form" class="memory-graph-search" role="search">
       <label class="sr-only" for="memory-graph-query">搜索记忆关键词</label>
       <input id="memory-graph-query" type="search" maxlength="200" placeholder="搜索记忆关键词" autocomplete="off">
@@ -14,9 +16,15 @@ export const MEMORY_GRAPH_HTML = String.raw`
     <fieldset id="memory-graph-relations"><legend>显示关系</legend>
       <label data-memory-view="knowledge"><input type="checkbox" value="CONTENT_RELATED" checked>可能相关</label>
       <label data-memory-view="evidence" hidden><input type="checkbox" value="SOURCED_FROM" checked>来源</label>
-      <label><input type="checkbox" value="SUPERSEDES" checked>替代</label>
+      <label data-memory-view="knowledge evidence"><input type="checkbox" value="SUPERSEDES" checked>替代</label>
       <label data-memory-view="evidence" hidden><input type="checkbox" value="PRODUCED_BY" checked>任务</label>
       <label data-memory-view="evidence" hidden><input type="checkbox" value="APPLIES_TO" checked>适用范围</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="MENTIONS" checked>提及</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="USES" checked>使用</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="PROVIDES" checked>提供</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="STORED_IN" checked>存储于</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="DEPENDS_ON" checked>依赖</label>
+      <label data-memory-view="entities" hidden><input type="checkbox" value="GOVERNED_BY" checked>遵循规则</label>
     </fieldset>
     <label class="memory-graph-history"><input id="memory-graph-history" type="checkbox">显示过期、冲突及已替代记忆</label>
     <label id="memory-graph-summaries-label" hidden><input id="memory-graph-summaries" type="checkbox">包含任务摘要</label>
@@ -40,6 +48,7 @@ export const MEMORY_GRAPH_HTML = String.raw`
     </aside>
   </div>
   <footer class="memory-graph-footer"><span id="memory-graph-status">尚未读取</span><span id="memory-graph-scope">记忆概览</span></footer>
+  ${MEMORY_KNOWLEDGE_HTML}
 </section>
 `;
 
@@ -73,6 +82,7 @@ export const MEMORY_GRAPH_CSS = String.raw`
 .memory-graph-legend .memory-legend-task::before { background:#3d70a1 !important; }
 .memory-graph-legend .memory-legend-source::before { background:#b07825 !important; }
 .memory-graph-legend .memory-legend-scope::before { background:#7b6a98 !important; }
+.memory-graph-legend .memory-legend-entity::before { background:#406f97 !important; }
 .memory-graph-canvas-wrap { position:relative; min-width:0; height:440px; background:#f6f9f7; border-block:1px solid var(--line); }
 #memory-graph-canvas { position:absolute; inset:0; }
 .memory-graph-message { position:absolute; inset:0; z-index:1; display:flex; align-items:center; justify-content:center; padding:24px; text-align:center; color:var(--muted); background:#f6f9f7; }
@@ -131,15 +141,17 @@ export const MEMORY_GRAPH_CSS = String.raw`
   .memory-graph-legend { padding:10px 12px; }
   .memory-graph-canvas-hint { padding-inline:12px; }
 }
+${MEMORY_KNOWLEDGE_CSS}
 `;
 
 export const MEMORY_GRAPH_JS = String.raw`
   var memoryGraphState = { projectId:null, sequence:0, detailSequence:0, controller:null, detailController:null, cy:null, data:null, root:null, depth:1, selectedId:null, loading:false, view:"knowledge" };
-  var memoryRelationLabels = { CONTENT_RELATED:"可能相关", SOURCED_FROM:"来源于", SUPERSEDES:"替代", PRODUCED_BY:"由任务产生", APPLIES_TO:"适用于" };
+  var memoryRelationLabels = { CONTENT_RELATED:"可能相关", SOURCED_FROM:"来源于", SUPERSEDES:"替代", PRODUCED_BY:"由任务产生", APPLIES_TO:"适用于", MENTIONS:"提及", USES:"使用", PROVIDES:"提供", STORED_IN:"存储于", DEPENDS_ON:"依赖", GOVERNED_BY:"遵循规则" };
   function mgEl(id) { return document.getElementById("memory-graph-" + id); }
   function memoryGraphBase(projectId) { return "/api/projects/" + encodeURIComponent(projectId) + "/memory-graph"; }
   function memoryGraphIsCurrent(projectId, sequence) { return memoryGraphState.projectId === projectId && els["portrait-project"].value === projectId && memoryGraphState.sequence === sequence; }
   function bindMemoryGraphEvents() {
+    bindMemoryKnowledgeEvents();
     mgEl("view").addEventListener("change", function() { setMemoryGraphView(mgEl("view").value,null); });
     mgEl("search-form").addEventListener("submit", function(event) { event.preventDefault(); loadMemoryGraph(null); });
     mgEl("overview").addEventListener("click", function() { mgEl("query").value=""; loadMemoryGraph(null); });
@@ -161,18 +173,20 @@ export const MEMORY_GRAPH_JS = String.raw`
     return Array.from(mgEl("relations").querySelectorAll("input:checked")).filter(function(input){return !input.parentElement.hidden;}).map(function(input){return input.value;});
   }
   function updateMemoryGraphView() {
-    var evidence=memoryGraphState.view==="evidence";
+    var evidence=memoryGraphState.view==="evidence",entities=memoryGraphState.view==="entities";
     mgEl("view").value=memoryGraphState.view;
-    mgEl("relations").querySelectorAll("[data-memory-view]").forEach(function(label){label.hidden=label.dataset.memoryView!==memoryGraphState.view;});
+    mgEl("relations").querySelectorAll("[data-memory-view]").forEach(function(label){label.hidden=label.dataset.memoryView.split(" ").indexOf(memoryGraphState.view)<0;});
     mgEl("summaries-label").hidden=!evidence;mgEl("summaries").disabled=!evidence;
     if(!evidence)mgEl("summaries").checked=false;
-    mgEl("description").textContent=evidence?"按需核对记忆的来源、任务和演变依据。":"查看记忆之间的主题线索，需要核对出处时再进入来源追溯。";
+    mgEl("history").disabled=entities;mgEl("history").parentElement.hidden=entities;
+    mgEl("description").textContent=entities?"查看经过确认、仍有效的实体与关系；每条连线都能回到记忆原文。":evidence?"按需核对记忆的来源、任务和演变依据。":"查看记忆之间的主题线索，需要核对出处时再进入来源追溯。";
     var legend=mgEl("legend");legend.replaceChildren(element("span","memory-legend-memory","记忆"));
     if(evidence){legend.append(element("span","memory-legend-task","任务"),element("span","memory-legend-source","来源"),element("span","memory-legend-scope","范围"));}
-    legend.append(element("span","",evidence?"箭头表示记录中的关系方向":"虚线表示可能相关 · 箭头表示替代"));
+    if(entities)legend.append(element("span","memory-legend-entity","实体"));
+    legend.append(element("span","",entities?"箭头表示经确认的关系方向":evidence?"箭头表示记录中的关系方向":"虚线表示可能相关 · 箭头表示替代"));
   }
   function setMemoryGraphView(view, root) {
-    memoryGraphState.view=view==="evidence"?"evidence":"knowledge";updateMemoryGraphView();
+    memoryGraphState.view=["evidence","entities"].indexOf(view)>=0?view:"knowledge";updateMemoryGraphView();
     if(memoryGraphState.view==="knowledge" && root && root.indexOf("memory:")!==0)root=null;
     loadMemoryGraph(root||null,1);
   }
@@ -184,6 +198,7 @@ export const MEMORY_GRAPH_JS = String.raw`
     mgEl("trace").hidden=true;mgEl("trace").disabled=true;
   }
   function resetMemoryGraph() {
+    resetMemoryKnowledge();
     memoryGraphState.sequence++; memoryGraphState.detailSequence++;
     if(memoryGraphState.controller) memoryGraphState.controller.abort();
     if(memoryGraphState.detailController) memoryGraphState.detailController.abort();
@@ -203,7 +218,8 @@ export const MEMORY_GRAPH_JS = String.raw`
   }
   function showMemoryGraph(force) {
     var projectId=els["portrait-project"].value;
-    if(projectId!==memoryGraphState.projectId) { resetMemoryGraph(); loadMemoryGraph(null); return; }
+    if(projectId!==memoryGraphState.projectId) { resetMemoryGraph(); loadMemoryGraph(null); showMemoryKnowledge(); return; }
+    showMemoryKnowledge();
     if(force || !memoryGraphState.data) { loadMemoryGraph(memoryGraphState.root,memoryGraphState.depth); return; }
     setTimeout(function(){if(memoryGraphState.cy){memoryGraphState.cy.resize();fitMemoryGraphReadable(memoryGraphState.cy);}},0);
   }
@@ -225,7 +241,7 @@ export const MEMORY_GRAPH_JS = String.raw`
     mgEl("notice").hidden=true; mgEl("fit").disabled=true;
     memoryGraphClearDetail("正在读取关系，请稍候。"); memoryGraphMessage("正在读取记忆关系…");
     mgEl("status").textContent="正在读取"; mgEl("scope").textContent=root?"邻居展开":"记忆概览";
-    var params=new URLSearchParams({limit:"24",view:memoryGraphState.view,includeSummaries:String(memoryGraphState.view==="evidence"&&mgEl("summaries").checked),includeInactive:String(mgEl("history").checked)});
+    var params=new URLSearchParams({limit:"24",view:memoryGraphState.view,includeSummaries:String(memoryGraphState.view==="evidence"&&mgEl("summaries").checked),includeInactive:String(memoryGraphState.view!=="entities"&&mgEl("history").checked)});
     if(root){params.set("node",root);params.set("depth",String(depth||1));}
     else if(mgEl("query").value.trim())params.set("query",mgEl("query").value.trim());
     var relations=memoryGraphRelations();
@@ -246,6 +262,7 @@ export const MEMORY_GRAPH_JS = String.raw`
   }
   function memoryNodeLabel(node) {
     if(node.nodeType==="memory")return typeLabel(node.memoryType||"fact");
+    if(node.nodeType==="entity")return "实体";
     return {task:"任务",source:"来源",scope:"适用范围"}[node.nodeType]||node.nodeType;
   }
   function renderMemoryGraph(data) {
@@ -254,10 +271,10 @@ export const MEMORY_GRAPH_JS = String.raw`
     mgEl("node-count").textContent=String(data.nodes.length);
     var total=data.totals&&Number.isFinite(data.totals.memories)?data.totals.memories:null;
     mgEl("status").textContent="当前展示 "+data.nodes.length+" 个节点 · "+data.edges.length+" 条关系"+(total===null?"":"；本项目可浏览 "+total+" 条记忆"+(memoryGraphState.view==="evidence"&&mgEl("summaries").checked?"（含摘要）":"（不含摘要）"));
-    mgEl("scope").textContent=(memoryGraphState.view==="evidence"?"来源追溯":"知识关联")+" · "+(data.root?"展开 "+memoryGraphState.depth+" 层邻居":mgEl("query").value.trim()?"关键词结果":"概览");
+    mgEl("scope").textContent=(memoryGraphState.view==="entities"?"实体关系":memoryGraphState.view==="evidence"?"来源追溯":"知识关联")+" · "+(data.root?"展开 "+memoryGraphState.depth+" 层邻居":mgEl("query").value.trim()?"关键词结果":"概览");
     mgEl("notice").hidden=!data.truncated;
     mgEl("notice").textContent="当前为局部视图，最多展示 24 个节点。可搜索具体主题，或选中一条记忆展开邻居。";
-    if(!data.nodes.length){memoryGraphMessage("没有符合条件的记忆关系。\n可修改关键词，或开启“显示过期、冲突及已替代记忆”。");return;}
+    if(!data.nodes.length){memoryGraphMessage(memoryGraphState.view==="entities"?"尚无符合条件的已确认实体关系。\n可选择一条记忆整理实体，再在下方“实体与关系”面板审核。":"没有符合条件的记忆关系。\n可修改关键词，或开启“显示过期、冲突及已替代记忆”。");return;}
     if(typeof window.cytoscape!=="function"){memoryGraphMessage("图形引擎未能加载。仍可使用下方节点列表查看内容与关系。");return;}
     memoryGraphMessage("");
     var canvas=mgEl("canvas"),canvasWidth=canvas.clientWidth||900,canvasHeight=canvas.clientHeight||440;
@@ -296,6 +313,7 @@ export const MEMORY_GRAPH_JS = String.raw`
       {selector:"node[nodeType='task']",style:{"shape":"round-rectangle","background-color":"#3d70a1","border-color":"#2d5072"}},
       {selector:"node[nodeType='source']",style:{"shape":"diamond","background-color":"#b07825","border-color":"#80571d"}},
       {selector:"node[nodeType='scope']",style:{"shape":"hexagon","background-color":"#7b6a98","border-color":"#56466e"}},
+      {selector:"node[nodeType='entity']",style:{"shape":"round-rectangle","background-color":"#406f97","border-color":"#2b4d69"}},
       {selector:"node[status='stale'],node[status='conflicted'],node[status='superseded']",style:{"border-style":"dashed","border-width":3,"background-opacity":.45}},
       {selector:"edge",style:{"curve-style":"bezier","line-color":"#99aca2","target-arrow-color":"#99aca2","target-arrow-shape":"triangle","arrow-scale":.8,"width":1.5,"label":"","font-size":9,"text-background-color":"#f6f9f7","text-background-opacity":.95,"text-background-padding":3,"color":"#68776f"}},
       {selector:"edge[relationType='SUPERSEDES']",style:{"line-color":"#9a6a28","target-arrow-color":"#9a6a28","line-style":"dashed"}},
@@ -368,6 +386,11 @@ export const MEMORY_GRAPH_JS = String.raw`
       memoryGraphSection("记忆内容",memory.content);
       if(memory.reason)memoryGraphSection("记录理由",memory.reason);
       body.append(memoryGraphFacts([["适用范围",memory.scope],["来源类型",memorySourceKindLabel(memory.sourceKind)],["来源引用",memory.sourceRef],["置信度",memory.confidence],["更新时间",formatDate(memory.updatedAt)]]));
+      var capturedProject=memoryGraphState.projectId;
+      var organize=mkButton("整理实体与关系",function(){if(els["portrait-project"].value===capturedProject)openMemoryKnowledgeEditor(detail,null,capturedProject);});
+      organize.disabled=detail.truncated||memory.status!=="active"||memory.type==="task-summary";body.append(organize);
+      if(detail.truncated)body.append(element("p","memory-graph-muted","原文超过网页详情上限，暂不能在这里整理。可通过 MCP 读取完整记忆后提交实体与关系候选。"));
+      else if(memory.status!=="active"||memory.type==="task-summary")body.append(element("p","memory-graph-muted","仅整理活跃的长期记忆，历史记忆和任务摘要不能新增实体关系。"));
     }
     if(task){
       memoryGraphSection("任务目标",task.goal);
@@ -377,6 +400,13 @@ export const MEMORY_GRAPH_JS = String.raw`
       body.append(memoryGraphFacts([["任务状态",statusLabel(task.status)],["更新时间",formatDate(task.updatedAt)]]));
     }
     if(source)renderMemoryGraphSource(source);
+    if(detail.entity){
+      var entity=detail.entity;
+      mgEl("detail-title").textContent=entity.name;
+      body.append(memoryGraphFacts([["实体类型",mkTypeLabel(entity.type)],["别名",entity.aliases||[]]]));
+      memoryGraphSection("确认依据","实体来自已确认且仍有效的整理记录，可查看关联记忆核对原文。");
+      (entity.memoryIds||[]).forEach(function(memoryId){body.append(mkButton("查看记忆 "+memoryId,function(){mkShowMemory(memoryId,memoryGraphState.projectId);}));});
+    }
     if(detail.nodeType==="scope"){
       memoryGraphSection("适用范围",detail.scope||detail.label);
       body.append(element("p","memory-graph-muted","范围连线表示记忆记录声明的适用位置，不表示两条记忆之间存在事实关联。"));
@@ -434,6 +464,9 @@ export const MEMORY_GRAPH_JS = String.raw`
       if(edge.excerpts){memoryGraphSection("记忆一 · 原文线索",edge.excerpts.source);memoryGraphSection("记忆二 · 原文线索",edge.excerpts.target);}
     }
     if(!related)memoryGraphSection("记录依据",edge.evidence);
+    if(edge.annotationId)body.append(memoryGraphFacts([["整理记录",edge.annotationId]]));
+    if(edge.memoryId){var sourceProject=memoryGraphState.projectId;body.append(mkButton("查看关系来源记忆",function(){mkShowMemory(edge.memoryId,sourceProject);}));}
     memoryGraphRevealDetail();
   }
+  ${MEMORY_KNOWLEDGE_JS}
 `;

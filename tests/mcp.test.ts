@@ -57,7 +57,7 @@ describe("Project Context MCP", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(51);
+      expect(tools.tools).toHaveLength(52);
       expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["project_backup_remote", "project_restore_remote"]));
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
@@ -218,7 +218,7 @@ describe("Project Context MCP", () => {
     const client = new Client({ name: "stdio-test", version: "1.0.0" });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(51);
+      expect((await client.listTools()).tools).toHaveLength(52);
       const status = await client.callTool({ name: "storage_status", arguments: {} });
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {

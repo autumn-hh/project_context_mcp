@@ -8,6 +8,7 @@ import { taskOverlap, taskTokens as tokens } from "../shared/task-relevance.js";
 import { recallMemories } from "../memory/recall-service.js";
 import { relatedGraphMemories, type GraphMemoryRecall } from "../memory/graph-service.js";
 import { contentMatchesTask, findContentRelations } from "../memory/content-relations.js";
+import { recallEntityMemories, type EntityRecallEvidence } from "../memory/knowledge-recall.js";
 
 type SupportingMemory = Pick<MemoryRecord, "id" | "sourceKind" | "sourceRef" | "confidence">;
 type GraphRecallEvidence = Omit<GraphMemoryRecall, "memory"> | {
@@ -23,6 +24,7 @@ export interface ContextMemory extends MemoryRecord {
   /** Other active records with exactly the same title, type, conclusion, reason and scope. */
   supportingMemories?: SupportingMemory[];
   graphRecall?: GraphRecallEvidence;
+  entityRecall?: EntityRecallEvidence;
 }
 
 export interface ContextSearchHit extends SearchHit {
@@ -32,6 +34,7 @@ export interface ContextSearchHit extends SearchHit {
   confidence?: number;
   supportingMemories?: SupportingMemory[];
   graphRecall?: GraphRecallEvidence;
+  entityRecall?: EntityRecallEvidence;
 }
 
 export interface ProjectContext {
@@ -99,9 +102,17 @@ export function buildProjectContext(
       memoryScores.set(id, 1);
     }
   }
+  const entityMatches = recallEntityMemories(db, task, (memory) => !relevantMemoryIds.has(memory.id) && accepts(memory));
+  const entityEvidence = new Map<string, EntityRecallEvidence>();
+  for (const { memory, evidence } of entityMatches.items) {
+    relevantMemoryIds.add(memory.id);
+    memoryScores.set(memory.id, 0.45);
+    entityEvidence.set(memory.id, evidence);
+  }
+  const graphBudget = 4 - entityEvidence.size;
   const graphEvidence = new Map<string, GraphRecallEvidence>();
   const seeds = [...memoryScores.keys()].filter((id) => getMemory(db, id).type !== "task-summary").slice(0, 5);
-  const graphMatches = relatedGraphMemories(db, seeds, 4, (memory) => (
+  const graphMatches = relatedGraphMemories(db, seeds, graphBudget, (memory) => (
     !relevantMemoryIds.has(memory.id) && accepts(memory) && contentMatchesTask(memory, task)
   ));
   for (const { memory, fromMemoryId, viaNodeId, relation } of graphMatches) {
@@ -109,9 +120,9 @@ export function buildProjectContext(
     memoryScores.set(memory.id, (memoryScores.get(fromMemoryId) ?? 1) * 0.35);
     graphEvidence.set(memory.id, { fromMemoryId, viaNodeId, relation });
   }
-  if (graphEvidence.size < 4) {
+  if (graphEvidence.size < graphBudget) {
     const related = findContentRelations(db, seeds, {
-      limit: 4 - graphEvidence.size, perSeed: 2,
+      limit: graphBudget - graphEvidence.size, perSeed: 2,
       accepts: (memory) => !relevantMemoryIds.has(memory.id) && accepts(memory) && contentMatchesTask(memory, task),
     });
     for (const relation of related.relations) {
@@ -127,6 +138,7 @@ export function buildProjectContext(
   }
   const memories: ContextMemory[] = memoryCandidates(db, relevantMemoryIds, recallSummaries).map((memory) => ({
     ...memory, ...(graphEvidence.has(memory.id) ? { graphRecall: graphEvidence.get(memory.id)! } : {}),
+    ...(entityEvidence.has(memory.id) ? { entityRecall: entityEvidence.get(memory.id)! } : {}),
   }));
   const taskTokens = tokens(task);
   const rankMemory = (memory: MemoryRecord): number => {
@@ -154,6 +166,7 @@ export function buildProjectContext(
   }
   if (failedIndexCount > 0) warnings.push(`${failedIndexCount} index runs failed; project search may be incomplete.`);
 
+  if (entityMatches.truncated) warnings.push("Entity recall reached its bounded inventory or result limit; some confirmed knowledge was omitted. Use the entity graph to inspect it.");
   const context: ProjectContext = {
     project: { id: project.id, name: project.name, rootPath: project.rootPath, remoteUrl: project.remoteUrl },
     task,
@@ -182,6 +195,7 @@ export function buildProjectContext(
       sourceKind: memory.sourceKind, confidence: memory.confidence,
       ...(memory.supportingMemories ? { supportingMemories: memory.supportingMemories } : {}),
       ...(memory.graphRecall ? { graphRecall: memory.graphRecall } : {}),
+      ...(memory.entityRecall ? { entityRecall: memory.entityRecall } : {}),
     })),
     ...codeHits,
   ].sort((a, b) => b.score - a.score).slice(0, SEARCH_HIT_CANDIDATE_LIMIT);

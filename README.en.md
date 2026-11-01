@@ -443,7 +443,7 @@ The client starts the server from its MCP configuration and follows its global i
 
 For client-specific configuration, see the official Codex documentation for [MCP](https://developers.openai.com/codex/mcp/) and [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/), or the Claude Code [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) documentation.
 
-## MCP Tools (51, local stdio)
+## MCP Tools (52, local stdio)
 
 - project_backup_remote, project_restore_remote
 - sync_status, sync_push, sync_pull, sync_conflicts, sync_resolve
@@ -458,6 +458,7 @@ For client-specific configuration, see the official Codex documentation for [MCP
 - `project_storage`, `project_cleanup`, `project_maintenance_configure`
 - `memory_remember`, `memory_list`, `memory_update_status`
 - `memory_graph`, `memory_graph_node`
+- `memory_knowledge`: list, propose and explicitly review local entities, aliases and relationships with original quotations. The memory graph includes an entity review form; accepted aliases can contribute to task context. No additional service or model dependency is required. See [memory graph](docs/memory-graph.md).
 - `memory_candidates`, `memory_candidate_accept`, `memory_candidate_reject`
 - `user_memory_remember`, `user_memory_list`, `user_memory_update_status`
 - `task_start`, `task_checkpoint`, `task_list`, `task_query`, `task_history`, `task_complete`, `task_cancel`

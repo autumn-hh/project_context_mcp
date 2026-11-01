@@ -111,6 +111,7 @@ export async function exportProject(
   await mkdir(target, { recursive: true });
   const { files, schemaVersion } = db.transaction(() => ({ files: {
     "memories.jsonl": db.prepare("SELECT * FROM memories ORDER BY created_at").all(),
+    "memory-knowledge.jsonl": db.prepare("SELECT * FROM memory_knowledge ORDER BY created_at,id").all(),
     "memory-candidates.jsonl": db.prepare("SELECT * FROM memory_candidates ORDER BY created_at").all(),
     "tasks.jsonl": db.prepare("SELECT * FROM tasks ORDER BY created_at").all(),
     "task-events.jsonl": db.prepare("SELECT * FROM task_events ORDER BY sequence").all(),

@@ -18,6 +18,7 @@ import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { searchWithEmbeddings } from "../search/embeddings.js";
 import { lspDefinition } from "../lsp/bridge.js";
 import { memoryGraphInputShape, memoryGraphNodeIdSchema } from "../memory/graph-input.js";
+import { knowledgeDocumentSchema } from "../memory/knowledge-schema.js";
 
 const checkpointSchema = {
   summary: z.string().optional(),
@@ -275,7 +276,7 @@ export function createMcpServer(): McpServer {
   }));
 
   server.registerTool("memory_remember", {
-    description: "Persist a sourced fact, decision, constraint, preference, lesson, issue, assumption, or task summary.",
+    description: "Persist sourced memory. Optional knowledge declares entities, aliases and exact-quote relationships as pending proposals; it never auto-accepts relationships.",
     outputSchema,
     inputSchema: {
       projectId: z.string().min(1),
@@ -289,6 +290,7 @@ export function createMcpServer(): McpServer {
       sourceKind: z.string().min(1),
       sourceRef: z.string().optional(),
       supersedesId: z.string().optional(),
+      knowledge: knowledgeDocumentSchema.optional(),
     },
     annotations: { idempotentHint: false },
   }, (args) => withApp((app) => app.remember(args.projectId, {
@@ -302,7 +304,32 @@ export function createMcpServer(): McpServer {
     ...(args.confidence !== undefined ? { confidence: args.confidence } : {}),
     ...(args.sourceRef ? { sourceRef: args.sourceRef } : {}),
     ...(args.supersedesId ? { supersedesId: args.supersedesId } : {}),
+    ...(args.knowledge ? { knowledge: args.knowledge } : {}),
   })));
+
+  server.registerTool("memory_knowledge", {
+    description: "List, propose or explicitly review local entity/alias/relationship annotations. Proposals need continuous memory quotations and remain pending until accept. Read original evidence and check negation, conditions and aliases before accepting; no automatic acceptance. Use expectedVersion for review and expectedMemoryHash for stale-write protection.",
+    outputSchema,
+    inputSchema: {
+      projectId: z.string().min(1), action: z.enum(["list", "propose", "accept", "reject"]).default("list"),
+      memoryId: z.string().min(1).max(200).optional(), id: z.string().regex(/^mknow_[a-f0-9]{64}$/u).optional(),
+      document: knowledgeDocumentSchema.optional(), expectedMemoryHash: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
+      expectedVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+      status: z.enum(["all", "pending", "accepted", "rejected", "superseded", "stale"]).default("all"),
+      query: z.string().max(200).optional(), limit: z.number().int().min(1).max(100).default(20),
+      offset: z.number().int().min(0).max(1_000_000).default(0),
+    },
+    annotations: { destructiveHint: true, idempotentHint: false },
+  }, (args) => withApp(async (app) => {
+    await app.watchFlush(args.projectId);
+    if (args.action === "list") return app.memoryKnowledge(args.projectId, args);
+    if (args.action === "propose") {
+      if (!args.memoryId || !args.document) throw new ProjectContextError("INVALID_MEMORY_KNOWLEDGE", "Propose requires memoryId and document.");
+      return app.proposeKnowledge(args.projectId, args.memoryId, args.document, args.expectedMemoryHash);
+    }
+    if (!args.id || args.expectedVersion === undefined) throw new ProjectContextError("INVALID_MEMORY_KNOWLEDGE", "Review requires id and expectedVersion.");
+    return app.reviewKnowledge(args.projectId, { id: args.id, action: args.action, expectedVersion: args.expectedVersion });
+  }));
 
   server.registerTool("user_memory_remember", {
     description: "Persist a reviewed user-level memory with explicit cross-project scope.",
@@ -386,9 +413,9 @@ export function createMcpServer(): McpServer {
   server.registerTool("memory_candidate_accept", {
     description: "Accept a reviewed candidate as sourced active memory. Optionally provide a stable type, title, and conclusion in review; the original candidate remains in the audit record.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), candidateId: z.string().min(1), review: candidateReviewSchema.optional() },
+    inputSchema: { projectId: z.string().min(1), candidateId: z.string().min(1), review: candidateReviewSchema.optional(), knowledge: knowledgeDocumentSchema.optional() },
     annotations: { idempotentHint: false },
-  }, ({ projectId, candidateId, review }) => withApp((app) => app.acceptCandidate(projectId, candidateId, review)));
+  }, ({ projectId, candidateId, review, knowledge }) => withApp((app) => app.acceptCandidate(projectId, candidateId, review, knowledge)));
 
   server.registerTool("memory_candidate_reject", {
     description: "Reject a reviewed memory candidate without deleting its audit record.",

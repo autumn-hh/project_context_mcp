@@ -67,6 +67,8 @@ import {
 import type { z } from "zod/v4";
 import { ProjectContextError } from "../shared/errors.js";
 import { memoryGraph, memoryGraphNode, type MemoryGraphOptions } from "../memory/graph-service.js";
+import { proposeMemoryKnowledge, reviewMemoryKnowledge, listMemoryKnowledge, type MemoryKnowledgeRecord } from "../memory/knowledge-service.js";
+import type { KnowledgeDocument } from "../memory/knowledge-schema.js";
 import { mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
 import { authorizeOutputPath } from "../security/path-policy.js";
@@ -395,8 +397,24 @@ export class ProjectContextApp {
     sourceKind: string;
     sourceRef?: string;
     supersedesId?: string;
-  }): MemoryRecord {
-    return this.withDb(projectId, (db) => remember(db, input));
+    knowledge?: KnowledgeDocument;
+  }): MemoryRecord & { knowledgeProposal?: MemoryKnowledgeRecord } {
+    return this.withDb(projectId, (db) => db.transaction(() => {
+      const memory = remember(db, input);
+      return input.knowledge ? { ...memory, knowledgeProposal: proposeMemoryKnowledge(db, memory.id, input.knowledge) } : memory;
+    })());
+  }
+
+  memoryKnowledge(projectId: string, options: Parameters<typeof listMemoryKnowledge>[1] = {}) {
+    return this.withDb(projectId, (db) => listMemoryKnowledge(db, options));
+  }
+
+  proposeKnowledge(projectId: string, memoryId: string, document: unknown, expectedMemoryHash?: string) {
+    return this.withDb(projectId, (db) => proposeMemoryKnowledge(db, memoryId, document, expectedMemoryHash));
+  }
+
+  reviewKnowledge(projectId: string, input: Parameters<typeof reviewMemoryKnowledge>[1]) {
+    return this.withDb(projectId, (db) => reviewMemoryKnowledge(db, input));
   }
 
   memories(projectId: string, status = "active", limit = 50): MemoryRecord[] {
@@ -429,8 +447,11 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => normalizeTaskSummaryTitles(db, previewHash, options));
   }
 
-  acceptCandidate(projectId: string, candidateId: string, review: CandidateReview = {}): MemoryRecord {
-    return this.withDb(projectId, (db) => acceptCandidate(db, candidateId, review));
+  acceptCandidate(projectId: string, candidateId: string, review: CandidateReview = {}, knowledge?: KnowledgeDocument): MemoryRecord & { knowledgeProposal?: MemoryKnowledgeRecord } {
+    return this.withDb(projectId, (db) => db.transaction(() => {
+      const memory = acceptCandidate(db, candidateId, review);
+      return knowledge ? { ...memory, knowledgeProposal: proposeMemoryKnowledge(db, memory.id, knowledge) } : memory;
+    })());
   }
 
   rejectCandidate(projectId: string, candidateId: string): MemoryCandidate {

@@ -57,6 +57,15 @@ export async function exportKnowledgePack(options: ExportPackOptions): Promise<P
       };
       options.db.transaction(() => {
         for (const table of TABLES.filter(table => table !== "user_memories")) {
+          // Schema 9 snapshots predate reviewed entity knowledge. Current schema
+          // exports always declare 10, so older readers reject instead of dropping it.
+          if (table === "memory_knowledge" && manifest.schemaVersion < 10) {
+            if (options.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_knowledge'").get()
+              && options.db.prepare("SELECT 1 FROM memory_knowledge LIMIT 1").get()) {
+              invalidPack("Entity knowledge requires schema 10; refusing to omit stored annotations.");
+            }
+            continue;
+          }
           const order = table === "task_events" ? "sequence" : table === "task_checkpoint_requests" ? "task_id, request_id" : "id";
           writeTable(table, options.db.prepare(`SELECT * FROM ${table} ORDER BY ${order}`).iterate());
         }

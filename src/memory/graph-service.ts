@@ -5,12 +5,14 @@ import { taskTokens } from "../shared/task-relevance.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { sha256 } from "../shared/ids.js";
 import { findContentRelations } from "./content-relations.js";
+import { ENTITY_GRAPH_RELATIONS, entityDetails, knowledgeEntityGraph, type KnowledgeGraphEntity } from "./knowledge-graph.js";
+import { memoryKnowledgeHash } from "./knowledge-service.js";
 
-export const MEMORY_GRAPH_RELATIONS = ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO", "CONTENT_RELATED"] as const;
+export const MEMORY_GRAPH_RELATIONS = ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO", "CONTENT_RELATED", ...ENTITY_GRAPH_RELATIONS] as const;
 export type MemoryGraphRelation = typeof MEMORY_GRAPH_RELATIONS[number];
 
 export interface MemoryGraphOptions {
-  view?: "knowledge" | "evidence" | undefined;
+  view?: "knowledge" | "evidence" | "entities" | undefined;
   includeSummaries?: boolean | undefined;
   query?: string | undefined;
   nodeId?: string | undefined;
@@ -23,7 +25,7 @@ export interface MemoryGraphOptions {
 export interface MemoryGraphNodeRecord {
   id: string;
   label: string;
-  nodeType: "memory" | "task" | "source" | "scope";
+  nodeType: "memory" | "task" | "source" | "scope" | "entity";
   memoryType?: MemoryRecord["type"];
   status?: string;
   sourceKind?: string;
@@ -40,10 +42,12 @@ export interface MemoryGraphEdge {
   evidence: string;
   sharedTerms?: string[];
   excerpts?: { source: string; target: string };
+  annotationId?: string;
+  memoryId?: string;
 }
 
 export interface MemoryGraph {
-  view: "knowledge" | "evidence";
+  view: "knowledge" | "evidence" | "entities";
   nodes: MemoryGraphNodeRecord[];
   edges: MemoryGraphEdge[];
   root: string | null;
@@ -57,6 +61,8 @@ export interface MemoryGraphNodeDetails extends MemoryGraphNodeRecord {
   task?: TaskRecord;
   source?: SourceEvidence;
   scope?: string;
+  entity?: KnowledgeGraphEntity;
+  memoryHash?: string;
   truncated: boolean;
 }
 
@@ -114,10 +120,12 @@ const BINDING_COLUMNS = `ms.id, ms.memory_id, ms.source_kind, ms.source_ref, ms.
 /** A derived, read-only graph. Lexical suggestions are distinct from recorded evidence. */
 export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}): MemoryGraph {
   const view = options.view ?? "knowledge";
-  if (view !== "knowledge" && view !== "evidence") invalid("Unknown graph view.");
+  if (view !== "knowledge" && view !== "evidence" && view !== "entities") invalid("Unknown graph view.");
   const includeSummaries = view === "evidence" && (options.includeSummaries ?? false);
   const limit = integerOption(options.limit, 24, 1, 150);
   const depth = integerOption(options.depth, 1, 1, 2);
+  if (options.query !== undefined && options.query.length > 200) invalid("Query must not exceed 200 characters.");
+  if (view === "entities") return knowledgeEntityGraph(db, { ...options, limit, depth });
   const includeInactive = options.includeInactive ?? false;
   const viewRelations: MemoryGraphRelation[] = view === "knowledge" ? ["CONTENT_RELATED", "SUPERSEDES"]
     : ["SOURCED_FROM", "SUPERSEDES", "PRODUCED_BY", "APPLIES_TO"];
@@ -217,6 +225,7 @@ export function memoryGraph(db: SqliteDatabase, options: MemoryGraphOptions = {}
 export function memoryGraphNode(
   db: SqliteDatabase, nodeId: string, options: { includeInactive?: boolean; includeSummaries?: boolean } = {},
 ): MemoryGraphNodeDetails {
+  if (nodeId.startsWith("entity:")) return entityDetails(db, nodeId);
   const node = loadNode(db, nodeId, options.includeInactive ?? false, options.includeSummaries ?? false);
   if (node.nodeType === "memory") {
     const original = getMemory(db, nodeId.slice(7));
@@ -227,7 +236,7 @@ export function memoryGraphNode(
       sourceKind: clipped(original.sourceKind, 1000),
       sourceRef: original.sourceRef === null ? null : clipped(original.sourceRef, 8000),
     };
-    return { ...node, memory, truncated: JSON.stringify(memory) !== JSON.stringify(original) };
+    return { ...node, memory, memoryHash: memoryKnowledgeHash(original), truncated: JSON.stringify(memory) !== JSON.stringify(original) };
   }
   if (node.nodeType === "task") {
     const id = nodeId.slice(5);

@@ -6,7 +6,7 @@ import { ProjectContextError } from "../../shared/errors.js";
 import { rebuildNgramIndex } from "../../search/ngram-index.js";
 import { containsLikelySecret } from "../../indexing/file-policy.js";
 
-export const SYNC_TABLES = ["memories", "memory_sources", "memory_candidates", "tasks", "task_events", "task_checkpoint_requests", "user_memories"] as const;
+export const SYNC_TABLES = ["memories", "memory_knowledge", "memory_sources", "memory_candidates", "tasks", "task_events", "task_checkpoint_requests", "user_memories"] as const;
 type SyncTable = typeof SYNC_TABLES[number];
 const identifier = z.string().regex(/^[a-zA-Z0-9_.:-]{1,256}$/);
 export const syncEventSchema = z.object({
@@ -34,16 +34,18 @@ export function initializeSync(db: SqliteDatabase, syncId: string, deviceId: str
     `);
     const existing = db.prepare("SELECT sync_id,device_id FROM sync_state WHERE singleton=1").get() as { sync_id: string; device_id: string } | undefined;
     if (existing && (existing.sync_id !== syncId || existing.device_id !== deviceId)) throw new ProjectContextError("SYNC_IDENTITY_CONFLICT", "This database is already bound to another sync space or device. Use a knowledge snapshot to initialize a new replica.");
-    if (existing) return;
-    db.prepare("INSERT INTO sync_state(singleton,sync_id,device_id) VALUES(1,?,?)").run(syncId, deviceId);
-    installTriggers(db);
+    if (!existing) db.prepare("INSERT INTO sync_state(singleton,sync_id,device_id) VALUES(1,?,?)").run(syncId, deviceId);
+    // Upgraded replicas retain their identity and existing causal history. Only
+    // newly tracked tables need baseline events; trigger installation is idempotent.
+    const addedTables = installTriggers(db);
     db.prepare("UPDATE sync_state SET applying=1").run();
     try {
-      for (const table of SYNC_TABLES) {
+      for (const table of addedTables) {
         const order = table === "task_events" ? "sequence" : table === "task_checkpoint_requests" ? "task_id, request_id" : "id";
         for (const input of pagedRows(db, table, order)) {
           const row = sanitize(table, input as PackRow);
           const entity = entityKey(table, row, deviceId);
+          if (db.prepare("SELECT 1 FROM sync_events WHERE entity_table=? AND entity_id=? LIMIT 1").get(table, entity)) continue;
           // Identical restored records share the same baseline event, preventing false first-pair conflicts.
           const id = "base_" + hash(syncId + "/" + table + "/" + entity + "/" + canonical(row));
           const event: SyncEvent = { id, device: "baseline", table, entity, parents: [], version: 1, operation: "put", payload: row };
@@ -58,7 +60,9 @@ export function initializeSync(db: SqliteDatabase, syncId: string, deviceId: str
 }
 
 function installTriggers(db: SqliteDatabase) {
+  const addedTables: SyncTable[] = [];
   for (const table of SYNC_TABLES) {
+    if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='trigger' AND name=?").get(`sync_${table}_insert`)) addedTables.push(table);
     const fields = Object.keys(rowSchemas[table].shape);
     for (const operation of table === "task_events" ? ["INSERT"] : ["INSERT", "UPDATE", "DELETE"]) {
       const row = operation === "DELETE" ? "OLD" : "NEW";
@@ -80,6 +84,7 @@ function installTriggers(db: SqliteDatabase) {
         END;`);
     }
   }
+  return addedTables;
 }
 
 function* pagedRows(db: SqliteDatabase, table: SyncTable, order: string): Generator<PackRow> {
@@ -191,7 +196,8 @@ function validateEvent(input: unknown): SyncEvent {
     if (event.payload !== null || event.table === "task_events") throw new ProjectContextError("INVALID_SYNC_EVENT", "Invalid history deletion or tombstone.");
   } else {
     const row = parseRow(event.table, event.payload);
-    if ((event.table === "memories" || event.table === "user_memories") && containsLikelySecret(`${row.title}\n${row.content}\n${row.reason ?? ""}`)) {
+    if (((event.table === "memories" || event.table === "user_memories") && containsLikelySecret(`${row.title}\n${row.content}\n${row.reason ?? ""}`))
+      || (event.table === "memory_knowledge" && containsLikelySecret(String(row.document_json)))) {
       throw new ProjectContextError("SENSITIVE_MEMORY_REJECTED", "Incoming memory contains a suspected credential or private key.");
     }
     if (event.table !== "task_events" && entityKey(event.table, row, event.device) !== event.entity) throw new ProjectContextError("INVALID_SYNC_EVENT", "Event entity and payload identity disagree.");
@@ -216,7 +222,7 @@ function referencesReady(db: SqliteDatabase, event: SyncEvent): boolean {
   if (event.operation === "delete") return true;
   const row = event.payload as PackRow;
   if (["memories", "user_memories"].includes(event.table) && row.supersedes_id && !db.prepare(`SELECT 1 FROM ${event.table} WHERE id=?`).get(row.supersedes_id)) return false;
-  if (event.table === "memory_sources" && !db.prepare("SELECT 1 FROM memories WHERE id=?").get(row.memory_id)) return false;
+  if (["memory_sources", "memory_knowledge"].includes(event.table) && !db.prepare("SELECT 1 FROM memories WHERE id=?").get(row.memory_id)) return false;
   if (["task_events", "task_checkpoint_requests"].includes(event.table) && !db.prepare("SELECT 1 FROM tasks WHERE id=?").get(row.task_id)) return false;
   return true;
 }
@@ -235,6 +241,9 @@ function projectEntity(db: SqliteDatabase, table: SyncTable, entity: string) {
   }
   const row = JSON.parse(winner.payload_json!) as PackRow;
   if ((table === "memories" || table === "user_memories") && versions.length > 1 && row.status !== "deleted") row.status = "conflicted";
+  // No conflicting accepted document may become effective through the stable
+  // display winner. Keep all original heads for explicit sync conflict resolution.
+  if (table === "memory_knowledge" && versions.length > 1) row.status = "pending";
   if (table === "task_events") {
     if (db.prepare("SELECT 1 FROM sync_history WHERE entity_id=?").get(entity)) return;
     delete row.sequence;

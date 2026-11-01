@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "./database.js";
 
 export const REGISTRY_SCHEMA_VERSION = 3;
-export const PROJECT_SCHEMA_VERSION = 9;
+export const PROJECT_SCHEMA_VERSION = 10;
 
 export function migrateRegistry(db: SqliteDatabase): void {
   migrate(db, "projects", [{ version: 1, sql: `
@@ -272,6 +272,20 @@ export function migrateProject(db: SqliteDatabase): void {
     CREATE INDEX IF NOT EXISTS symbols_source_path_idx ON symbols(source_path);
     CREATE INDEX IF NOT EXISTS memories_status_type_updated_idx ON memories(status, type, updated_at DESC, id);
     CREATE INDEX IF NOT EXISTS memories_source_ref_idx ON memories(source_ref);
+    ` },
+    { version: 10, sql: `
+    CREATE TABLE IF NOT EXISTS memory_knowledge (
+      id TEXT PRIMARY KEY,
+      memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+      memory_hash TEXT NOT NULL,
+      document_json TEXT NOT NULL CHECK (json_valid(document_json)),
+      status TEXT NOT NULL CHECK (status IN ('pending','accepted','rejected','superseded')),
+      version INTEGER NOT NULL CHECK (version >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS memory_knowledge_memory_status_idx ON memory_knowledge(memory_id,status);
+    CREATE INDEX IF NOT EXISTS memory_knowledge_status_updated_idx ON memory_knowledge(status,updated_at DESC,id);
     ` },
   ]);
 }

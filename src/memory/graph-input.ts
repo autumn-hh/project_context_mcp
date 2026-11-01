@@ -5,7 +5,7 @@ export const memoryGraphNodeIdSchema = z.string().min(1).max(8_192)
   .refine((value) => !/[\u0000-\u001f]/u.test(value), "Invalid graph node ID.");
 
 export const memoryGraphInputShape = {
-  view: z.enum(["knowledge", "evidence"]).default("knowledge"),
+  view: z.enum(["knowledge", "evidence", "entities"]).default("knowledge"),
   includeSummaries: z.boolean().default(false),
   query: z.string().trim().max(200).optional(),
   nodeId: memoryGraphNodeIdSchema.optional(),

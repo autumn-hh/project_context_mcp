@@ -13,6 +13,7 @@ import { UI_CSS, UI_HTML, UI_JS } from "./assets.js";
 import { WORKSPACE_THEME_CSS } from "./workspace-theme.js";
 import { GRAPH_RELATION_TYPES } from "../code-intelligence/graph-service.js";
 import { memoryGraphInputSchema, memoryGraphNodeIdSchema } from "../memory/graph-input.js";
+import { knowledgeDocumentSchema } from "../memory/knowledge-schema.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
 import { IndexPreviewJobs } from "./index-preview-jobs.js";
@@ -531,6 +532,32 @@ async function routeRequest(
         : app.cancelTask(projectId, taskId, { source: "web" }));
       return;
     }
+    const knowledgeMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memory-knowledge(?:\/([^/]+)\/review)?$/);
+    if (knowledgeMatch) {
+      const projectId = decodeSegment(knowledgeMatch[1]!);
+      if (request.method === "GET" && !knowledgeMatch[2]) {
+        const input = z.object({
+          status: z.enum(["all", "pending", "accepted", "rejected", "superseded", "stale"]),
+          query: z.string().max(200), memoryId: z.string().min(1).max(200).optional(),
+          limit: z.coerce.number().int().min(1).max(100), offset: z.coerce.number().int().min(0).max(1_000_000),
+        }).parse({ status: url.searchParams.get("status") ?? "all", query: url.searchParams.get("query") ?? "",
+          memoryId: url.searchParams.get("memoryId") ?? undefined,
+          limit: url.searchParams.get("limit") ?? "20", offset: url.searchParams.get("offset") ?? "0" });
+        await withApp(response, (app) => app.memoryKnowledge(projectId, input));
+        return;
+      }
+      if (request.method === "POST") {
+        if (knowledgeMatch[2]) {
+          const input = z.object({ action: z.enum(["accept", "reject"]), expectedVersion: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) }).strict().parse(await readJsonBody(request));
+          await withApp(response, (app) => app.reviewKnowledge(projectId, { id: decodeSegment(knowledgeMatch[2]!), ...input }));
+        } else {
+          const input = z.object({ memoryId: z.string().min(1).max(200), document: knowledgeDocumentSchema,
+            expectedMemoryHash: z.string().regex(/^[a-f0-9]{64}$/u).optional() }).strict().parse(await readJsonBody(request));
+          await withApp(response, (app) => app.proposeKnowledge(projectId, input.memoryId, input.document, input.expectedMemoryHash));
+        }
+        return;
+      }
+    }
     const memoryGraphMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memory-graph(?:\/nodes\/([^/]+))?$/);
     if (request.method === "GET" && memoryGraphMatch) {
       const projectId = decodeSegment(memoryGraphMatch[1]!);
@@ -733,7 +760,8 @@ function decodeSegment(value: string): string {
 function projectErrorStatus(code: string): number {
   if (code === "TEAM_UNAUTHENTICATED" || code === "TEAM_UI_NOT_CONFIGURED") return 401;
   if (code === "TEAM_FORBIDDEN" || code === "TEAM_SCOPE_FORBIDDEN") return 403;
-  if (code === "TEAM_VERSION_CONFLICT" || code === "TASK_REQUEST_CONFLICT" || code === "TEAM_CONNECTION_CHANGED") return 409;
+  if (code === "TEAM_VERSION_CONFLICT" || code === "TASK_REQUEST_CONFLICT" || code === "TEAM_CONNECTION_CHANGED"
+    || code === "KNOWLEDGE_VERSION_CONFLICT" || code === "KNOWLEDGE_STALE" || code === "KNOWLEDGE_REVIEW_STATE") return 409;
   if (code === "INDEX_PREVIEW_BUSY" || code === "INDEX_PREVIEW_CLOSED") return 503;
   if (code.startsWith("INDEX_PREVIEW_")) return 500;
   if (code.includes("NOT_FOUND")) return 404;

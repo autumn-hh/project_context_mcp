@@ -453,7 +453,7 @@ project_context
 
 客户端配置细节可参考对应官方文档：Codex 的 [MCP](https://developers.openai.com/codex/mcp/) 与 [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/)，以及 Claude Code 的 [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) 文档。
 
-## MCP 工具（51 个，本地 stdio）
+## MCP 工具（52 个，本地 stdio）
 
 - project_backup_remote、project_restore_remote
 - sync_status、sync_push、sync_pull、sync_conflicts、sync_resolve
@@ -468,6 +468,7 @@ project_context
 - `project_storage`、`project_cleanup`、`project_maintenance_configure`
 - `memory_remember`、`memory_list`、`memory_update_status`
 - `memory_graph`、`memory_graph_node`
+- `memory_knowledge`：本地实体、别名和带原文证据的关系候选，支持查询、提议与明确审核；网页入口为“记忆关系 → 实体与关系”。无需新增服务或模型依赖，审核后别名参与任务上下文。见[整理与使用说明](docs/memory-graph.md)。
 - `memory_candidates`、`memory_candidate_accept`、`memory_candidate_reject`
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`
 - `task_start`、`task_checkpoint`、`task_list`、`task_query`、`task_history`、`task_complete`、`task_cancel`
