@@ -2,6 +2,11 @@
 
 每次向 GitHub 推送代码前，都必须在此文件中补充本次推送的用户可见修复、行为变化、重要实现和验证结果。
 
+## 未发布 — 持续集成（2026-11-04）
+
+- 新增 GitHub Actions（`.github/workflows/ci.yml`）：推送 main 与 Pull Request 时在 Windows 和 Ubuntu 上用 Node 22 依次执行 `npm ci`、`npm run typecheck`、`npm test`、`npm run build`，同一分支的新推送取消旧运行，权限只读。不新增依赖、不改代码风格；`.github` 不进入 npm 包。Windows 文件句柄占用测试在 Linux 上按原有条件跳过，hg/svn 测试使用模拟命令，无需安装。
+- 验证：在本分支的全新克隆中依次执行上述四步全部通过（60 文件 / 459 项测试）；工作流尚未在 GitHub 上运行，首次推送后需确认两个平台的结果。
+
 ## 未发布 — 更多语言的符号解析（2026-11-04）
 
 - Vue 与 Svelte 组件解析 `<script>` 块（含 `<script setup>`、Options API 的方法、`lang="ts"/"tsx"`），复用现有 TS/JS 语法，无新依赖。组件中脚本以外的字符替换为空格、保留换行，符号行列与 ID 直接对应组件原文件；属性值含 `>`（如 Vue 的 `generic`）也能正确定位，`src=` 外链脚本跳过，只有模板的组件计为已解析、无符号。已入库且内容未变的组件按新增语言版本自动补齐符号。hrbust_front_new 的 39 个组件全部解析成功，26 个产出 319 个函数符号，耗时 0.3 秒；其余 13 个只有模板、导入或 `defineProps`。模板事件绑定（如 `@click`）不产生调用关系。
