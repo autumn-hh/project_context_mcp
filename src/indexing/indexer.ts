@@ -26,6 +26,10 @@ const CHUNK_CHAR_LIMIT = 4_000;
 const SOURCE_REMOVAL_BATCH_SIZE = 200;
 const DELETE_ID_BATCH_SIZE = 900;
 const FTS_REMOVAL_BATCH_SIZE = 500;
+// Runs are guarded per process only, so a younger running row may belong to another
+// live process. Past this age its process has exited; a late finishRun() still
+// overwrites the mark with the real outcome.
+const STALE_RUNNING_RUN_MS = 24 * 60 * 60 * 1000;
 
 export interface IndexResult {
   runId: string;
@@ -75,10 +79,12 @@ export async function indexProject(
 ): Promise<IndexResult> {
   const runId = createId("idx");
   const startedAt = nowIso();
+  const interruptedRuns = markInterruptedRuns(db, startedAt);
   db.prepare("INSERT INTO index_runs (id, started_at, status) VALUES (?, ?, 'running')")
     .run(runId, startedAt);
   const log = createRunLogger(db, runId);
   log.record("开始索引项目，读取忽略规则并扫描文件。");
+  if (interruptedRuns > 0) log.record(`已将 ${interruptedRuns} 条超过 24 小时仍未结束的索引记录标记为失败。`, undefined, "warn");
 
   const result: IndexResult = {
     runId, scanned: 0, indexed: 0, skipped: 0, removed: 0, errors: [], visited: 0, prunedDirectories: 0,
@@ -471,6 +477,15 @@ async function reportProgress(
     prunedDirectories: result.prunedDirectories,
     ...(path ? { path } : {}),
   });
+}
+
+function markInterruptedRuns(db: SqliteDatabase, now: string): number {
+  const cutoff = new Date(Date.parse(now) - STALE_RUNNING_RUN_MS).toISOString();
+  const errors = JSON.stringify([{ path: "<index>", message: "Index run did not finish; its process exited before recording a result." }]);
+  return db.prepare(`
+    UPDATE index_runs SET status = 'failed', completed_at = ?, errors_json = ?
+    WHERE status = 'running' AND started_at < ?
+  `).run(now, errors, cutoff).changes;
 }
 
 function finishRun(db: SqliteDatabase, result: IndexResult, status: "completed" | "failed"): void {

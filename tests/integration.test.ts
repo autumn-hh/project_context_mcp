@@ -77,6 +77,57 @@ describe("Project Context core", () => {
     }
   });
 
+  it("reports code files that are indexed as text but produce no symbols", async () => {
+    await writeFile(join(projectRoot, "src", "Main.java"), "public class Main { void run() {} }\n", "utf8");
+    await mkdir(join(projectRoot, "static"), { recursive: true });
+    await writeFile(join(projectRoot, "static", "lib.js"), "function vendored() {}\n", "utf8");
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      await app.index(project.id);
+      expect(app.health(project.id).codeIntelligence).toEqual({
+        analyzedSources: 1,
+        unanalyzedCodeSources: 1,
+        unanalyzedCodeShare: 0.5,
+        unanalyzed: [{ extension: ".java", sources: 1 }],
+        lowRelevanceCodeSources: 1,
+        otherTextSources: 1,
+      });
+    } finally {
+      app.close();
+    }
+  });
+
+  it("marks index runs left running for over a day as failed and keeps younger ones", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const db = app.projects.projectDatabase(project.id);
+      const insert = db.prepare("INSERT INTO index_runs (id, started_at, status) VALUES (?, ?, 'running')");
+      insert.run("abandoned", new Date(Date.now() - 25 * 3_600_000).toISOString());
+      insert.run("other-process", new Date(Date.now() - 3_600_000).toISOString());
+      db.close();
+      await app.index(project.id);
+      expect(app.health(project.id).lastIndexRun).toMatchObject({ status: "completed" });
+      const verified = app.projects.projectDatabase(project.id);
+      try {
+        const run = (id: string) => verified.prepare("SELECT status, completed_at, errors_json FROM index_runs WHERE id = ?").get(id) as {
+          status: string; completed_at: string | null; errors_json: string;
+        };
+        expect(run("abandoned").status).toBe("failed");
+        expect(run("abandoned").completed_at).not.toBeNull();
+        expect(run("abandoned").errors_json).toContain("did not finish");
+        expect(run("other-process")).toMatchObject({ status: "running", completed_at: null });
+        const latestLog = verified.prepare("SELECT log_json FROM index_runs WHERE status = 'completed' ORDER BY started_at DESC LIMIT 1").pluck().get();
+        expect(latestLog).toContain("已将 1 条");
+      } finally {
+        verified.close();
+      }
+    } finally {
+      app.close();
+    }
+  });
+
   it("excludes cross-language compiler artifacts while retaining source files", async () => {
     await mkdir(join(projectRoot, "target", "debug"), { recursive: true });
     await mkdir(join(projectRoot, ".playwright-cli"), { recursive: true });

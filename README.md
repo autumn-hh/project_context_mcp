@@ -89,7 +89,8 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 升级前显示数据库连接占用 PID、角色、版本及重启建议。新版连接使用项目外临时登记；Windows 查询数据库/WAL/SHM 文件句柄，也能发现未登记旧进程。其他平台或系统探测失败时明确提示覆盖不足；不会强制断开连接。
 - 本机真实大库邻居查询测量与消歧抽查见 [图查询验证](docs/graph-query-benchmark-2026-10-12.md)，结果仅代表邻居扩展成本。
 - 默认排除 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、字节码、编译缓存和覆盖率/性能分析产物
-- 使用 Tree-sitter 索引 TypeScript、TSX、JavaScript、JSX、MJS 和 CJS 符号
+- 使用 Tree-sitter 索引 `.ts`、`.tsx`、`.js`、`.jsx`、`.mjs`、`.cjs`、`.py`、`.go`、`.rs` 的符号与代码关系；`static`、`assets`、`plugins`、`vendors` 等低相关目录中的文件只保留文本检索
+- Java、Kotlin、C/C++、C#、PHP、Vue、Svelte 等语言的源码仍可全文搜索，但不解析符号；`project_health` 的 `codeIntelligence` 返回这类文件数、主要扩展名及其在代码文件中的占比，低相关目录中的代码单独计数
 - 搜索与任务上下文包含导入、调用、继承和实现关系
 - 自动检测 Git、Mercurial（hg）和 Subversion（svn），记录版本、分支、工作区状态与差异哈希证据，但不持久化完整 diff
 - 从 Git、Mercurial、Subversion 变更、已索引知识文档和已完成任务生成待审核记忆候选

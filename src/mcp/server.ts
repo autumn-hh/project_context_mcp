@@ -502,7 +502,7 @@ export function createMcpServer(): McpServer {
   }));
 
   server.registerTool("project_health", {
-    description: "Report source, chunk, memory, task, and latest index-run health for a project.",
+    description: "Report source, chunk, symbol-coverage, memory, task, and latest index-run health for a project.",
     outputSchema,
     inputSchema: { projectId: z.string().min(1) },
     annotations: { readOnlyHint: true, idempotentHint: true },

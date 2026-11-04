@@ -101,6 +101,7 @@ import {
   graphSearch,
   type GraphOptions,
 } from "../code-intelligence/graph-service.js";
+import { symbolCoverage } from "../code-intelligence/symbol-coverage.js";
 
 export class ProjectContextApp {
   readonly projects: ProjectService;
@@ -534,6 +535,7 @@ export class ProjectContextApp {
         chunks: scalar(db, "SELECT COUNT(*) FROM chunks"),
         symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
         relations: scalar(db, "SELECT COUNT(*) FROM relations"),
+        codeIntelligence: symbolCoverage(db.prepare("SELECT path FROM sources").pluck().all() as string[]),
         memories: rowsToObject(db, "SELECT status, COUNT(*) AS count FROM memories GROUP BY status"),
         candidates: rowsToObject(db, "SELECT status, COUNT(*) AS count FROM memory_candidates GROUP BY status"),
         tasks: rowsToObject(db, "SELECT status, COUNT(*) AS count FROM tasks GROUP BY status"),
