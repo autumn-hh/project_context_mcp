@@ -1,14 +1,8 @@
 import { extname } from "node:path";
 import { isLowRelevanceSourcePath } from "../indexing/file-policy.js";
+import { ANALYZED_EXTENSIONS } from "./languages.js";
 
-/**
- * Extensions the Tree-sitter analyzers turn into symbols. Keep in sync with
- * languageForPath() in tree-sitter-analyzer.ts and analyzeAdditionalLanguage()
- * in multilanguage-analyzer.ts; tests/symbol-coverage.test.ts checks both.
- */
-export const SYMBOL_SUPPORTED_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".go", ".rs",
-]);
+export const SYMBOL_SUPPORTED_EXTENSIONS = ANALYZED_EXTENSIONS;
 
 /**
  * Application source files that are full-text indexed but produce no symbols.

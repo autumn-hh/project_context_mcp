@@ -25,7 +25,7 @@ describe("call relation noise filtering", () => {
       await indexProject(db, project);
       const source = db.prepare("SELECT id, content_hash FROM sources").get() as { id: string; content_hash: string };
       db.prepare("INSERT INTO relations (id, source_id, source_path, from_name, to_name, relation_type, start_line) VALUES ('old-noise', ?, 'src/service.ts', 'src/service.ts#run', 'console.log', 'CALLS', 1)").run(source.id);
-      db.prepare("DELETE FROM metadata WHERE key = 'code_analysis_version'").run();
+      db.prepare("DELETE FROM metadata WHERE key IN ('code_analysis_version', 'code_analyzer_versions')").run();
       const refreshed = await indexProject(db, project);
       expect(refreshed.indexed).toBe(1);
       expect(refreshed.errors).toEqual([]);

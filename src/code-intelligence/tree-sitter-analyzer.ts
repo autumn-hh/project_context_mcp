@@ -3,6 +3,7 @@ import TypeScript from "tree-sitter-typescript";
 import JavaScript from "tree-sitter-javascript";
 import { extname } from "node:path";
 import { sha256 } from "../shared/ids.js";
+import type { AnalysisLanguage } from "./languages.js";
 import { analyzeAdditionalLanguage } from "./multilanguage-analyzer.js";
 
 export interface CodeSymbol {
@@ -27,7 +28,7 @@ export interface CodeRelation {
 }
 
 export interface CodeAnalysis {
-  language: "typescript" | "tsx" | "javascript" | "jsx" | "python" | "go" | "rust";
+  language: AnalysisLanguage;
   symbols: CodeSymbol[];
   relations: CodeRelation[];
 }
@@ -35,6 +36,7 @@ export interface CodeAnalysis {
 const parser = new Parser();
 const DIRECT_PARSE_LIMIT = 32_768;
 const PARSE_CHUNK_SIZE = 8_192;
+// Shared marker for graph exports and older clients; refreshes use ANALYZER_VERSIONS in languages.ts.
 export const CODE_ANALYSIS_VERSION = "3";
 // Per-source frequency keeps indexing deterministic and avoids a project-wide scan.
 const HIGH_FREQUENCY_CALLEE_LIMIT = 64;

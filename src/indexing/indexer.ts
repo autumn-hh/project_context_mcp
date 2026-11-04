@@ -14,6 +14,7 @@ import {
   projectIgnoreMatcher,
 } from "./file-policy.js";
 import { analyzeCode, CODE_ANALYSIS_VERSION, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
+import { analysisLanguage, ANALYZER_VERSIONS, type AnalysisLanguage } from "../code-intelligence/languages.js";
 import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js";
 import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
@@ -29,6 +30,7 @@ const FTS_REMOVAL_BATCH_SIZE = 500;
 // live process. Past this age its process has exited; a late finishRun() still
 // overwrites the mark with the real outcome.
 const STALE_RUNNING_RUN_MS = 24 * 60 * 60 * 1000;
+const ANALYZER_VERSIONS_KEY = "code_analyzer_versions";
 
 export interface IndexResult {
   runId: string;
@@ -92,8 +94,7 @@ export async function indexProject(
     runId, completed: false, checkedAt: startedAt, skipped: [], redacted: [],
   };
   try {
-    const analysisChanged = db.prepare("SELECT value FROM metadata WHERE key = 'code_analysis_version'").pluck().get()
-      !== CODE_ANALYSIS_VERSION;
+    const staleLanguages = staleAnalysisLanguages(db);
     const matcher = projectIgnoreMatcher(project.rootPath);
 
     const existingRows = db.prepare("SELECT id, path, content_hash FROM sources").all() as SourceRow[];
@@ -154,10 +155,18 @@ export async function indexProject(
         const existing = existingByPath.get(relativePath);
         const fullIndex = !isLowRelevanceSourcePath(relativePath);
         const tierChanged = existing ? sourceNeedsTierRefresh(db, existing.id, fullIndex) : false;
-        const refreshCode = analysisChanged && fullIndex && /\.(?:[cm]?js|jsx|ts|tsx)$/iu.test(relativePath);
-        if (existing?.content_hash === contentHash && !tierChanged && !refreshCode) {
-          result.skipped += 1;
-          log.record("内容未变化，复用已有索引。", relativePath);
+        if (existing?.content_hash === contentHash && !tierChanged) {
+          const language = fullIndex ? analysisLanguage(relativePath) : null;
+          if (language && staleLanguages.has(language)) {
+            // Text indexes still match the content; only extraction rules changed.
+            replaceCodeAnalysis(db, existing.id, relativePath, analyzeCode(relativePath, content));
+            result.indexed += 1;
+            log.record("解析规则已更新，重新提取代码结构。", relativePath);
+            await reportProgress(options, result, "indexing", relativePath);
+          } else {
+            result.skipped += 1;
+            log.record("内容未变化，复用已有索引。", relativePath);
+          }
           continue;
         }
         replaceSource(db, {
@@ -211,6 +220,8 @@ export async function indexProject(
     if (result.errors.length === 0) {
       db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('code_analysis_version', ?)")
         .run(CODE_ANALYSIS_VERSION);
+      db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)")
+        .run(ANALYZER_VERSIONS_KEY, JSON.stringify(ANALYZER_VERSIONS));
     }
 
     contentProtection.completed = result.errors.length === 0;
@@ -321,13 +332,7 @@ function replaceSource(db: SqliteDatabase, input: {
       deleteItemNgrams(db, "chunk", id);
     }
     db.prepare("DELETE FROM chunks WHERE source_id = ?").run(input.sourceId);
-    for (const id of db.prepare("SELECT id FROM symbols WHERE source_id = ?").pluck().all(input.sourceId) as string[]) {
-      deleteItemNgrams(db, "symbol", id);
-    }
-    db.prepare("DELETE FROM symbols_fts WHERE symbol_id IN (SELECT id FROM symbols WHERE source_id = ?)")
-      .run(input.sourceId);
-    db.prepare("DELETE FROM relations WHERE source_id = ?").run(input.sourceId);
-    db.prepare("DELETE FROM symbols WHERE source_id = ?").run(input.sourceId);
+    deleteCodeAnalysis(db, input.sourceId);
     db.prepare(`
       INSERT INTO sources (id, path, kind, content_hash, size_bytes, modified_ms, indexed_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -359,6 +364,39 @@ function replaceSource(db: SqliteDatabase, input: {
     if (input.analysis) insertCodeAnalysis(db, input.sourceId, input.relativePath, input.analysis);
   });
   transaction.immediate();
+}
+
+function replaceCodeAnalysis(db: SqliteDatabase, sourceId: string, sourcePath: string, analysis: CodeAnalysis | null): void {
+  db.transaction(() => {
+    db.prepare("DELETE FROM metadata WHERE key = 'relation_targets_version'").run();
+    deleteCodeAnalysis(db, sourceId);
+    db.prepare("UPDATE sources SET indexed_at = ? WHERE id = ?").run(nowIso(), sourceId);
+    if (analysis) insertCodeAnalysis(db, sourceId, sourcePath, analysis);
+  }).immediate();
+}
+
+function deleteCodeAnalysis(db: SqliteDatabase, sourceId: string): void {
+  for (const id of db.prepare("SELECT id FROM symbols WHERE source_id = ?").pluck().all(sourceId) as string[]) {
+    deleteItemNgrams(db, "symbol", id);
+  }
+  db.prepare("DELETE FROM symbols_fts WHERE symbol_id IN (SELECT id FROM symbols WHERE source_id = ?)").run(sourceId);
+  db.prepare("DELETE FROM relations WHERE source_id = ?").run(sourceId);
+  db.prepare("DELETE FROM symbols WHERE source_id = ?").run(sourceId);
+}
+
+/** Languages whose files were last analyzed under different extraction rules. */
+function staleAnalysisLanguages(db: SqliteDatabase): Set<AnalysisLanguage> {
+  const stored = db.prepare("SELECT value FROM metadata WHERE key = ?").pluck().get(ANALYZER_VERSIONS_KEY) as string | undefined;
+  let versions: Partial<Record<AnalysisLanguage, string>> = {};
+  try {
+    if (stored) versions = JSON.parse(stored) as Partial<Record<AnalysisLanguage, string>>;
+  } catch { /* unreadable versions: refresh every language once */ }
+  if (!stored && db.prepare("SELECT value FROM metadata WHERE key = 'code_analysis_version'").pluck().get() === CODE_ANALYSIS_VERSION) {
+    // The single legacy version only ever refreshed JS/TS, so Python, Go and Rust files may predate their analyzers.
+    versions = { typescript: CODE_ANALYSIS_VERSION, tsx: CODE_ANALYSIS_VERSION, javascript: CODE_ANALYSIS_VERSION, jsx: CODE_ANALYSIS_VERSION };
+  }
+  const languages = Object.keys(ANALYZER_VERSIONS) as AnalysisLanguage[];
+  return new Set(languages.filter((language) => versions[language] !== ANALYZER_VERSIONS[language]));
 }
 
 function insertCodeAnalysis(
