@@ -17,7 +17,10 @@ export async function authorizeExistingPath(
   const canonical = await realpath(resolve(candidate)).catch(() => {
     throw new ProjectContextError(`${code}_NOT_FOUND`, `${label} does not exist: ${candidate}`);
   });
-  if (!allowedRoots.some((root) => isWithinRoot(root, canonical))) {
+  // Compare canonical forms on both sides: a root given as a Windows 8.3 short name
+  // (C:\Users\RUNNER~1), a symlink or a junction must still contain its own files.
+  const canonicalRoots = await Promise.all(allowedRoots.map((root) => realpath(root).catch(() => resolve(root))));
+  if (!canonicalRoots.some((root) => isWithinRoot(root, canonical))) {
     throw new ProjectContextError(code, `${label} is outside the configured allowed roots: ${canonical}`, {
       allowedRoots,
     });
