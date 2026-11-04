@@ -5,7 +5,7 @@ import type { ProjectRecord } from "../projects/project-service.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { nowIso } from "../shared/ids.js";
 import { authorizeOutputPath, isWithinRoot } from "../security/path-policy.js";
-import { convertLegacyNgrams, isNgramIndexCurrent, rebuildNgramIndex } from "../search/ngram-index.js";
+import { convertLegacyNgrams, hasLegacyNgrams, isNgramIndexCurrent, rebuildNgramIndex } from "../search/ngram-index.js";
 import { readContentProtection, type ContentProtectionReport } from "../indexing/content-protection.js";
 
 export interface DoctorResult {
@@ -38,7 +38,7 @@ export async function doctorProject(
   if (!isNgramIndexCurrent(db)) {
     issues.push("Unicode n-gram search index needs rebuilding; run project_index.");
   }
-  const conversionPending = Boolean(db.prepare("SELECT 1 FROM legacy_search_ngrams LIMIT 1").get());
+  const conversionPending = hasLegacyNgrams(db);
   if (conversionPending) {
     issues.push("Schema 10 search rows are still being converted; run project_index to finish, then a compacting project_cleanup.");
   }

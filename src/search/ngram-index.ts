@@ -89,13 +89,22 @@ export async function convertLegacyNgrams(db: SqliteDatabase, options: NgramRebu
       WHERE l.term > ? AND l.term <= ?`).run(from, to);
     db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('legacy_ngram_cursor', ?)").run(to);
   });
-  while (true) {
-    throwIfCancelled(options.signal);
-    const from = (readCursor.get() as string | undefined) ?? "";
-    const to = (batchEnd.get(from) ?? lastTerm.get(from)) as string | null;
-    if (to === null) break;
-    convert.immediate(from, to);
-    await batchBoundary(options);
+  try {
+    while (true) {
+      throwIfCancelled(options.signal);
+      const from = (readCursor.get() as string | undefined) ?? "";
+      const to = (batchEnd.get(from) ?? lastTerm.get(from)) as string | null;
+      if (to === null) break;
+      convert.immediate(from, to);
+      await batchBoundary(options);
+    }
+  } catch (error) {
+    // Keep per-item deletes indexed when a run stops early, e.g. on a full disk. Cancellation
+    // skips this so it returns promptly; the next run or a doctor repair restores the index.
+    if (!(error instanceof Error && error.name === "AbortError")) {
+      try { db.exec("CREATE INDEX IF NOT EXISTS search_terms_item_idx ON search_terms(item)"); } catch { /* still no room */ }
+    }
+    throw error;
   }
   db.exec("CREATE INDEX IF NOT EXISTS search_terms_item_idx ON search_terms(item)");
   resetLegacyNgrams(db);
@@ -154,6 +163,11 @@ export function matchingNgramItems(
 export function isNgramIndexCurrent(db: SqliteDatabase): boolean {
   return db.prepare("SELECT value FROM metadata WHERE key = 'ngram_schema_version'").pluck().get()
     === NGRAM_SCHEMA_VERSION;
+}
+
+/** Schema 10 rows still waiting for the integer-item conversion, read through the view until then. */
+export function hasLegacyNgrams(db: SqliteDatabase): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM legacy_search_ngrams LIMIT 1").get());
 }
 
 export async function rebuildNgramIndexIfNeeded(

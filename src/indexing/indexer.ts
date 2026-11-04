@@ -18,8 +18,11 @@ import { analyzeCode, CODE_ANALYSIS_VERSION, type CodeAnalysis } from "../code-i
 import { analysisLanguage, ANALYZER_VERSIONS, type AnalysisLanguage } from "../code-intelligence/languages.js";
 import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js";
 import {
-  convertLegacyNgrams, deleteItemNgrams, deleteItemsNgrams, hasItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams,
+  hasLegacyNgrams, convertLegacyNgrams, deleteItemNgrams, deleteItemsNgrams, hasItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams,
 } from "../search/ngram-index.js";
+import {
+  isStorageSpaceFailure, migrationFailureMessage, probeSpace, type SpaceProbe,
+} from "../maintenance/migration-space.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { createRunLogger } from "./run-log.js";
 import { INTERRUPTED_RUN_ERRORS } from "./index-lease.js";
@@ -43,6 +46,11 @@ const CONTENT_FINGERPRINT = sha256(`${CONTENT_RULES_FINGERPRINT}:${CHUNK_CHAR_LI
 // Like Git's racy-entry check: a file modified this close to its last read may have changed
 // again within the same timestamp, so it is re-read until a later read settles it.
 const RACY_WINDOW_MS = 2_000;
+// Schema 11 conversion writes the integer tables before the legacy table is dropped. Measured
+// growth is about a quarter of the database, so this stays a conservative estimate with a floor
+// that keeps small projects from being blocked by filesystem rounding.
+const NGRAM_CONVERSION_SPACE_RATIO = 0.25;
+const NGRAM_CONVERSION_SPACE_FLOOR_BYTES = 64 * 1024 * 1024;
 
 export interface IndexResult {
   runId: string;
@@ -70,6 +78,8 @@ export interface IndexOptions {
   onProgress?: (progress: IndexProgress) => void | Promise<void>;
   /** Run ID chosen by the caller, e.g. to record it in the index lease. */
   runId?: string;
+  /** Overrides free-space probing for the schema 11 n-gram conversion; used by tests. */
+  spaceProbe?: (path: string) => Promise<SpaceProbe>;
 }
 
 interface SourceRow {
@@ -84,6 +94,38 @@ interface SourceRow {
 function unchangedOnDisk(row: SourceRow, info: { size: number; mtimeMs: number }): boolean {
   return row.size_bytes === info.size && row.modified_ms === info.mtimeMs
     && info.mtimeMs < Date.parse(row.indexed_at) - RACY_WINDOW_MS;
+}
+
+export interface NgramConversionDecision {
+  convert: boolean;
+  requiredBytes: number;
+  availableBytes: number | null;
+}
+
+/**
+ * Decide whether schema 10 search rows can be converted during this run. Returns null when
+ * nothing is left to convert. An unreadable volume is not a reason to skip: the conversion
+ * commits batch by batch, so a run that still runs out of space only has to be repeated.
+ */
+export async function planNgramConversion(
+  db: SqliteDatabase,
+  probe: (path: string) => Promise<SpaceProbe> = probeSpace,
+): Promise<NgramConversionDecision | null> {
+  if (!hasLegacyNgrams(db)) return null;
+  let databaseBytes = 0;
+  try { databaseBytes = (await stat(db.name)).size; } catch { /* unknown size: keep the floor */ }
+  const requiredBytes = Math.max(NGRAM_CONVERSION_SPACE_FLOOR_BYTES, Math.floor(databaseBytes * NGRAM_CONVERSION_SPACE_RATIO));
+  if (!db.name || db.name === ":memory:") return { convert: true, requiredBytes, availableBytes: null };
+  try {
+    const space = await probe(db.name);
+    return { convert: space.availableBytes >= requiredBytes, requiredBytes, availableBytes: space.availableBytes };
+  } catch {
+    return { convert: true, requiredBytes, availableBytes: null };
+  }
+}
+
+function mebibytes(bytes: number | null): string {
+  return bytes === null ? "未知" : `${Math.ceil(bytes / (1024 * 1024))} MiB`;
 }
 
 function sourceNeedsTierRefresh(db: SqliteDatabase, sourceId: string, fullIndex: boolean): boolean {
@@ -246,7 +288,28 @@ export async function indexProject(
       ...(options.signal ? { signal: options.signal } : {}),
       onBatch: () => reportProgress(options, result, "finalizing", "search index"),
     };
-    await convertLegacyNgrams(db, searchIndexBatches);
+    const conversion = await planNgramConversion(db, options.spaceProbe ?? probeSpace);
+    if (conversion && !conversion.convert) {
+      log.record(
+        `磁盘可用空间不足，本轮暂不把旧版检索索引转换为整数编号（约需 ${mebibytes(conversion.requiredBytes)}，可用 ${mebibytes(conversion.availableBytes)}）；文件索引已完成，释放空间后再次运行即可继续转换。`,
+        undefined,
+        "warn",
+      );
+    } else {
+      if (conversion) log.record("开始把旧版检索索引转换为整数编号（一次性操作，可能需要一些时间）。");
+      try {
+        await convertLegacyNgrams(db, searchIndexBatches);
+        if (conversion) log.record("旧版检索索引转换完成。");
+      } catch (error) {
+        // Committed batches stay readable through the search_ngrams view; the next run resumes.
+        if (!isStorageSpaceFailure(error)) throw error;
+        log.record(
+          `转换旧版检索索引时空间不足，已完成的部分会保留：${migrationFailureMessage(error)}`,
+          undefined,
+          "warn",
+        );
+      }
+    }
     await rebuildNgramIndexIfNeeded(db, searchIndexBatches);
     await rebuildRelationTargets(db, result.indexed > 0 || result.removed > 0, {
       ...(options.signal ? { signal: options.signal } : {}),

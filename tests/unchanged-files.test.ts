@@ -74,7 +74,8 @@ describe("unchanged file detection", () => {
     const halfAnHourAgo = new Date(Date.now() - 1_800_000);
     await utimes(join(root, "touched.txt"), halfAnHourAgo, halfAnHourAgo);
     expect(await indexProject(db, project)).toMatchObject({ indexed: 0, skipped: 1 });
-    expect(db.prepare("SELECT modified_ms FROM sources").pluck().get()).toBe(halfAnHourAgo.getTime());
+    // Filesystems store the time at their own precision (ext4 reads 839 back as 838.999), so compare with stat.
+    expect(db.prepare("SELECT modified_ms FROM sources").pluck().get()).toBe((await stat(join(root, "touched.txt"))).mtimeMs);
   });
 
   it("keeps re-reading redacted files so the protection report stays complete", async () => {

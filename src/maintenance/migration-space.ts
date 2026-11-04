@@ -70,6 +70,11 @@ export async function checkMigrationSpace(input: {
   return { sufficient: checks.every(row => row.shortfallBytes === 0), checks, warnings };
 }
 
+/** Whether the failure was caused by the volume running out of space rather than by the data. */
+export function isStorageSpaceFailure(error: unknown): boolean {
+  return /database or disk is full|SQLITE_FULL|ENOSPC|disk full/i.test(error instanceof Error ? error.message : String(error));
+}
+
 export function migrationFailureMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
   if (/database or disk is full|SQLITE_FULL|ENOSPC|disk full/i.test(raw)) {
