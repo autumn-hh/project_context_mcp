@@ -26,12 +26,14 @@ export function createRunLogger(db: SqliteDatabase, runId: string) {
     const entry: RunLogEntry = { timestamp: nowIso(), level, message: message.slice(0, 300), ...(safePath !== undefined ? { path: safePath } : {}) };
     const size = Buffer.byteLength(JSON.stringify(entry), "utf8");
     log.totalEvents++;
-    if (final || (log.entries.length < 99 && bytes + size <= 30_000)) {
+    const retained = final || (log.entries.length < 99 && bytes + size <= 30_000);
+    if (retained) {
       log.entries.push(entry);
       bytes += size;
     } else log.truncated = true;
     if (path && path.length > 200) log.truncated = true;
-    if (final || log.totalEvents === 1 || log.totalEvents % 25 === 0) flush();
+    // Once the bounded log is full, periodic rewrites would only change the event counter.
+    if (final || log.totalEvents === 1 || (retained && log.totalEvents % 25 === 0)) flush();
   };
   return { record, flush };
 }
