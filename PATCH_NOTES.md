@@ -2,6 +2,10 @@
 
 每次向 GitHub 推送代码前，都必须在此文件中补充本次推送的用户可见修复、行为变化、重要实现和验证结果。
 
+## 未发布 — 减少无效索引（2026-11-04）
+
+- watcher 改为与索引器共用默认规则加根目录 `.gitignore`、`.project-context-ignore`，规则文件修改后立即重新加载。此前 watcher 只用内置默认规则：`.idea/workspace.xml`、`.vscode`、`.cursor` 等只被项目规则排除的路径一变化就触发全量索引，而索引器随后跳过它们，形成空跑。真实库统计：hrbust_front_new 21 天 3,963 次索引中 94% 无任何变化，hrbust_back_new 41 天 2,655 次中 86% 无变化；后者过去 24 小时唯一能触发 watcher 的改动是 IntelliJ 的 `.idea/workspace.xml`。
+
 ## 未发布 — 符号解析覆盖度与残留索引记录（2026-11-04）
 
 - `project_health` 新增 `codeIntelligence`，把已索引文件分为已解析代码、未解析代码、低相关目录代码和普通文本，返回未解析代码在代码文件中的占比与主要扩展名。只读取 `sources.path`，不改索引流程、不迁移数据库。`static`、`assets`、`plugins`、`vendors` 等低相关目录本来就不解析符号，单独计数、不算缺口；SQL、脚本、样式、标记、数据和文档归为普通文本。两份 README 与项目介绍改为实际支持的 9 种扩展名（原文漏写 Python/Go/Rust）。

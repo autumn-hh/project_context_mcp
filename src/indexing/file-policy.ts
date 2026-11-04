@@ -1,4 +1,6 @@
-import { extname, basename } from "node:path";
+import { readFileSync } from "node:fs";
+import { extname, basename, join } from "node:path";
+import ignore, { type Ignore } from "ignore";
 
 export const DEFAULT_IGNORE_PATTERNS = [
   ".git/",
@@ -68,6 +70,22 @@ export function defaultIgnorePatterns(rootPath: string): string[] {
   return basename(rootPath).toLowerCase() === ".codex"
     ? [...DEFAULT_IGNORE_PATTERNS, ...CODEX_RUNTIME_IGNORE_PATTERNS]
     : DEFAULT_IGNORE_PATTERNS;
+}
+
+/** Root-level files whose rules apply to indexing; nested .gitignore files are not read. */
+export const PROJECT_IGNORE_FILES: readonly string[] = [".gitignore", ".project-context-ignore"];
+
+/** Default patterns plus the project's root ignore files. The indexer and watcher must share this. */
+export function projectIgnoreMatcher(rootPath: string): Ignore {
+  const matcher = ignore().add(defaultIgnorePatterns(rootPath));
+  for (const fileName of PROJECT_IGNORE_FILES) {
+    try {
+      matcher.add(readFileSync(join(rootPath, fileName), "utf8"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+  return matcher;
 }
 
 const secretNames = new Set([

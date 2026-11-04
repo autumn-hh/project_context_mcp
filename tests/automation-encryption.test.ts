@@ -64,6 +64,36 @@ describe("automatic indexing and encrypted backups", () => {
     }
   });
 
+  it("ignores changes excluded by project ignore files and reloads edited rules", async () => {
+    await writeFile(join(projectRoot, ".gitignore"), ".idea/\n", "utf8");
+    await writeFile(join(projectRoot, ".project-context-ignore"), "generated/\n", "utf8");
+    await mkdir(join(projectRoot, ".idea"), { recursive: true });
+    await mkdir(join(projectRoot, "generated"), { recursive: true });
+    await mkdir(join(projectRoot, "scratch"), { recursive: true });
+    const app = await ProjectContextApp.create();
+    let projectId: string | undefined;
+    try {
+      const project = await app.openProject(projectRoot);
+      projectId = project.id;
+      app.watchStart(project.id, 100, false);
+      await writeFile(join(projectRoot, ".idea", "workspace.xml"), "<project />\n", "utf8");
+      await writeFile(join(projectRoot, "generated", "output.txt"), "generated\n", "utf8");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(app.watchList()[0]?.lastEventAt).toBeNull();
+
+      await writeFile(join(projectRoot, ".project-context-ignore"), "generated/\nscratch/\n", "utf8");
+      await app.watchFlush(project.id);
+      const afterRulesChanged = app.watchList()[0]?.lastEventAt;
+      expect(afterRulesChanged).not.toBeNull();
+      await writeFile(join(projectRoot, "scratch", "notes.txt"), "scratch\n", "utf8");
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(app.watchList()[0]?.lastEventAt).toBe(afterRulesChanged);
+    } finally {
+      if (projectId && app.watchList().some((watch) => watch.projectId === projectId)) app.watchStop(projectId);
+      app.close();
+    }
+  });
+
   it("round-trips encrypted backups and rejects wrong or tampered authentication", async () => {
     const app = await ProjectContextApp.create();
     try {

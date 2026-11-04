@@ -486,6 +486,7 @@ retain conservative whole-file invalidation. Registry schema v2 adds project arc
 MCP `project_open` synchronizes the index and starts controlled change tracking automatically. Explicit
 `project_watch_start`, `project_watch_stop`, and `project_index` tools remain available for diagnostics and
 manual control. The watcher ignores internal databases, VCS metadata, dependencies, and common build output,
+applies the same root `.gitignore` and `.project-context-ignore` rules as the indexer (reloaded when edited),
 debounces other events, and runs the same incremental index. It never accepts candidates and is released when
 the MCP connection closes.
 

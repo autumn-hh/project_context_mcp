@@ -1,7 +1,7 @@
 import { watch, type FSWatcher } from "node:fs";
-import ignore, { type Ignore } from "ignore";
+import type { Ignore } from "ignore";
 import { ProjectContextError } from "../shared/errors.js";
-import { defaultIgnorePatterns, isCandidateTextFile, isSensitivePath } from "./file-policy.js";
+import { PROJECT_IGNORE_FILES, isCandidateTextFile, isSensitivePath, projectIgnoreMatcher } from "./file-policy.js";
 
 export const DEFAULT_WATCH_DEBOUNCE_MS = 300;
 
@@ -41,9 +41,13 @@ export class ProjectWatchService {
 
     let entry: WatchEntry;
     try {
-      const matcher = ignore().add(defaultIgnorePatterns(rootPath));
+      const matcher = projectIgnoreMatcher(rootPath);
       const watcher = watch(rootPath, { recursive: true }, (_eventType, filename) => {
-        if (filename && ignoredWatchPath(matcher, filename.toString())) return;
+        const relativePath = filename ? filename.toString().replaceAll("\\", "/").replace(/^\.\//, "") : "";
+        if (PROJECT_IGNORE_FILES.includes(relativePath)) {
+          // Reload edited rules; the index run below reconciles newly ignored or restored files.
+          try { entry.matcher = projectIgnoreMatcher(rootPath); } catch { /* the index run reports unreadable rules */ }
+        } else if (ignoredWatchPath(entry.matcher, relativePath)) return;
         entry.lastEventAt = new Date().toISOString();
         entry.dirty = true;
         entry.changeVersion += 1;
@@ -162,8 +166,7 @@ export class ProjectWatchService {
   }
 }
 
-function ignoredWatchPath(matcher: Ignore, filename: string): boolean {
-  const relativePath = filename.replaceAll("\\", "/").replace(/^\.\//, "");
+function ignoredWatchPath(matcher: Ignore, relativePath: string): boolean {
   if (!relativePath || relativePath.startsWith("../")) return false;
   return matcher.ignores(relativePath)
     || matcher.ignores(`${relativePath.replace(/\/$/, "")}/`)

@@ -1,18 +1,17 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
-import ignore from "ignore";
 import type { Ignore } from "ignore";
 import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
 import { createId, nowIso, sha256 } from "../shared/ids.js";
 import {
   redactLikelySecretLines,
-  defaultIgnorePatterns,
   detectKind,
   isCandidateTextFile,
   isGeneratedTextArtifact,
   isLowRelevanceSourcePath,
   isSensitivePath,
+  projectIgnoreMatcher,
 } from "./file-policy.js";
 import { analyzeCode, CODE_ANALYSIS_VERSION, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
 import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js";
@@ -95,14 +94,7 @@ export async function indexProject(
   try {
     const analysisChanged = db.prepare("SELECT value FROM metadata WHERE key = 'code_analysis_version'").pluck().get()
       !== CODE_ANALYSIS_VERSION;
-    const matcher = ignore().add(defaultIgnorePatterns(project.rootPath));
-    for (const fileName of [".gitignore", ".project-context-ignore"]) {
-      try {
-        matcher.add(await readFile(join(project.rootPath, fileName), "utf8"));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
-    }
+    const matcher = projectIgnoreMatcher(project.rootPath);
 
     const existingRows = db.prepare("SELECT id, path, content_hash FROM sources").all() as SourceRow[];
     const existingByPath = new Map(existingRows.map((row) => [row.path, row]));
