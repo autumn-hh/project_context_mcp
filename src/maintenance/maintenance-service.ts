@@ -5,7 +5,7 @@ import type { ProjectRecord } from "../projects/project-service.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { nowIso } from "../shared/ids.js";
 import { authorizeOutputPath, isWithinRoot } from "../security/path-policy.js";
-import { isNgramIndexCurrent, rebuildNgramIndex } from "../search/ngram-index.js";
+import { convertLegacyNgrams, isNgramIndexCurrent, rebuildNgramIndex } from "../search/ngram-index.js";
 import { readContentProtection, type ContentProtectionReport } from "../indexing/content-protection.js";
 
 export interface DoctorResult {
@@ -38,6 +38,10 @@ export async function doctorProject(
   if (!isNgramIndexCurrent(db)) {
     issues.push("Unicode n-gram search index needs rebuilding; run project_index.");
   }
+  const conversionPending = Boolean(db.prepare("SELECT 1 FROM legacy_search_ngrams LIMIT 1").get());
+  if (conversionPending) {
+    issues.push("Schema 10 search rows are still being converted; run project_index to finish, then a compacting project_cleanup.");
+  }
 
   const sourcePaths = db.prepare("SELECT path FROM sources").pluck().all() as string[];
   const missing: string[] = [];
@@ -65,9 +69,13 @@ export async function doctorProject(
     await rebuildNgramIndex(db);
     counts = projectCounts(db);
     repaired.push("Rebuilt the Unicode n-gram search index from canonical tables.");
+  } else if (repair && conversionPending) {
+    await convertLegacyNgrams(db);
+    counts = projectCounts(db);
+    repaired.push("Converted the remaining schema 10 search rows.");
   }
   const unresolvedIssues = issues.filter((issue) => !(
-    repair && ((hasFtsIssue && issue.includes("FTS index")) || issue.includes("n-gram"))
+    repair && ((hasFtsIssue && issue.includes("FTS index")) || issue.includes("n-gram") || issue.includes("Schema 10 search rows"))
   ));
   return {
     ok: integrity === "ok" && unresolvedIssues.length === 0,
@@ -159,7 +167,7 @@ function projectCounts(db: SqliteDatabase): Record<string, number> {
     memoryFts: scalar(db, "SELECT COUNT(*) FROM memories_fts"),
     staleMemories: scalar(db, "SELECT COUNT(*) FROM memories WHERE status IN ('stale', 'conflicted')"),
     pendingCandidates: scalar(db, "SELECT COUNT(*) FROM memory_candidates WHERE status = 'pending'"),
-    searchNgrams: scalar(db, "SELECT COUNT(*) FROM search_ngrams"),
+    searchNgrams: scalar(db, "SELECT COUNT(*) FROM search_terms"),
   };
 }
 

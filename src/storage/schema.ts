@@ -1,7 +1,7 @@
 import type { SqliteDatabase } from "./database.js";
 
 export const REGISTRY_SCHEMA_VERSION = 3;
-export const PROJECT_SCHEMA_VERSION = 10;
+export const PROJECT_SCHEMA_VERSION = 11;
 
 export function migrateRegistry(db: SqliteDatabase): void {
   migrate(db, "projects", [{ version: 1, sql: `
@@ -286,6 +286,45 @@ export function migrateProject(db: SqliteDatabase): void {
     );
     CREATE INDEX IF NOT EXISTS memory_knowledge_memory_status_idx ON memory_knowledge(memory_id,status);
     CREATE INDEX IF NOT EXISTS memory_knowledge_status_updated_idx ON memory_knowledge(status,updated_at DESC,id);
+    ` },
+    // N-gram rows reference a stable integer item instead of repeating the text item ID in both
+    // the primary key and the item index (about 73% smaller on real projects). Opening must stay
+    // fast, so the old rows are only renamed here; the next index run converts them in term
+    // order (convertLegacyNgrams in ngram-index.ts). Rows up to legacy_ngram_cursor are read
+    // from the new tables and later ones from the legacy table, and every delete also removes
+    // legacy rows, so the search_ngrams view stays exact for queries and older clients.
+    { version: 11, sql: `
+    ALTER TABLE search_ngrams RENAME TO legacy_search_ngrams;
+    CREATE TABLE IF NOT EXISTS search_items (
+      id INTEGER PRIMARY KEY,
+      kind TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      UNIQUE (kind, item_id)
+    );
+    CREATE TABLE IF NOT EXISTS search_terms (
+      term TEXT NOT NULL,
+      item INTEGER NOT NULL,
+      PRIMARY KEY (term, item)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS search_terms_item_idx ON search_terms(item);
+    CREATE VIEW IF NOT EXISTS search_ngrams AS
+      SELECT t.term AS term, i.kind AS item_kind, i.item_id AS item_id
+      FROM search_terms t JOIN search_items i ON i.id = t.item
+      UNION ALL
+      SELECT l.term, l.item_kind, l.item_id FROM legacy_search_ngrams l
+      WHERE l.term > COALESCE((SELECT value FROM metadata WHERE key = 'legacy_ngram_cursor'), '');
+    CREATE TRIGGER IF NOT EXISTS search_ngrams_insert INSTEAD OF INSERT ON search_ngrams BEGIN
+      INSERT OR IGNORE INTO search_items (kind, item_id) VALUES (NEW.item_kind, NEW.item_id);
+      INSERT OR IGNORE INTO search_terms (term, item)
+        SELECT NEW.term, id FROM search_items WHERE kind = NEW.item_kind AND item_id = NEW.item_id;
+    END;
+    CREATE TRIGGER IF NOT EXISTS search_ngrams_delete INSTEAD OF DELETE ON search_ngrams BEGIN
+      DELETE FROM search_terms WHERE term = OLD.term
+        AND item = (SELECT id FROM search_items WHERE kind = OLD.item_kind AND item_id = OLD.item_id);
+      DELETE FROM search_items WHERE kind = OLD.item_kind AND item_id = OLD.item_id
+        AND NOT EXISTS (SELECT 1 FROM search_terms WHERE item = search_items.id);
+      DELETE FROM legacy_search_ngrams WHERE term = OLD.term AND item_kind = OLD.item_kind AND item_id = OLD.item_id;
+    END;
     ` },
   ]);
 }

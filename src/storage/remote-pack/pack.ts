@@ -9,7 +9,7 @@ import { ProjectContextError } from "../../shared/errors.js";
 import { openDatabase, type SqliteDatabase } from "../database.js";
 import { migrateProject, migrateRegistry } from "../schema.js";
 import { rebuildNgramIndex } from "../../search/ngram-index.js";
-import { invalidPack, manifestSchema, PACK_LIMITS, PACK_MAGIC, parseRow, TABLES,
+import { invalidPack, manifestSchema, PACK_LIMITS, PACK_MAGIC, PACK_SCHEMA_VERSION, parseRow, TABLES,
   type PackManifest, type PackRow, type PackTable } from "./schema.js";
 
 export interface ExportPackOptions {
@@ -26,7 +26,7 @@ export async function exportKnowledgePack(options: ExportPackOptions): Promise<P
     const bodyPath = join(temporary, "body");
     const fd = openSync(bodyPath, "wx", 0o600);
     const manifest: PackManifest = { format: "project-context-knowledge-pack", version: 1, kind: "snapshot",
-      schemaVersion: options.db.pragma("user_version", { simple: true }) as PackManifest["schemaVersion"],
+      schemaVersion: Math.min(options.db.pragma("user_version", { simple: true }) as number, PACK_SCHEMA_VERSION) as PackManifest["schemaVersion"],
       sourceProject: { id: options.project.id, name: options.project.name }, createdAt: new Date().toISOString(),
       policy: { codeIndex: false, sourceExcerpts: options.includeSourceExcerpts ?? false,
         userRules: "explicit-selection", registrySnapshotAt: null }, shards: [] };

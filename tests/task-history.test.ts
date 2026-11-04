@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrateProject, PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { restoreSchema10Ngrams } from "./helpers/schema.js";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import {
   cancelTask, checkpointTask, completeTask, getTask, listTaskHistory, startTask, type TaskCheckpoint,
@@ -32,6 +33,7 @@ function checkpoint(summary: string): TaskCheckpoint {
 }
 
 function downgradeToVersion7(db: SqliteDatabase): void {
+  restoreSchema10Ngrams(db);
   db.exec("DROP TABLE task_checkpoint_requests; DROP TABLE task_events;");
   for (const column of ["updated", "created", "completed"]) {
     db.exec(`DROP INDEX tasks_${column}_id_idx; DROP INDEX tasks_status_${column}_id_idx;`);

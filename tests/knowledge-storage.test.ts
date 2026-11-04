@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { z } from "zod/v4";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
-import { migrateProject } from "../src/storage/schema.js";
+import { migrateProject, PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
 import { remember } from "../src/memory/memory-service.js";
 import { knowledgeRowSchema, type KnowledgeDocument } from "../src/memory/knowledge-schema.js";
 import { knowledgeSnapshot, listMemoryKnowledge, proposeMemoryKnowledge, reviewMemoryKnowledge } from "../src/memory/knowledge-service.js";
@@ -106,7 +106,7 @@ describe("reviewed entity knowledge storage compatibility", () => {
     const restored = await restoreKnowledgePack(path, join(root, "legacy"), [root]);
     const copy = openDatabase(restored.projectDatabase);
     try {
-      expect(copy.pragma("user_version", { simple: true })).toBe(10);
+      expect(copy.pragma("user_version", { simple: true })).toBe(PROJECT_SCHEMA_VERSION);
       expect(copy.prepare("SELECT id FROM memories").pluck().get()).toBe(memory.id);
       expect(copy.prepare("SELECT COUNT(*) FROM memory_knowledge").pluck().get()).toBe(0);
     } finally { copy.close(); }

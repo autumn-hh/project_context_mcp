@@ -17,7 +17,9 @@ import {
 import { analyzeCode, CODE_ANALYSIS_VERSION, type CodeAnalysis } from "../code-intelligence/tree-sitter-analyzer.js";
 import { analysisLanguage, ANALYZER_VERSIONS, type AnalysisLanguage } from "../code-intelligence/languages.js";
 import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js";
-import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
+import {
+  convertLegacyNgrams, deleteItemNgrams, deleteItemsNgrams, hasItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams,
+} from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { createRunLogger } from "./run-log.js";
 import { INTERRUPTED_RUN_ERRORS } from "./index-lease.js";
@@ -88,9 +90,7 @@ function sourceNeedsTierRefresh(db: SqliteDatabase, sourceId: string, fullIndex:
   if (fullIndex) return false;
   if (db.prepare("SELECT 1 FROM symbols WHERE source_id = ? LIMIT 1").get(sourceId)) return true;
   const chunks = db.prepare("SELECT id FROM chunks WHERE source_id = ?").pluck().all(sourceId) as string[];
-  if (chunks.length === 0) return false;
-  const placeholders = chunks.map(() => "?").join(", ");
-  return Boolean(db.prepare(`SELECT 1 FROM search_ngrams WHERE item_kind = 'chunk' AND item_id IN (${placeholders}) LIMIT 1`).get(...chunks));
+  return hasItemNgrams(db, "chunk", chunks);
 }
 
 export async function indexProject(
@@ -242,10 +242,12 @@ export async function indexProject(
       await removeOrphanedFtsRows(db, "symbols_fts", "symbol_id", "symbols", result, options);
     }
 
-    await rebuildNgramIndexIfNeeded(db, {
+    const searchIndexBatches = {
       ...(options.signal ? { signal: options.signal } : {}),
       onBatch: () => reportProgress(options, result, "finalizing", "search index"),
-    });
+    };
+    await convertLegacyNgrams(db, searchIndexBatches);
+    await rebuildNgramIndexIfNeeded(db, searchIndexBatches);
     await rebuildRelationTargets(db, result.indexed > 0 || result.removed > 0, {
       ...(options.signal ? { signal: options.signal } : {}),
       onBatch: () => reportProgress(options, result, "finalizing", "relation targets"),
@@ -307,12 +309,11 @@ function deleteSearchItems(
   fts: { table: "chunks_fts" | "symbols_fts"; idColumn: "chunk_id" | "symbol_id" } | null,
   ids: string[],
 ): void {
+  deleteItemsNgrams(db, kind, ids);
+  if (!fts) return;
   for (let offset = 0; offset < ids.length; offset += DELETE_ID_BATCH_SIZE) {
     const batch = ids.slice(offset, offset + DELETE_ID_BATCH_SIZE);
-    const placeholders = batch.map(() => "?").join(", ");
-    db.prepare(`DELETE FROM search_ngrams WHERE item_kind = ? AND item_id IN (${placeholders})`)
-      .run(kind, ...batch);
-    if (fts) db.prepare(`DELETE FROM ${fts.table} WHERE ${fts.idColumn} IN (${placeholders})`).run(...batch);
+    db.prepare(`DELETE FROM ${fts.table} WHERE ${fts.idColumn} IN (${batch.map(() => "?").join(", ")})`).run(...batch);
   }
 }
 

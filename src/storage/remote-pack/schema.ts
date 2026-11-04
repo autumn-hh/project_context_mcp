@@ -2,7 +2,6 @@ import { z } from "zod/v4";
 import { taskWorkflowShape } from '../../tasks/task-workflow.js';
 import { memoryStatusSchema, memoryTypeSchema } from "../../memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../../memory/user-memory-service.js";
-import { PROJECT_SCHEMA_VERSION } from "../schema.js";
 import { ProjectContextError } from "../../shared/errors.js";
 import { knowledgeRowSchema } from "../../memory/knowledge-schema.js";
 
@@ -53,9 +52,15 @@ export const rowSchemas = {
     supersedes_id: id.nullable() }).strict(),
 } satisfies Record<PackTable, z.ZodType>;
 
+/**
+ * Layout version of the packaged knowledge tables. They last changed in project schema 10;
+ * later project versions changed only derived search indexes, which packages never contain.
+ */
+export const PACK_SCHEMA_VERSION = 10;
+
 export const manifestSchema = z.object({
   format: z.literal("project-context-knowledge-pack"), version: z.literal(1), kind: z.literal("snapshot"),
-  schemaVersion: z.union([z.literal(9), z.literal(PROJECT_SCHEMA_VERSION)]), createdAt: timestamp,
+  schemaVersion: z.union([z.literal(9), z.literal(PACK_SCHEMA_VERSION)]), createdAt: timestamp,
   sourceProject: z.object({ id, name: text }).strict(),
   policy: z.object({ codeIndex: z.literal(false), sourceExcerpts: z.boolean(),
     userRules: z.literal("explicit-selection"), registrySnapshotAt: timestamp.nullable() }).strict(),

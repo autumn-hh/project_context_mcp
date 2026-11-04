@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { analyzeCode } from "../src/code-intelligence/tree-sitter-analyzer.js";
 import { openDatabase } from "../src/storage/database.js";
 import { migrateProject, migrateRegistry, PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { restoreSchema10Ngrams } from "./helpers/schema.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -44,6 +45,7 @@ describe("Phase 2 foundations", () => {
       migrateProject(db);
       db.prepare("INSERT INTO metadata (key, value) VALUES ('legacy', 'preserved')").run();
       db.exec("DROP TABLE symbols_fts; DROP TABLE relations; DROP TABLE symbols; DROP TABLE git_state; DROP TABLE memory_sources; DROP TABLE memory_candidates;");
+      restoreSchema10Ngrams(db);
       db.pragma("user_version = 1");
       db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
@@ -65,12 +67,13 @@ describe("Phase 2 foundations", () => {
       migrateProject(db);
       db.exec("DROP TABLE symbols_fts");
       db.exec("ALTER TABLE memory_sources DROP COLUMN source_excerpt_hash; ALTER TABLE memory_sources DROP COLUMN source_excerpt;");
+      restoreSchema10Ngrams(db);
       db.pragma("user_version = 2");
       db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
       expect(db.pragma("user_version", { simple: true })).toBe(PROJECT_SCHEMA_VERSION);
       expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'symbols_fts'").get()).toBeTruthy();
-      expect(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'search_ngrams'").get()).toBeTruthy();
+      expect(db.prepare("SELECT type FROM sqlite_master WHERE name IN ('search_terms', 'search_items', 'search_ngrams') ORDER BY name").pluck().all()).toEqual(["table", "view", "table"]);
     } finally {
       db.close();
     }
@@ -84,6 +87,7 @@ describe("Phase 2 foundations", () => {
       migrateProject(db);
       db.exec("DROP INDEX chunks_source_id_idx");
       db.exec("ALTER TABLE memory_sources DROP COLUMN source_excerpt_hash; ALTER TABLE memory_sources DROP COLUMN source_excerpt;");
+      restoreSchema10Ngrams(db);
       db.pragma("user_version = 4");
       db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
       migrateProject(db);
@@ -102,6 +106,7 @@ describe("Phase 2 foundations", () => {
     try {
       migrateProject(db);
       db.exec("ALTER TABLE index_runs DROP COLUMN log_json; DROP INDEX index_runs_started_idx; DROP INDEX index_runs_status_started_idx;");
+      restoreSchema10Ngrams(db);
       db.pragma("user_version = 6");
       db.prepare("INSERT INTO index_runs (id, started_at, status, scanned) VALUES ('legacy-run', '2025-01-01', 'completed', 42)").run();
       migrateProject(db);

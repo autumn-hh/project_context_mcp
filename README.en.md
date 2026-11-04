@@ -476,6 +476,13 @@ content is rebuilt in small committed batches during the next `project_index`, w
 progress reporting remain active. An interrupted rebuild stays marked incomplete and is safely retried by a
 later index run. `project_doctor` reports this state and can also repair it explicitly.
 
+Schema v11 makes n-gram rows reference integer item numbers (`search_items` / `search_terms`), about 73% smaller on
+real projects and faster to query. Opening a database only renames the old table; the next `project_index` converts
+it in place in term-ordered batches without re-tokenizing, can be interrupted and resumed, and leaves search results
+unchanged meanwhile. `search_ngrams` remains as a compatibility view that older processes can still read and write,
+and knowledge packs still declare schema 10, so either version can import the other's packs. The freed space stays in
+the database free list until a compacting `project_cleanup` runs. Restart all related MCP/Web processes after updating.
+
 Schema v5 adds an index on `chunks(source_id)`. This keeps source removal and foreign-key checks proportional
 to the affected chunks instead of repeatedly scanning the entire chunk table.
 

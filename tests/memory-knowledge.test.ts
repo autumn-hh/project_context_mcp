@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { migrateProject, PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
+import { restoreSchema10Ngrams } from "./helpers/schema.js";
 import { remember, updateMemoryStatus } from "../src/memory/memory-service.js";
 import {
   knowledgeDocumentSchema, knowledgeRowSchema, type KnowledgeDocument,
@@ -36,10 +37,10 @@ describe("reviewed local memory knowledge", () => {
 
   it("migrates v9 databases without altering existing memories and cascades annotation deletion", () => {
     const item = memory();
+    restoreSchema10Ngrams(db);
     db.exec("DROP TABLE memory_knowledge; PRAGMA user_version=9");
     migrateProject(db);
-    expect(PROJECT_SCHEMA_VERSION).toBe(10);
-    expect(db.pragma("user_version", { simple: true })).toBe(10);
+    expect(db.pragma("user_version", { simple: true })).toBe(PROJECT_SCHEMA_VERSION);
     expect(db.prepare("SELECT content FROM memories WHERE id=?").pluck().get(item.id)).toBe(quote);
     const candidate = proposeMemoryKnowledge(db, item.id, document());
     expect(candidate.status).toBe("pending");
