@@ -1,6 +1,6 @@
 {
   "name": "project-context-mcp",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Local project memory for coding agents. Optional backup and sync.",
   "type": "module",
   "bin": {
