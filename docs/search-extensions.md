@@ -22,6 +22,8 @@ Tree-sitter 支持 TS/JS/TSX/JSX，以及 Python、Go、Rust 与 Vue/Svelte 组�
 
 Java、C、C++、C#、PHP 由 `src/code-intelligence/c-family-analyzer.ts` 按语言配置解析，语法包在首次遇到对应文件时才加载。C/C++ 头文件（`.h`、`.hpp` 等）统一用 C++ 语法；C++ 中带 `类名::` 的类外定义记为方法。C# 基类列表不区分父类与接口，按 .NET 的 `I` 前缀约定判断实现关系；PHP 的 trait 记为接口，`use`、`require`/`include` 的字面路径记为导入，调用统一写成 `this.save`、`User.find` 这样的点号形式以便解析目标。各语言过滤 getter/setter、标准库与集合方法、常见类型构造等调用噪音；hrbust_back_new 的 Java 调用关系因此从约 14.9 万条降到 4.6 万条。
 
+跨文件关系按语法推断，不做编译器级类型分析：Java 导入按包路径对应到源文件（含静态导入、嵌套类型和 `.*` 包导入），同包类型无需导入；字段、参数与局部变量的声明类型用于把 `userMapper.insertSelective()` 连到 `UserMapper` 中的方法，找不到时沿已解析的父类/接口最多向上 4 层查找（如公共 `BaseService` 里的 `queryByKey`）；同一类中的重载视为同一目标，`new Type()` 连到被创建的类。PHP 的 `use` 按命名空间路径后缀、`require`/`include` 按相对路径解析，C/C++ 的 `#include "x.h"` 先找同目录再按唯一路径后缀匹配，`<stdio.h>` 等系统头文件不解析。C# 的 `using` 指向命名空间而非文件，暂不解析；`var` 声明、链式调用的返回类型和第三方库类型无法推断，保持未解析，不连接同名但无关的符号。hrbust_back_new 实测：Java 调用解析到目标 3.3% → 67.0%（跨文件 16 → 24,407 条），导入解析到文件 0 → 45.6%，其余主要是 JDK 与第三方库。
+
 新增语言提取定义、导入和调用，Python 继承、Rust impl/trait 关系进入关系表；已解析的同文件调用能扩展搜索。动态 Python 调用、Go 跨 package/receiver 类型推断、Rust 宏和完整跨模块解析不等同于编译器语义分析；不确定目标保留未解析，不随意连接同名符号。需要精确语义定义时可配置 LSP。
 
 ## Embedding 插件（P3-2）

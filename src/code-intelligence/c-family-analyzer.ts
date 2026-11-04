@@ -20,14 +20,19 @@ interface CallTarget {
   arguments: number;
 }
 
+/** Declared types of the fields, parameters and locals visible at a call, by variable name. */
+type TypeScope = ReadonlyMap<string, string>;
+
 interface LanguageSpec {
   grammar: () => unknown;
   /** Declaration node type to symbol kind. */
   symbols: Readonly<Record<string, string>>;
   imports: Readonly<Record<string, (node: Node) => string | null>>;
-  calls: Readonly<Record<string, (node: Node) => CallTarget | null>>;
+  calls: Readonly<Record<string, (node: Node, scope: TypeScope) => CallTarget | null>>;
   heritage: (node: Node, kind: string) => Array<[RelationType, string]>;
   noise: (call: CallTarget) => boolean;
+  /** Variables a declaration introduces with their declared type, so `name.method()` can name the type. */
+  typedNames?: (node: Node) => Array<[string, string]>;
 }
 
 const require = createRequire(import.meta.url);
@@ -54,6 +59,38 @@ function listedTypes(node: Node | null | undefined, skip: readonly string[] = []
 
 function call(target: string, method: string, argumentsNode: Node | null): CallTarget {
   return { target, method, arguments: argumentCount(argumentsNode) };
+}
+
+const JAVA_PRIMITIVES = new Set(["integral_type", "floating_point_type", "boolean_type", "void_type"]);
+
+/** A Java declared type as a simple class name: `Map<K, V>` → Map, `com.x.Foo[]` → Foo; none for `var` and primitives. */
+function javaDeclaredType(type: Node | null): string | null {
+  if (!type || JAVA_PRIMITIVES.has(type.type) || type.text.includes("|")) return null;
+  const name = stripGenerics(type.text).replace(/\[\]/gu, "").split(".").at(-1) ?? "";
+  return /^[A-Z][\w$]*$/u.test(name) ? name : null;
+}
+
+function javaTypedNames(node: Node): Array<[string, string]> {
+  const type = javaDeclaredType(node.childForFieldName("type"));
+  if (!type) return [];
+  if (node.type === "field_declaration" || node.type === "local_variable_declaration") {
+    return node.namedChildren.filter((child) => child.type === "variable_declarator")
+      .flatMap((declarator) => { const name = declarator.childForFieldName("name")?.text; return name ? [[name, type] as [string, string]] : []; });
+  }
+  const name = node.childForFieldName("name")?.text;
+  return name ? [[name, type]] : [];
+}
+
+/** `repo.find()` → `RepoType.find` when repo has a declared type; `this.repo.find()` likewise. */
+function javaCall(node: Node, scope: TypeScope): CallTarget | null {
+  const plain = memberCall(node, "object");
+  const name = node.childForFieldName("name");
+  const object = node.childForFieldName("object");
+  if (!plain || !name || !object) return plain;
+  const variable = object.type === "identifier" ? object.text
+    : object.type === "field_access" && object.childForFieldName("object")?.type === "this" ? object.childForFieldName("field")?.text : undefined;
+  const type = variable ? scope.get(variable) : undefined;
+  return type ? { ...plain, target: `${type}.${name.text}` } : plain;
 }
 
 function memberCall(node: Node, objectField: string): CallTarget | null {
@@ -140,9 +177,11 @@ const SPECS: Readonly<Record<FamilyLanguage, LanguageSpec>> = {
       },
     },
     calls: {
-      method_invocation: (node) => memberCall(node, "object"),
+      method_invocation: javaCall,
       object_creation_expression: (node) => creation(node, node.childForFieldName("type")),
     },
+    typedNames: (node) => ["field_declaration", "local_variable_declaration", "formal_parameter", "catch_formal_parameter",
+      "enhanced_for_statement", "resource"].includes(node.type) ? javaTypedNames(node) : [],
     heritage: (node) => [
       ...listedTypes(node.childForFieldName("superclass")).map((type): [RelationType, string] => ["EXTENDS", type]),
       ...listedTypes(node.childForFieldName("interfaces")).map((type): [RelationType, string] => ["IMPLEMENTS", type]),
@@ -282,10 +321,12 @@ export function analyzeCFamily(path: string, content: string): CodeAnalysis | nu
     });
   };
 
-  const visit = (node: Node, owner: CodeSymbol | null, containers: string[], containerKind: string | null) => {
+  const declared = (nodes: Node[]) => nodes.flatMap((item) => spec.typedNames?.(item) ?? []);
+  const visit = (node: Node, owner: CodeSymbol | null, containers: string[], containerKind: string | null, types: TypeScope) => {
     let current = owner;
     let nested = containers;
     let nestedKind = containerKind;
+    let nestedTypes = types;
     let kind = spec.symbols[node.type];
     const nameNode = kind ? symbolName(node) : null;
     if (kind && nameNode) {
@@ -312,15 +353,21 @@ export function analyzeCFamily(path: string, content: string): CodeAnalysis | nu
       if (CONTAINER_KINDS.has(kind)) {
         nested = [...containers, ...scope, name];
         nestedKind = kind;
+        // Fields are visible throughout the class body, including in methods declared before them.
+        if (spec.typedNames && body) nestedTypes = new Map([...types, ...declared(body.namedChildren)]);
+      } else if (spec.typedNames) {
+        // Parameters and locals shadow fields; same-named locals in different blocks keep the last type.
+        const locals = node.descendantsOfType(["formal_parameter", "local_variable_declaration", "catch_formal_parameter", "enhanced_for_statement", "resource"]);
+        nestedTypes = new Map([...types, ...declared(locals)]);
       }
       for (const [type, target] of spec.heritage(node, kind)) addRelation(node, current, target, type);
     }
     const importTarget = spec.imports[node.type]?.(node);
     if (importTarget) addRelation(node, current, importTarget, "IMPORTS");
-    const target = spec.calls[node.type]?.(node);
+    const target = spec.calls[node.type]?.(node, nestedTypes);
     if (target && !spec.noise(target)) addRelation(node, current, target.target, "CALLS");
-    for (const child of node.namedChildren) visit(child, current, nested, nestedKind);
+    for (const child of node.namedChildren) visit(child, current, nested, nestedKind, nestedTypes);
   };
-  visit(tree.rootNode, null, [], null);
+  visit(tree.rootNode, null, [], null, new Map());
   return { language: language as FamilyLanguage, symbols, relations };
 }

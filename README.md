@@ -92,7 +92,7 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 默认排除 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、字节码、编译缓存和覆盖率/性能分析产物
 - 使用 Tree-sitter 索引 TypeScript/JavaScript（`.ts`、`.tsx`、`.js`、`.jsx`、`.mjs`、`.cjs`）、Python、Go、Rust、Java、C、C++（含 `.h` 等头文件与 `.ino`）、C#、PHP 以及 Vue/Svelte 组件 `<script>` 块的符号与代码关系；`static`、`assets`、`plugins`、`vendors` 等低相关目录中的文件只保留文本检索
 - Kotlin、Swift、Scala、Ruby、Dart 等语言的源码仍可全文搜索，但不解析符号；`project_health` 的 `codeIntelligence` 返回这类文件数、主要扩展名及其在代码文件中的占比，低相关目录中的代码单独计数
-- 搜索与任务上下文包含导入、调用、继承和实现关系
+- 搜索与任务上下文包含导入、调用、继承和实现关系；Java 按导入、同包与字段/参数声明类型跨文件解析调用并沿父类型查找继承方法，PHP 与 C/C++ 解析项目内的导入和包含文件，均为语法推断，第三方库与无法推断类型的调用保持未解析
 - 自动检测 Git、Mercurial（hg）和 Subversion（svn），记录版本、分支、工作区状态与差异哈希证据，但不持久化完整 diff
 - 从 Git、Mercurial、Subversion 变更、已索引知识文档和已完成任务生成待审核记忆候选
 - 各类版本控制与无版本控制项目均支持稳定的候选去重和文档候选替代

@@ -25,7 +25,7 @@ export const ANALYZED_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(LANG
  */
 export const ANALYZER_VERSIONS: Readonly<Record<AnalysisLanguage, string>> = {
   typescript: "3", tsx: "3", javascript: "3", jsx: "3", python: "3", go: "3", rust: "3", vue: "1", svelte: "1",
-  java: "1", c: "1", cpp: "1", csharp: "1", php: "1",
+  java: "2", c: "1", cpp: "1", csharp: "1", php: "1",
 };
 
 export function analysisLanguage(path: string): AnalysisLanguage | null {
