@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { ProjectContextApp } from "../src/core/app.js";
 import { MigrationJobs } from "../src/ui/migration-jobs.js";
 import { startUiServer, type UiServerHandle } from "../src/ui/server.js";
+import { timeout } from "./helpers/timeouts.js";
 
 describe("durable background migration jobs", () => {
   let root: string;
@@ -60,7 +61,7 @@ describe("durable background migration jobs", () => {
     expect((await (await fetch(base, { headers })).json()).requestId).toBe(requestId);
     const unauthenticated = await fetch(`${base}/${requestId}`, { headers: { "X-Project-Context-UI": "1" } });
     expect(unauthenticated.status).toBe(401);
-  }, 15000);
+  }, timeout(15000));
 
   it("blocks competing requests across managers and legacy mutations", async () => {
     const jobs = new MigrationJobs();

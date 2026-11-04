@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { posix } from 'node:path';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
+import { timeout } from './helpers/timeouts.js';
 
 it('ships every relative Markdown document linked directly from either README', async () => {
   // Ask npm for its actual packlist: files declarations alone miss ignore rules.
@@ -20,4 +21,4 @@ it('ships every relative Markdown document linked directly from either README', 
       .filter(target => !packed.has(target));
     expect(missing, path + ' links missing from npm package').toEqual([]);
   }
-}, 30_000);
+}, timeout(30_000));

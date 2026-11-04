@@ -16,7 +16,8 @@
 - 新增 GitHub Actions（`.github/workflows/ci.yml`）：推送 main 与 Pull Request 时在 Windows 和 Ubuntu 上用 Node 22 依次执行 `npm ci`、`npm run typecheck`、`npm test`、`npm run build`，同一分支的新推送取消旧运行，权限只读。不新增依赖、不改代码风格；`.github` 不进入 npm 包。Windows 文件句柄占用测试在 Linux 上按原有条件跳过，hg/svn 测试使用模拟命令，无需安装。
 - 首次在 GitHub 上运行时 Ubuntu 通过，Windows 有 10 项测试失败，暴露了一个原有缺陷：`authorizeExistingPath` 只把待检查路径解析为规范形式，允许根目录按原样比较，根目录以 Windows 8.3 短名（Runner 的临时目录 `C:\Users\RUNNER~1`）、符号链接或目录联接给出时，其中的项目会被误判为越界并拒绝打开；本机用户名没有短名，本地测试未能发现。现在与 `authorizeOutputPath` 一致，两侧都先解析为规范路径再比较，新增用目录联接复现的回归测试（修复前失败、修复后通过）。工作流的 `actions/checkout`、`actions/setup-node` 由 v4 升至 v7，改在 Node 24 运行时执行，消除 Node 20 弃用警告。
 - 第二次运行暴露两处测试本身的平台差异：测试拿 `os.tmpdir()` 拼出的短名路径与代码返回的规范长路径逐字比较，Windows Runner 上 9 项失败并拖慢整轮；Linux ext4 以纳秒精度保存修改时间，`utimes` 设置的毫秒值读回为 `…838.999`。新增测试启动文件 `tests/helpers/setup.ts`，运行前把 `TEMP`/`TMP`/`TMPDIR` 设为规范路径，子进程同样生效；修改时间断言改为与 `stat` 读回值比较。本机用带 8.3 短名的临时目录复现了 CI 的失败与卡顿，修复后全量通过。
-- 验证：0.13.0 最终为 63 文件 / 466 项测试，在本机普通临时目录与 8.3 短名临时目录下均通过。
+- 第三次运行 Ubuntu 通过；Windows Runner 整轮测试 144 秒（本机约 25 秒），4 项本机 1～2.5 秒的测试超过 15～20 秒上限。测试超时在 `CI` 环境变量存在时统一放大 4 倍（`tests/helpers/timeouts.ts`，全局与逐项超时一致），本机仍用原上限；Windows 作业先把工作区和临时目录排除出 Defender 实时扫描。
+- 验证：0.13.0 最终为 63 文件 / 466 项测试，在本机普通临时目录、8.3 短名临时目录以及 `CI=true` 下均通过。
 
 ### 转换前检查磁盘空间
 

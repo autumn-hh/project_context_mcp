@@ -8,6 +8,7 @@ import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject } from "../src/storage/schema.js";
 import { indexProject } from "../src/indexing/indexer.js";
 import type { ProjectRecord } from "../src/projects/project-service.js";
+import { timeout } from "./helpers/timeouts.js";
 
 const require = createRequire(import.meta.url);
 
@@ -95,5 +96,5 @@ describe("SQLite concurrent indexing", () => {
     expect(db.prepare("SELECT COUNT(*) FROM sources WHERE path LIKE 'references/%'").pluck().get()).toBe(0);
     expect(db.prepare("SELECT COUNT(*) FROM sources WHERE path = 'main.ts'").pluck().get()).toBe(1);
     expect(db.pragma("quick_check", { simple: true })).toBe("ok");
-  }, 15_000);
+  }, timeout(15000));
 });

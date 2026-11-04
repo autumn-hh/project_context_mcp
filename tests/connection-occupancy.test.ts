@@ -9,6 +9,7 @@ import { connectionDirectory, databaseOccupancy } from "../src/storage/connectio
 import { PACKAGE_VERSION } from "../src/shared/version.js";
 import { ProjectContextApp } from "../src/core/app.js";
 import { startUiServer } from "../src/ui/server.js";
+import { timeout } from "./helpers/timeouts.js";
 
 describe("database connection occupancy", () => {
   let directory: string;
@@ -48,7 +49,7 @@ describe("database connection occupancy", () => {
     }
     expect(await readdir(connectionDirectory(databasePath))).toEqual([]);
     expect((await databaseOccupancy(databasePath)).holders).toEqual([]);
-  }, 20000);
+  }, timeout(20000));
 
   it("identifies registered old versions without storing command lines or credentials", async () => {
     const db = openDatabase(databasePath);
@@ -65,7 +66,7 @@ describe("database connection occupancy", () => {
       expect(JSON.stringify(report)).not.toContain("argv");
       expect(JSON.stringify(report)).not.toContain("environment");
     } finally { db.close(); }
-  }, 15000);
+  }, timeout(15000));
 
   it("serves authenticated occupancy without opening the project database", async () => {
     const previous = Object.fromEntries(["PROJECT_CONTEXT_HOME", "PROJECT_CONTEXT_ALLOWED_ROOTS", "PROJECT_CONTEXT_ALLOWED_OUTPUT_ROOTS"].map(key => [key, process.env[key]]));
@@ -96,7 +97,7 @@ describe("database connection occupancy", () => {
         if (value === undefined) delete process.env[key]; else process.env[key] = value;
       }
     }
-  }, 15000);
+  }, timeout(15000));
 
   it.skipIf(process.platform !== "win32")("discovers an unregistered legacy process through Windows file handles", async () => {
     const db = openDatabase(databasePath);
@@ -110,5 +111,5 @@ describe("database connection occupancy", () => {
     expect(report.holders.find(holder => holder.pid === child!.pid)).toMatchObject({
       version: null, roles: ["未登记进程"], restartRecommended: true, evidence: ["operating-system"],
     });
-  }, 15000);
+  }, timeout(15000));
 });

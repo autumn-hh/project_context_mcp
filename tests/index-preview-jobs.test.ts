@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import type { Worker } from "node:worker_threads";
 import { ProjectContextApp } from "../src/core/app.js";
 import { IndexPreviewJobs } from "../src/ui/index-preview-jobs.js";
+import { timeout } from "./helpers/timeouts.js";
 
 describe("bounded index preview workers", () => {
   let root: string;
@@ -43,14 +44,14 @@ describe("bounded index preview workers", () => {
     const next = jobs.run(projectId);
     expect(next).not.toBe(first);
     await expect(next).resolves.toEqual(expected);
-  }, 20000);
+  }, timeout(20000));
 
   it("retains domain error codes and continues queued work after a failed preview", async () => {
     const failed = expect(jobs.run("missing-project")).rejects.toMatchObject({ code: "PROJECT_NOT_FOUND" });
     const queued = jobs.run(projectId);
     await failed;
     await expect(queued).resolves.toMatchObject({ totalIndexedFiles: 1 });
-  }, 20000);
+  }, timeout(20000));
 
   it("bounds requests and closes both active and queued work without hanging", async () => {
     const pending = Array.from({ length: 8 }, (_, index) => jobs.run(index === 0 ? projectId : `missing-${index}`));
@@ -70,7 +71,7 @@ describe("bounded index preview workers", () => {
     await writeFile(join(directory, "active.json"), JSON.stringify({ requestId }));
     await writeFile(join(directory, `${requestId}.json`), JSON.stringify({ status: "running", ownerPid: process.pid }));
     await expect(jobs.run(projectId)).rejects.toMatchObject({ code: "INDEX_MIGRATION_RUNNING", details: { requestId } });
-  }, 20000);
+  }, timeout(20000));
 
   it("rejects interrupted workers and releases their slot for queued requests", async () => {
     const failed = expect(jobs.run(projectId)).rejects.toMatchObject({ code: "INDEX_PREVIEW_WORKER_EXITED" });
@@ -79,5 +80,5 @@ describe("bounded index preview workers", () => {
     await worker.terminate();
     await failed;
     await queued;
-  }, 20000);
+  }, timeout(20000));
 });
