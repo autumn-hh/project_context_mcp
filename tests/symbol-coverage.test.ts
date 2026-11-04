@@ -14,12 +14,16 @@ describe("symbol coverage", () => {
       "src/main/resources/static/js/page.js", "plugins/legacy/Legacy.java",
       "styles/app.scss", "index.html", "package.json", "README.md", "db/schema.sql", "deploy.sh", "Makefile",
     ])).toEqual({
-      analyzedSources: 4,
-      unanalyzedCodeSources: 2,
-      unanalyzedCodeShare: 0.3333,
-      unanalyzed: [{ extension: ".java", sources: 2 }],
+      analyzedSources: 6,
+      unanalyzedCodeSources: 0,
+      unanalyzedCodeShare: 0,
+      unanalyzed: [],
       lowRelevanceCodeSources: 2,
       otherTextSources: 7,
+    });
+    expect(symbolCoverage(["src/App.kt", "src/Main.swift", "src/Tool.KT", "src/app.ts"])).toMatchObject({
+      analyzedSources: 1, unanalyzedCodeSources: 3, unanalyzedCodeShare: 0.75,
+      unanalyzed: [{ extension: ".kt", sources: 2 }, { extension: ".swift", sources: 1 }],
     });
   });
 
@@ -29,12 +33,12 @@ describe("symbol coverage", () => {
   });
 
   it("rounds the share, orders ties by extension and caps the listed extensions", () => {
-    const kinds = [".c", ".cpp", ".cs", ".dart", ".go", ".h", ".kt", ".lua", ".php", ".rb", ".scala", ".swift", ".vue"];
+    const kinds = [".dart", ".fs", ".go", ".groovy", ".kt", ".kts", ".lua", ".m", ".mm", ".pl", ".rb", ".scala", ".swift", ".vue"];
     const result = symbolCoverage(kinds.map((extension) => `src/file${extension}`));
     expect(result.analyzedSources).toBe(2);
-    expect(result.unanalyzedCodeSources).toBe(11);
-    expect(result.unanalyzedCodeShare).toBe(0.8462);
-    expect(result.unanalyzed.map((item) => item.extension)).toEqual([".c", ".cpp", ".cs", ".dart", ".h", ".kt", ".lua", ".php", ".rb", ".scala"]);
+    expect(result.unanalyzedCodeSources).toBe(12);
+    expect(result.unanalyzedCodeShare).toBe(0.8571);
+    expect(result.unanalyzed.map((item) => item.extension)).toEqual([".dart", ".fs", ".groovy", ".kt", ".kts", ".lua", ".m", ".mm", ".pl", ".rb"]);
   });
 
   it("returns a zero share for a project without code", () => {
@@ -56,6 +60,12 @@ describe("symbol coverage", () => {
       ".rs": "fn a() {}\n",
       ".vue": "<template><p /></template>\n<script setup>\nfunction a() {}\n</script>\n",
       ".svelte": "<script>\nfunction a() {}\n</script>\n<p />\n",
+      ".java": "class A { void a() {} }",
+      ".c": "int a(void) { return 0; }",
+      ".cs": "class A { void B() {} }",
+      ".php": "<?php function a() {}",
+      ".cc": "void a() {}", ".cpp": "void a() {}", ".cxx": "void a() {}", ".ino": "void setup() {}",
+      ".h": "int a(void);\nstruct A { int x; };", ".hh": "class A {};", ".hpp": "class A {};", ".hxx": "class A {};",
     };
     for (const extension of SYMBOL_SUPPORTED_EXTENSIONS) {
       const source = snippets[extension];

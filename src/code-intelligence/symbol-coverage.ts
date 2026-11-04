@@ -10,10 +10,8 @@ export const SYMBOL_SUPPORTED_EXTENSIONS = ANALYZED_EXTENSIONS;
  * counted as a code-intelligence gap.
  */
 export const UNANALYZED_CODE_EXTENSIONS: ReadonlySet<string> = new Set([
-  ".java", ".kt", ".kts", ".scala", ".groovy",
-  ".cs", ".fs", ".vb",
-  ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ino", ".m", ".mm",
-  ".php", ".rb", ".swift", ".dart", ".lua", ".pl", ".r",
+  ".kt", ".kts", ".scala", ".groovy", ".fs", ".vb", ".m", ".mm",
+  ".rb", ".swift", ".dart", ".lua", ".pl", ".r",
 ]);
 
 const MAX_LISTED_EXTENSIONS = 10;

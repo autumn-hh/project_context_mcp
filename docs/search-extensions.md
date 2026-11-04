@@ -18,7 +18,11 @@ P3 图谱导出供审阅，不用来替换本地索引。其 indexedRevision 是
 
 ## 多语言结构（P3-3）
 
-Tree-sitter 支持 TS/JS/TSX/JSX，以及 Python、Go、Rust 与 Vue/Svelte 组件。组件只解析 `<script>`（含 `<script setup>`、`lang="ts"`）块，其余内容按原位置留空，符号行号与组件文件一致；`src=` 外链脚本跳过，模板中的事件绑定不产生调用关系。新增语言提取定义、导入和调用，Python 继承、Rust impl/trait 关系进入关系表；已解析的同文件调用能扩展搜索。动态 Python 调用、Go 跨 package/receiver 类型推断、Rust 宏和完整跨模块解析不等同于编译器语义分析；不确定目标保留未解析，不随意连接同名符号。需要精确语义定义时可配置 LSP。
+Tree-sitter 支持 TS/JS/TSX/JSX，以及 Python、Go、Rust 与 Vue/Svelte 组件。组件只解析 `<script>`（含 `<script setup>`、`lang="ts"`）块，其余内容按原位置留空，符号行号与组件文件一致；`src=` 外链脚本跳过，模板中的事件绑定不产生调用关系。
+
+Java、C、C++、C#、PHP 由 `src/code-intelligence/c-family-analyzer.ts` 按语言配置解析，语法包在首次遇到对应文件时才加载。C/C++ 头文件（`.h`、`.hpp` 等）统一用 C++ 语法；C++ 中带 `类名::` 的类外定义记为方法。C# 基类列表不区分父类与接口，按 .NET 的 `I` 前缀约定判断实现关系；PHP 的 trait 记为接口，`use`、`require`/`include` 的字面路径记为导入，调用统一写成 `this.save`、`User.find` 这样的点号形式以便解析目标。各语言过滤 getter/setter、标准库与集合方法、常见类型构造等调用噪音；hrbust_back_new 的 Java 调用关系因此从约 14.9 万条降到 4.6 万条。
+
+新增语言提取定义、导入和调用，Python 继承、Rust impl/trait 关系进入关系表；已解析的同文件调用能扩展搜索。动态 Python 调用、Go 跨 package/receiver 类型推断、Rust 宏和完整跨模块解析不等同于编译器语义分析；不确定目标保留未解析，不随意连接同名符号。需要精确语义定义时可配置 LSP。
 
 ## Embedding 插件（P3-2）
 

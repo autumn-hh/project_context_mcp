@@ -5,11 +5,12 @@ import Rust from "tree-sitter-rust";
 import { extname } from "node:path";
 import { sha256 } from "../shared/ids.js";
 import type { CodeAnalysis, CodeRelation, CodeSymbol } from "./tree-sitter-analyzer.js";
+import { analyzeCFamily } from "./c-family-analyzer.js";
 
 export function analyzeAdditionalLanguage(path: string, content: string): CodeAnalysis | null {
   const extension = extname(path).toLowerCase();
   const language = extension === ".py" ? "python" : extension === ".go" ? "go" : extension === ".rs" ? "rust" : null;
-  if (!language) return null;
+  if (!language) return analyzeCFamily(path, content);
   const parser = new Parser(); parser.setLanguage(language === "python" ? Python : language === "go" ? Go : Rust);
   const tree = content.length < 32768 ? parser.parse(content) : parser.parse(index => content.slice(index, index + 8192));
   const symbols: CodeSymbol[] = []; const relations: CodeRelation[] = [];

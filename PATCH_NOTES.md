@@ -5,6 +5,8 @@
 ## 未发布 — 更多语言的符号解析（2026-11-04）
 
 - Vue 与 Svelte 组件解析 `<script>` 块（含 `<script setup>`、Options API 的方法、`lang="ts"/"tsx"`），复用现有 TS/JS 语法，无新依赖。组件中脚本以外的字符替换为空格、保留换行，符号行列与 ID 直接对应组件原文件；属性值含 `>`（如 Vue 的 `generic`）也能正确定位，`src=` 外链脚本跳过，只有模板的组件计为已解析、无符号。已入库且内容未变的组件按新增语言版本自动补齐符号。hrbust_front_new 的 39 个组件全部解析成功，26 个产出 319 个函数符号，耗时 0.3 秒；其余 13 个只有模板、导入或 `defineProps`。模板事件绑定（如 `@click`）不产生调用关系。
+- 新增 Java、C、C++、C#、PHP 符号与关系解析，依赖精确固定为 `tree-sitter-java@0.23.5`、`tree-sitter-c@0.23.2`、`tree-sitter-cpp@0.23.4`、`tree-sitter-c-sharp@0.23.1`、`tree-sitter-php@0.23.12`，均兼容现有 `tree-sitter@0.21.1` 绑定并自带 Windows 预编译，按需加载。提取类、接口、枚举、record、方法、构造函数、函数与 C/C++ 类型，以及继承/实现、导入（含 PHP `require`/`include` 字面路径）和调用；按语言过滤 getter/setter、标准库、集合方法与常见类型构造等调用噪音，并删除了 Vue/Svelte 与这五种语言在"未解析代码"中的条目。已入库且内容未变的文件按新增语言版本自动补齐。
+- 真实代码验证：hrbust_back_new 的 2,824 个 Java 文件全部解析成功，提取 49,105 个符号，调用关系约 4.6 万条（评估原型未过滤时约 14.9 万条），用时 14 秒；本机 `node_modules` 中 73 个 C++ 与 15 个 C 文件、daxing-monitor 项目 26 个 C# 文件、hrbust_front_new 268 个 PHP 文件均零失败，PHP 导入 274 条与 `require_once`/`include` 计数一致。库副本端到端：升级并首次索引 196 秒（含 Java 首次提取与一次性移除 2,939 个本地排除文件），之后空跑 0.8 秒；压缩后 215 → 373 MB（+158 MB，评估时按旧存储结构估算为 +400～480 MB）；`codeIntelligence` 缺口 0.9996 → 0；搜索 `insertSelective` 直接命中各 Mapper 的方法符号。Kotlin、Swift 没有 Windows 预编译、项目中也几乎没有，未加入。
 
 ## 未发布 — 检索索引瘦身，Schema v11（2026-11-04）
 

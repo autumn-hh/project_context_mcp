@@ -78,7 +78,7 @@ describe("Project Context core", () => {
   });
 
   it("reports code files that are indexed as text but produce no symbols", async () => {
-    await writeFile(join(projectRoot, "src", "Main.java"), "public class Main { void run() {} }\n", "utf8");
+    await writeFile(join(projectRoot, "src", "Main.kt"), "class Main { fun run() {} }\n", "utf8");
     await mkdir(join(projectRoot, "static"), { recursive: true });
     await writeFile(join(projectRoot, "static", "lib.js"), "function vendored() {}\n", "utf8");
     const app = await ProjectContextApp.create();
@@ -89,7 +89,7 @@ describe("Project Context core", () => {
         analyzedSources: 1,
         unanalyzedCodeSources: 1,
         unanalyzedCodeShare: 0.5,
-        unanalyzed: [{ extension: ".java", sources: 1 }],
+        unanalyzed: [{ extension: ".kt", sources: 1 }],
         lowRelevanceCodeSources: 1,
         otherTextSources: 1,
       });
