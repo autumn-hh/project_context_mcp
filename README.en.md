@@ -488,7 +488,10 @@ MCP `project_open` synchronizes the index and starts controlled change tracking 
 `project_watch_start`, `project_watch_stop`, and `project_index` tools remain available for diagnostics and
 manual control. The watcher ignores internal databases, VCS metadata, dependencies, and common build output,
 applies the same root `.gitignore` and `.project-context-ignore` rules as the indexer (reloaded when edited),
-debounces other events, and runs the same incremental index. It never accepts candidates and is released when
+debounces other events, and runs the same incremental index. When several processes (for example Claude Code,
+Codex, and the Web workbench) watch one project, an index lease in the database lets only one of them index at a
+time; the others wait and skip when that run already covered the file changes they saw. The holder renews the lease
+every 30 seconds; if its process exits, the lease lapses within 2 minutes and its unfinished run is marked failed. It never accepts candidates and is released when
 the MCP connection closes.
 
 Encrypted backups use a versioned authenticated format with a random salt and IV, scrypt key derivation, and

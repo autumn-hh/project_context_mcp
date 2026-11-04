@@ -14,6 +14,7 @@ import { normalizeTaskSummaryTitles, previewTaskSummaryTitles } from "../memory/
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
 import { indexProject, type IndexOptions, type IndexResult } from "../indexing/indexer.js";
 import { readContentProtection } from "../indexing/content-protection.js";
+import { waitForOtherIndexer, withIndexLease } from "../indexing/index-lease.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import { readSearchRanking, readSearchRankingSync, writeSearchRanking, type SearchRankingSettings } from "../search/search-ranking.js";
 import {
@@ -274,11 +275,11 @@ export class ProjectContextApp {
     }
     activeIndexes.add(projectId);
     try {
-      return await this.withDbAsync(projectId, async (db) => {
+      return await this.withDbAsync(projectId, (db) => withIndexLease(db, options.signal, async (runId) => {
         const sourceHashes = new Map((db.prepare("SELECT path, content_hash FROM sources").all() as Array<{
           path: string; content_hash: string;
         }>).map((row) => [row.path, row.content_hash]));
-        const result = await indexProject(db, project, options);
+        const result = await indexProject(db, project, { ...options, runId });
         const vcs = await captureVersionControlState(db, project.rootPath);
         const vcsCandidates = generateVersionControlCandidates(db, vcs);
         const vcsChangedPaths = new Set(vcs.changes.map((change) => change.path));
@@ -309,10 +310,23 @@ export class ProjectContextApp {
           git: safeGit,
           vcs: safeVcs,
         };
-      });
+      }));
     } finally {
       activeIndexes.delete(projectId);
     }
+  }
+
+  /**
+   * Whether an error-free run started after `time`, after waiting for any other process's run.
+   * Watchers in several processes see the same file events; this lets all but one of them skip.
+   */
+  async indexedSince(projectId: string, time: string): Promise<boolean> {
+    return this.withDbAsync(projectId, async (db) => {
+      await waitForOtherIndexer(db);
+      return Boolean(db.prepare(
+        "SELECT 1 FROM index_runs WHERE status = 'completed' AND errors_json = '[]' AND started_at > ? LIMIT 1",
+      ).get(time));
+    });
   }
 
   async readProjectIgnore(projectId: string): Promise<{ content: string }> {
@@ -1010,9 +1024,10 @@ function safeMigrationDirectory(path: string): boolean {
 
 const activeMigrations = new Set<string>();
 const activeIndexes = new Set<string>();
-const projectWatches = new ProjectWatchService(async (projectId) => {
+const projectWatches = new ProjectWatchService(async (projectId, changedAt) => {
   const app = await ProjectContextApp.create();
   try {
+    if (changedAt && await app.indexedSince(projectId, changedAt)) return;
     await app.index(projectId);
   } finally {
     app.close();

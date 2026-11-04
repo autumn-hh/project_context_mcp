@@ -98,6 +98,31 @@ describe("Project Context core", () => {
     }
   });
 
+  it("waits for another process's index run and lets watchers reuse a run that covers their change", async () => {
+    const app = await ProjectContextApp.create();
+    try {
+      const project = await app.openProject(projectRoot);
+      const changedAt = new Date().toISOString();
+      const db = app.projects.projectDatabase(project.id);
+      try {
+        db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES ('index_lease', ?)").run(JSON.stringify({
+          owner: "other-process", pid: 1, runId: "idx_other", acquiredAt: changedAt, expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        }));
+        const started = Date.now();
+        setTimeout(() => db.prepare("DELETE FROM metadata WHERE key = 'index_lease'").run(), 600);
+        await app.index(project.id);
+        expect(Date.now() - started).toBeGreaterThanOrEqual(600);
+        expect(db.prepare("SELECT COUNT(*) FROM metadata WHERE key = 'index_lease'").pluck().get()).toBe(0);
+      } finally {
+        db.close();
+      }
+      expect(await app.indexedSince(project.id, changedAt)).toBe(true);
+      expect(await app.indexedSince(project.id, new Date().toISOString())).toBe(false);
+    } finally {
+      app.close();
+    }
+  });
+
   it("marks index runs left running for over a day as failed and keeps younger ones", async () => {
     const app = await ProjectContextApp.create();
     try {

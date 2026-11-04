@@ -30,7 +30,8 @@ interface WatchEntry extends ProjectWatchStatus {
 export class ProjectWatchService {
   private readonly entries = new Map<string, WatchEntry>();
 
-  constructor(private readonly runIndex: (projectId: string) => Promise<unknown>) {}
+  /** `changedAt` is the latest file event this run must cover, or null for an initial index. */
+  constructor(private readonly runIndex: (projectId: string, changedAt: string | null) => Promise<unknown>) {}
 
   start(projectId: string, rootPath: string, debounceMs = DEFAULT_WATCH_DEBOUNCE_MS, initialIndex = true): ProjectWatchStatus {
     if (!Number.isInteger(debounceMs) || debounceMs < 100 || debounceMs > 60_000) {
@@ -141,9 +142,10 @@ export class ProjectWatchService {
     entry.dirty = false;
     entry.indexing = true;
     const targetVersion = entry.changeVersion;
+    const changedAt = entry.lastEventAt;
     entry.run = (async () => {
       try {
-        await this.runIndex(entry.projectId);
+        await this.runIndex(entry.projectId, changedAt);
         entry.indexedVersion = Math.max(entry.indexedVersion, targetVersion);
         entry.lastIndexAt = new Date().toISOString();
         entry.lastError = null;

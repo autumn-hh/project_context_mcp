@@ -20,6 +20,7 @@ import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js
 import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { createRunLogger } from "./run-log.js";
+import { INTERRUPTED_RUN_ERRORS } from "./index-lease.js";
 import { readContentProtection, saveContentProtection, safeReportPath, type ContentProtectionReport } from "./content-protection.js";
 
 const MAX_FILE_SIZE = 1_000_000;
@@ -65,6 +66,8 @@ export interface IndexProgress {
 export interface IndexOptions {
   signal?: AbortSignal;
   onProgress?: (progress: IndexProgress) => void | Promise<void>;
+  /** Run ID chosen by the caller, e.g. to record it in the index lease. */
+  runId?: string;
 }
 
 interface SourceRow {
@@ -95,7 +98,7 @@ export async function indexProject(
   project: ProjectRecord,
   options: IndexOptions = {},
 ): Promise<IndexResult> {
-  const runId = createId("idx");
+  const runId = options.runId ?? createId("idx");
   const startedAt = nowIso();
   const interruptedRuns = markInterruptedRuns(db, startedAt);
   db.prepare("INSERT INTO index_runs (id, started_at, status) VALUES (?, ?, 'running')")
@@ -568,11 +571,10 @@ async function reportProgress(
 
 function markInterruptedRuns(db: SqliteDatabase, now: string): number {
   const cutoff = new Date(Date.parse(now) - STALE_RUNNING_RUN_MS).toISOString();
-  const errors = JSON.stringify([{ path: "<index>", message: "Index run did not finish; its process exited before recording a result." }]);
   return db.prepare(`
     UPDATE index_runs SET status = 'failed', completed_at = ?, errors_json = ?
     WHERE status = 'running' AND started_at < ?
-  `).run(now, errors, cutoff).changes;
+  `).run(now, INTERRUPTED_RUN_ERRORS, cutoff).changes;
 }
 
 function finishRun(db: SqliteDatabase, result: IndexResult, status: "completed" | "failed"): void {

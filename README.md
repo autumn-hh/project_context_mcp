@@ -487,7 +487,7 @@ Schema v5 为 `chunks(source_id)` 添加索引，使来源删除和外键检查�
 
 项目 Schema v6 为文件来源记忆绑定增加段落摘录和摘录哈希。当整文件哈希变化但标准化后的来源段落仍然存在时，绑定会更新文件哈希与行号范围并保持活跃；段落变化或缺失时则变为 `stale`。没有摘录的旧版绑定继续使用保守的整文件失效策略。注册表 Schema v2 增加项目归档状态和用户记忆。
 
-MCP 的 `project_open` 会完成索引并自动启动受控 watcher；显式的 `project_watch_start`、`project_watch_stop` 和 `project_index` 继续作为诊断与手动控制接口。watcher 只在 MCP 或 CLI 进程生命周期内存在，会忽略内部数据库、版本控制元数据、依赖和常见构建目录，并与索引器使用同一套根目录 `.gitignore` 和 `.project-context-ignore` 规则（修改后立即重新加载），对其余文件事件防抖并运行相同的增量索引。它不会接受记忆候选；MCP 连接关闭时会释放 watcher。
+MCP 的 `project_open` 会完成索引并自动启动受控 watcher；显式的 `project_watch_start`、`project_watch_stop` 和 `project_index` 继续作为诊断与手动控制接口。watcher 只在 MCP 或 CLI 进程生命周期内存在，会忽略内部数据库、版本控制元数据、依赖和常见构建目录，并与索引器使用同一套根目录 `.gitignore` 和 `.project-context-ignore` 规则（修改后立即重新加载），对其余文件事件防抖并运行相同的增量索引。多个进程（如同时运行的 Claude Code、Codex 与 Web 工作台）监听同一项目时，数据库内的索引租约保证同一时间只有一个进程索引；其他进程等待其结束，若该次索引已覆盖自己看到的文件变化则直接跳过。持有者每 30 秒续期，进程退出后租约 2 分钟内失效，其未完成的运行记录随即标记为失败。它不会接受记忆候选；MCP 连接关闭时会释放 watcher。
 
 加密备份使用带版本号的认证格式，包含随机盐和 IV、scrypt 密钥派生以及 AES-256-GCM。MCP 和 CLI 只接受环境变量名称 `passphraseEnv`，不接受原始口令。口令不会被存储，因此一旦丢失，备份将无法恢复。无论成功还是失败，明文临时备份文件都会被删除。
 
