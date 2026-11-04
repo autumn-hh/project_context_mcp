@@ -143,6 +143,11 @@ describe("localhost rule manager", () => {
     expect(appScript).toContain('"factory-station-label"');
     expect(appScript).toContain("factory-work-orders");
     expect(appScript).toContain("等待验证结果");
+    expect(pageHtml).toContain('id="portrait-storage-hint"');
+    expect(pageHtml).toContain('id="reclaim-dialog"');
+    expect(pageHtml).toContain("启用自动维护（默认开启）");
+    expect(appScript).toContain("renderStorageHint(portrait.storage)");
+    expect(() => new Function(appScript)).not.toThrow();
 
     const unauthenticated = await api(origin, "/api/bootstrap");
     expect(unauthenticated.response.status).toBe(401);
@@ -365,7 +370,7 @@ describe("localhost rule manager", () => {
     ]));
   });
 
-  it("previews database cleanup, requires project confirmation and saves opt-in maintenance settings", async () => {
+  it("previews database cleanup, requires project confirmation and saves default-on maintenance settings", async () => {
     const app = await ProjectContextApp.create();
     const project = await app.openProject(projectRoot);
     await app.index(project.id);
@@ -396,7 +401,11 @@ describe("localhost rule manager", () => {
       expect((await api(ui.url, `${base}/index-logs?${query}`, { cookie })).response.status).toBe(400);
     }
     const settings = await api(ui.url, `${base}/maintenance`, { cookie });
-    expect(settings.body).toMatchObject({ enabled: false, retentionDays: 30, lastRun: null });
+    // On by default: the first index already ran it, before the old logs above were added.
+    expect(settings.body).toMatchObject({ enabled: true, retentionDays: 30, lastRun: expect.objectContaining({ deletedIndexRuns: 0 }) });
+    expect((await api(ui.url, `${base}/portrait`, { cookie })).body).toMatchObject({
+      storage: { databaseBytes: expect.any(Number), reclaimableBytes: expect.any(Number), autoVacuum: "none", automaticMaintenance: true, retentionDays: 30 },
+    });
     const preview = await api(ui.url, `${base}/cleanup`, { method: "POST", cookie, body: {} });
     expect(preview.response.status).toBe(200);
     expect(preview.body).toMatchObject({ dryRun: true, retentionDays: 30, deletedIndexRuns: 0, vacuumCompleted: false });
@@ -419,6 +428,8 @@ describe("localhost rule manager", () => {
     expect(executed.body).toMatchObject({ dryRun: false, deletedIndexRuns: 5, vacuumCompleted: true, after: expect.any(Object), history: [expect.objectContaining({ deletedIndexRuns: 5, trigger: "manual", phase: "finished" })] });
     expect((executed.body as { details: unknown }).details).toEqual((preview.body as { details: unknown }).details);
     expect((await api(ui.url, `${base}/storage`, { cookie })).body).toMatchObject({ cleanupHistory: (executed.body as { history: unknown }).history });
+    // The first compaction switches the database to step-wise reclamation.
+    expect((await api(ui.url, `${base}/portrait`, { cookie })).body).toMatchObject({ storage: { autoVacuum: "incremental" } });
     const badInterval = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: true, retentionDays: 60, intervalHours: 0 } });
     expect(badInterval.response.status).toBe(400);
     const enabled = await api(ui.url, `${base}/maintenance`, { method: "PUT", cookie, body: { enabled: true, retentionDays: 60, intervalHours: 48 } });

@@ -20,6 +20,7 @@ import { validateRemoteTarget } from "./storage/remote/s3.js";
 import { SYNC_TABLES } from "./storage/sync/event-store.js";
 import { registerTeamCli } from "./team/cli.js";
 import { registerExtensionsCli } from "./extensions-cli.js";
+import { reportStoppedServers } from "./shared/process-freshness.js";
 
 const program = new Command()
   .name("project-context")
@@ -143,6 +144,7 @@ program.command("watch")
     };
     try {
       print(app.watchStart(projectId, options.debounce, options.initialIndex));
+      void reportStoppedServers();
       await new Promise<void>((resolve) => {
         process.once("SIGINT", resolve);
         process.once("SIGTERM", resolve);
@@ -159,6 +161,7 @@ program.command("ui")
   .option("--no-open", "do not open the system browser")
   .action(async (options: { port: number; open: boolean }) => {
     const ui = await startUiServer({ port: options.port, openBrowser: options.open });
+    void reportStoppedServers();
     print({
       url: ui.url,
       ...(options.open ? {} : { launchUrl: ui.launchUrl }),
@@ -426,7 +429,7 @@ program.command("cleanup")
 
 program.command("maintenance")
   .argument("<project-id>")
-  .description("configure opt-in automatic cleanup after indexing")
+  .description("configure automatic cleanup after indexing (on by default)")
   .requiredOption("--enabled <true|false>", "enable or disable automatic cleanup")
   .option("--retention-days <days>", "keep index logs for this many days", numberOption, 30)
   .option("--interval-hours <hours>", "minimum hours between maintenance runs", numberOption, 24)

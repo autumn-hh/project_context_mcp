@@ -50,6 +50,7 @@ export const UI_HTML = String.raw`<!doctype html>
             <div id="portrait-index-state" class="index-state"></div>
           </div>
           <div id="portrait-metrics" class="portrait-metrics"></div>
+          <div id="portrait-storage-hint" class="storage-hint" role="status" hidden><div><strong id="portrait-storage-hint-title"></strong><span id="portrait-storage-hint-detail"></span></div><button id="portrait-reclaim" class="primary-button" type="button">立即回收</button></div>
         </section>
         <nav class="portrait-mode-tabs" aria-label="项目画像模式">
           <button class="portrait-mode active" data-portrait-mode="overview" aria-pressed="true" type="button">项目概览</button>
@@ -92,11 +93,11 @@ export const UI_HTML = String.raw`<!doctype html>
                 <p id="cleanup-result" class="ignore-impact" role="status">请先预览，再确认执行。空间回收期间数据库写入可能短暂等待。</p>
                 <div class="maintenance-card-actions"><button id="execute-cleanup" class="danger-button" type="button" disabled>确认执行清理并回收空间</button></div>
               </section>
-              <section class="maintenance-card" aria-labelledby="auto-maintenance-title"><header><span class="panel-label">SCHEDULE</span><h3 id="auto-maintenance-title">自动维护</h3><p class="maintenance-note">由你开启，在索引完成后按间隔检查。</p></header>
-                <label class="maintenance-toggle"><input id="maintenance-auto" type="checkbox">启用自动维护（默认关闭）</label>
+              <section class="maintenance-card" aria-labelledby="auto-maintenance-title"><header><span class="panel-label">SCHEDULE</span><h3 id="auto-maintenance-title">自动维护</h3><p class="maintenance-note">默认开启，在索引完成后按间隔检查；关闭后不再自动运行。</p></header>
+                <label class="maintenance-toggle"><input id="maintenance-auto" type="checkbox">启用自动维护（默认开启）</label>
                 <div class="maintenance-controls"><div class="field"><label for="maintenance-retention">自动保留天数</label><input id="maintenance-retention" type="number" min="1" max="3650" step="1" value="30"></div><div class="field"><label for="maintenance-interval">执行间隔（小时）</label><input id="maintenance-interval" type="number" min="1" max="8760" step="1" value="24"></div></div>
                 <p id="maintenance-result" class="maintenance-note" role="status"></p>
-                <p class="maintenance-note">空闲空间至少 16 MiB 且占数据库 20% 时才自动压缩。应用关闭期间不会运行。</p>
+                <p class="maintenance-note">首次压缩后数据库改为分小步回收空闲页，不再整库重写。尚未压缩过的数据库：256 MiB 以内在空闲空间至少 16 MiB 且占 20% 时自动压缩，更大的需手动回收一次。应用关闭期间不会运行。</p>
                 <div class="maintenance-card-actions"><button id="save-maintenance" class="secondary-button" type="button" disabled>保存自动维护设置</button></div>
               </section>
             </div>
@@ -301,6 +302,7 @@ export const UI_HTML = String.raw`<!doctype html>
   <dialog id="confirm-dialog">
     <form method="dialog"><h2>停用这条规则？</h2><p>规则会转为 deleted 状态并保留审计记录，不会物理删除。</p><div class="dialog-actions"><button value="cancel" class="secondary-button">取消</button><button value="confirm" class="danger-button">停用</button></div></form>
   </dialog>
+  <dialog id="reclaim-dialog" aria-labelledby="reclaim-title"><form method="dialog"><h2 id="reclaim-title">回收数据库空间？</h2><p id="reclaim-description"></p><p>只清理过期的索引运行日志并压缩数据库；项目文件、记忆、任务、候选和当前索引都会保留。</p><div class="dialog-actions"><button class="secondary-button" value="cancel">暂不回收</button><button class="primary-button" value="confirm">立即回收</button></div></form></dialog>
   <dialog id="unregister-dialog" aria-labelledby="unregister-title"><form method="dialog"><h2 id="unregister-title">移除失效项目登记？</h2><p id="unregister-description"></p><p>仅从项目列表移除登记，不删除源码、备份或个人规则。服务器会再次检查数据库是否确实缺失；数据库仍存在时拒绝移除。</p><div class="dialog-actions"><button class="secondary-button" value="cancel">保留登记</button><button class="danger-button" value="confirm">移除登记</button></div></form></dialog>
   <dialog id="project-dialog">
     <form id="project-form">
@@ -638,6 +640,11 @@ h1, h2, p { margin: 0; }
 .portrait-metric strong, .portrait-metric span { display: block; }
 .portrait-metric strong { font-size: 24px; line-height: 1.15; }
 .portrait-metric span { margin-top: 7px; color: var(--muted); font-size: 11px; }
+.storage-hint { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1280px; margin: 12px auto 0; padding: 12px 16px; border: 1px solid #ecd3a4; border-left: 3px solid var(--amber); background: var(--amber-soft); color: #704405; }
+.storage-hint strong, .storage-hint span { display: block; }
+.storage-hint strong { font-size: 14px; }
+.storage-hint span { margin-top: 4px; font-size: 12px; line-height: 1.5; }
+.storage-hint .primary-button { flex: 0 0 auto; }
 .portrait-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 1280px; margin: 0 auto; border-left: 1px solid var(--line); }
 .portrait-section { min-height: 240px; padding: 22px 24px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .portrait-section.portrait-span-2 { grid-column: 1 / -1; }
@@ -915,6 +922,7 @@ dialog p { color: var(--muted); line-height: 1.5; }
   .portrait-metrics { grid-template-columns: 1fr 1fr; }
   .portrait-metric { min-height: 78px; padding: 14px; }
   .portrait-metric strong { font-size: 20px; }
+  .storage-hint { flex-direction: column; align-items: stretch; }
   .portrait-grid { grid-template-columns: 1fr; border-left: 0; }
   .portrait-section, .portrait-section.portrait-span-2 { grid-column: auto; border-right: 0; padding: 20px 16px; }
   .ignore-builder { grid-template-columns: 1fr; }
@@ -1006,6 +1014,7 @@ export const UI_JS = String.raw`(function () {
       "task-project", "task-project-search", "task-project-results", "refresh-tasks", "task-loading", "task-empty", "task-workspace", "task-count", "task-list", "task-detail",
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
       "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics", "optimize-index",
+      "portrait-storage-hint", "portrait-storage-hint-title", "portrait-storage-hint-detail", "portrait-reclaim",
       "project-dialog", "project-form", "project-name", "project-root", "cancel-project", "save-project",
       "candidate-dialog", "candidate-form", "candidate-type", "candidate-memory-title", "candidate-content", "candidate-cancel", "candidate-save", "candidate-error",
       "portrait-file-types", "portrait-git", "portrait-knowledge", "portrait-all-tasks", "portrait-tasks", "portrait-memories", "portrait-stale-memories",
@@ -1106,6 +1115,7 @@ export const UI_JS = String.raw`(function () {
     els["cancel-project"].addEventListener("click", function () { els["project-dialog"].close(); });
     els["index-project"].addEventListener("click", indexSelectedProject);
     els["optimize-index"].addEventListener("click", optimizeSelectedProject);
+    els["portrait-reclaim"].addEventListener("click", reclaimFromPortrait);
     els["toggle-watch"].addEventListener("click", toggleSelectedWatch);
     els["refresh-portrait"].addEventListener("click", function () { loadPortrait(true); });
     els["ignore-form"].addEventListener("submit", saveIgnoreRules);
@@ -1506,6 +1516,7 @@ export const UI_JS = String.raw`(function () {
     maintenanceBusy = busy;
     ["refresh-storage", "preview-cleanup", "save-maintenance", "cleanup-retention", "maintenance-auto", "maintenance-retention", "maintenance-interval"].forEach(function (id) { els[id].disabled = busy; });
     els["execute-cleanup"].disabled = busy || !cleanupPreview;
+    els["portrait-reclaim"].disabled = busy;
   }
 
   function maintenancePath(projectId, action) { return "/api/projects/" + encodeURIComponent(projectId) + "/" + action; }
@@ -1743,6 +1754,51 @@ export const UI_JS = String.raw`(function () {
     }
   }
 
+  // Worth surfacing once free pages reach 64 MiB, or 16 MiB that is a fifth of the database.
+  function renderStorageHint(storage) {
+    var free = storage ? storage.reclaimableBytes : 0;
+    var visible = free >= 67108864 || (free >= 16777216 && free >= storage.databaseBytes * 0.2);
+    els["portrait-storage-hint"].hidden = !visible;
+    if (!visible) return;
+    els["portrait-storage-hint-title"].textContent = "可回收 " + storageMetricBytes(free) + " 数据库空间";
+    els["portrait-storage-hint-detail"].textContent = "数据库共 " + storageMetricBytes(storage.databaseBytes) + "，这部分是删除旧内容后留下的空闲页。" + (
+      !storage.automaticMaintenance ? "自动维护已关闭，不会自动回收。"
+        : storage.automaticCompaction === "too-large" ? "数据库较大，自动维护不会擅自整库重写；手动回收一次后，之后会分小步自动回收。"
+        : storage.automaticCompaction === "none" ? "尚未达到自动压缩条件（空闲页占数据库 20%），可以手动回收。"
+        : "自动维护会在下一个维护周期回收，也可以现在回收。");
+    els["portrait-reclaim"].disabled = maintenanceBusy;
+  }
+
+  function reclaimFromPortrait() {
+    var projectId = els["portrait-project"].value;
+    var storage = state.portrait && state.portrait.project.id === projectId ? state.portrait.storage : null;
+    if (!projectId || !storage || maintenanceBusy) return;
+    var dialog = document.getElementById("reclaim-dialog");
+    document.getElementById("reclaim-description").textContent = "将清理 " + storage.retentionDays + " 天前的索引日志，并压缩数据库回收约 " + storageMetricBytes(storage.reclaimableBytes) + "。" +
+      (storage.autoVacuum === "incremental" ? "" : "压缩会重写整个数据库（" + storageMetricBytes(storage.databaseBytes) + "），较大的库需要几十秒，期间其他连接的写入会等待。");
+    dialog.returnValue = "";
+    dialog.addEventListener("close", async function () {
+      if (dialog.returnValue !== "confirm" || maintenanceBusy || els["portrait-project"].value !== projectId) return;
+      var button = els["portrait-reclaim"], sequence = maintenanceSequence;
+      setMaintenanceBusy(true);
+      button.textContent = "正在回收…";
+      try {
+        var result = await fetchJson(maintenancePath(projectId, "cleanup"), { method: "POST", body: { dryRun: false, retentionDays: storage.retentionDays, vacuum: true, confirmProjectId: projectId } });
+        toast("已回收 " + storageMetricBytes(result.reclaimedBytes) + "，当前占用 " + storageMetricBytes(result.after.totalBytes) + (result.warnings.length ? "。" + result.warnings.join("；") : ""), !result.vacuumCompleted);
+      } catch (error) {
+        toast(error.code === "INDEX_ALREADY_RUNNING" ? "索引正在运行，完成后再回收" : error.message || "回收失败，请稍后重试", true);
+      } finally {
+        button.textContent = "立即回收";
+        if (maintenanceCurrent(projectId, sequence)) {
+          setMaintenanceBusy(false);
+          await loadPortrait(true, true);
+          if (maintenanceProjectId === projectId) await loadMaintenance(projectId);
+        }
+      }
+    }, { once: true });
+    dialog.showModal();
+  }
+
   async function saveMaintenance() {
     if (maintenanceBusy) return;
     var projectId = els["portrait-project"].value, sequence = maintenanceSequence;
@@ -1868,6 +1924,7 @@ export const UI_JS = String.raw`(function () {
       portraitMetric(formatNumber(health.symbols), "代码符号"),
       portraitMetric(formatNumber(health.relations), "代码关系")
     );
+    renderStorageHint(portrait.storage);
     renderFileTypes(portrait.fileTypes);
     renderGit(portrait);
     renderStatusGroups(portrait.statuses);

@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject } from "../src/storage/schema.js";
 import {
-  cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, databaseUsage, maintenanceSettings, runAutomaticMaintenance, setMaintenancePolicy,
+  automaticCompaction, cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, databaseUsage, maintenanceSettings, runAutomaticMaintenance, setMaintenancePolicy,
+  storageSummary,
 } from "../src/maintenance/storage-maintenance.js";
 import { createRunLogger } from "../src/indexing/run-log.js";
 import { remember } from "../src/memory/memory-service.js";
@@ -109,12 +110,9 @@ describe("database maintenance", () => {
     expect(db.pragma("quick_check", { simple: true })).toBe("ok");
   });
 
-  it("defaults automation off, persists opt-in settings, throttles attempts, and can disable it", () => {
+  it("defaults automation on, throttles attempts, and stays off once disabled", () => {
     const db = fixture();
-    expect(maintenanceSettings(db)).toEqual({ enabled: false, retentionDays: 30, intervalHours: 24, lastRun: null });
-    runAutomaticMaintenance(db, now);
-    expect(databaseUsage(db).counts.index_runs).toBe(33);
-    setMaintenancePolicy(db, { enabled: true, retentionDays: 30, intervalHours: 24 });
+    expect(maintenanceSettings(db)).toEqual({ enabled: true, retentionDays: 30, intervalHours: 24, lastRun: null });
     runAutomaticMaintenance(db, now);
     const first = maintenanceSettings(db);
     expect(first.lastRun).toMatchObject({ attemptedAt: now.toISOString(), deletedIndexRuns: 22, vacuumCompleted: false, warnings: [] });
@@ -125,6 +123,8 @@ describe("database maintenance", () => {
     expect(cleanupHistory(db)).toHaveLength(1);
     runAutomaticMaintenance(db, new Date(now.getTime() + 86_400_000));
     expect(maintenanceSettings(db).lastRun?.attemptedAt).not.toBe(first.lastRun?.attemptedAt);
+    // Nothing deleted or compacted: routine runs leave the bounded history to real cleanups.
+    expect(cleanupHistory(db)).toHaveLength(1);
     setMaintenancePolicy(db, { enabled: false });
     const stopped = maintenanceSettings(db);
     runAutomaticMaintenance(db, new Date("2027-01-01T00:00:00Z"));
@@ -149,6 +149,58 @@ describe("database maintenance", () => {
     expect(cleanupHistory(db)[0]).toMatchObject({ trigger: "automatic", vacuumCompleted: true, deletedIndexRuns: 22 });
     expect(databaseUsage(db).databaseBytes).toBeLessThan(before.databaseBytes);
     expect(db.pragma("quick_check", { simple: true })).toBe("ok");
+  });
+
+  it("switches to incremental reclamation on the first compaction and then returns free pages in steps", () => {
+    const db = fixture();
+    expect(databaseUsage(db).autoVacuum).toBe("none");
+    cleanupDatabase(db, { dryRun: false }, now);
+    expect(databaseUsage(db).autoVacuum).toBe("incremental");
+
+    db.exec("CREATE TABLE scratch (data BLOB); INSERT INTO scratch VALUES (zeroblob(20000000)); DELETE FROM scratch;");
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    const before = databaseUsage(db);
+    expect(before.freePages).toBeGreaterThan(0);
+    runAutomaticMaintenance(db, now);
+    const after = databaseUsage(db);
+    expect(maintenanceSettings(db).lastRun?.vacuumCompleted).toBe(true);
+    // Writing the run's own history record afterwards may free a few pages again.
+    expect(after.freePages).toBeLessThan(before.freePages / 100);
+    expect(after.databaseBytes).toBeLessThan(before.databaseBytes);
+
+    // Manual runs on an incremental database reclaim the same way and report completion.
+    db.exec("INSERT INTO scratch VALUES (zeroblob(20000000)); DELETE FROM scratch;");
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    const manual = cleanupDatabase(db, { dryRun: false }, now);
+    expect(manual.vacuumCompleted).toBe(true);
+    expect(manual.reclaimedBytes).toBeGreaterThan(15_000_000);
+    expect(databaseUsage(db).autoVacuum).toBe("incremental");
+    expect(db.pragma("quick_check", { simple: true })).toBe("ok");
+  });
+
+  it("summarizes reclaimable space for the overview", () => {
+    const db = fixture();
+    expect(storageSummary(db)).toMatchObject({
+      autoVacuum: "none", automaticMaintenance: true, retentionDays: 30, automaticCompaction: "none",
+    });
+    db.exec("CREATE TABLE scratch (data BLOB); INSERT INTO scratch VALUES (zeroblob(20000000)); DELETE FROM scratch;");
+    db.pragma("wal_checkpoint(TRUNCATE)");
+    const summary = storageSummary(db);
+    expect(summary.reclaimableBytes).toBe(databaseUsage(db).reclaimableBytes);
+    expect(summary.databaseBytes).toBe(databaseUsage(db).databaseBytes);
+    expect(summary.automaticCompaction).toBe("full");
+    setMaintenancePolicy(db, { enabled: false, retentionDays: 45 });
+    expect(storageSummary(db)).toMatchObject({ automaticMaintenance: false, retentionDays: 45 });
+  });
+
+  it("never rewrites a large database unasked", () => {
+    const usage = { autoVacuum: "none" as const, pageCount: 100_000, freePages: 50_000, reclaimableBytes: 200 * 1024 * 1024, totalBytes: 400 * 1024 * 1024 };
+    expect(automaticCompaction(usage)).toBe("too-large");
+    expect(automaticCompaction({ ...usage, totalBytes: 100 * 1024 * 1024 })).toBe("full");
+    expect(automaticCompaction({ ...usage, freePages: 1_000, reclaimableBytes: 4 * 1024 * 1024 })).toBe("none");
+    expect(automaticCompaction({ ...usage, autoVacuum: "incremental" })).toBe("incremental");
+    expect(automaticCompaction({ ...usage, autoVacuum: "incremental", freePages: 1_000, reclaimableBytes: 4 * 1024 * 1024 })).toBe("none");
+    expect(automaticCompaction({ ...usage, autoVacuum: "incremental", freePages: 0, reclaimableBytes: 0 })).toBe("none");
   });
 
   it("bounds stored history and details, masks secrets, and persists across connections", () => {

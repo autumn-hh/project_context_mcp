@@ -745,10 +745,13 @@ describe("Project Context core", () => {
     }
   });
 
-  it("runs opt-in maintenance after indexing and preserves all indexed knowledge", async () => {
+  it("runs maintenance after indexing unless turned off and preserves all indexed knowledge", async () => {
     const app = await ProjectContextApp.create();
     try {
       const project = await app.openProject(projectRoot);
+      expect(app.maintenanceSettings(project.id)).toMatchObject({ enabled: true, lastRun: null });
+      // Turned off explicitly, maintenance stays off until enabled again.
+      app.setMaintenanceSettings(project.id, { enabled: false });
       await app.index(project.id);
       const task = app.startTask(project.id, "Preserve task evidence");
       app.completeTask(project.id, task.id, {

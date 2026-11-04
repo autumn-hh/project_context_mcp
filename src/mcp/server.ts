@@ -20,6 +20,7 @@ import { searchWithEmbeddings } from "../search/embeddings.js";
 import { lspDefinition } from "../lsp/bridge.js";
 import { memoryGraphInputShape, memoryGraphNodeIdSchema } from "../memory/graph-input.js";
 import { knowledgeDocumentSchema } from "../memory/knowledge-schema.js";
+import { isOutdatedProcessError, reportStoppedServers } from "../shared/process-freshness.js";
 
 const checkpointSchema = {
   ...taskWorkflowShape,
@@ -72,21 +73,27 @@ export function createMcpServer(): McpServer {
     annotations: { idempotentHint: true },
   }, ({ root }, extra) => withApp(async (app) => {
     const project = await app.openProject(root);
-    const managedIndex = await app.index(project.id, {
-      signal: extra.signal,
-      ...((extra._meta?.progressToken !== undefined) ? {
-        onProgress: (progress) => extra.sendNotification({
-          method: "notifications/progress",
-          params: {
-            progressToken: extra._meta!.progressToken!,
-            progress: progress.visited,
-            message: `${progress.phase}: ${progress.path ?? `${progress.indexed} files indexed`}`,
-          },
-        }),
-      } : {}),
-    });
-    const watch = app.watchStart(project.id, DEFAULT_WATCH_DEBOUNCE_MS, false);
-    return { ...project, managedIndex, watch };
+    try {
+      const managedIndex = await app.index(project.id, {
+        signal: extra.signal,
+        ...((extra._meta?.progressToken !== undefined) ? {
+          onProgress: (progress) => extra.sendNotification({
+            method: "notifications/progress",
+            params: {
+              progressToken: extra._meta!.progressToken!,
+              progress: progress.visited,
+              message: `${progress.phase}: ${progress.path ?? `${progress.indexed} files indexed`}`,
+            },
+          }),
+        } : {}),
+      });
+      const watch = app.watchStart(project.id, DEFAULT_WATCH_DEBOUNCE_MS, false);
+      return { ...project, managedIndex, watch };
+    } catch (error) {
+      // An outdated process keeps serving reads from the existing index; only indexing pauses.
+      if (!isOutdatedProcessError(error)) throw error;
+      return { ...project, managedIndex: null, watch: null, warnings: [errorMessage(error)] };
+    }
   }));
 
   server.registerTool("project_list", {
@@ -516,14 +523,14 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, repair }) => withApp((app) => app.doctor(projectId, repair)));
 
   server.registerTool("project_storage", {
-    description: "Inspect project database, WAL, free-page space, row counts, and opt-in maintenance settings.",
+    description: "Inspect project database, WAL, free-page space, row counts, and automatic maintenance settings.",
     outputSchema,
     inputSchema: { projectId: z.string() },
     annotations: { readOnlyHint: true, idempotentHint: true },
   }, ({ projectId }) => withApp((app) => app.storageUsage(projectId)));
 
   server.registerTool("project_cleanup", {
-    description: "Preview by default; explicitly confirm to prune old index logs and compact SQLite. Preserves all memories, tasks, candidates and current indexes. May take time on large databases.",
+    description: "Preview by default; explicitly confirm to prune old index logs and compact SQLite. Preserves all memories, tasks, candidates and current indexes. The first compaction rewrites the file and may take time on large databases; afterwards free pages are reclaimed in short steps.",
     outputSchema,
     inputSchema: {
       projectId: z.string(), dryRun: z.boolean().default(true),
@@ -536,7 +543,7 @@ export function createMcpServer(): McpServer {
   })));
 
   server.registerTool("project_maintenance_configure", {
-    description: "Enable or disable per-project automatic database cleanup after indexing. Disabled by default; preserves memories, tasks, candidates and current indexes.",
+    description: "Enable or disable per-project automatic database cleanup after indexing. Enabled by default; preserves memories, tasks, candidates and current indexes.",
     outputSchema,
     inputSchema: { projectId: z.string(), ...maintenancePolicySchema.shape },
     annotations: { idempotentHint: true },
@@ -736,6 +743,7 @@ async function main(): Promise<void> {
   const server = createMcpServer();
   await server.connect(new StdioServerTransport());
   console.error("Project Context MCP server running on stdio");
+  void reportStoppedServers();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

@@ -88,7 +88,7 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 | `project_export` | 将项目知识导出为 JSONL 文件 |
 | `project_storage` | 查看数据库、WAL、空闲页和维护配置 |
 | `project_cleanup` | 预览或明确确认后清理旧索引日志与回收空间，保留任务及知识 |
-| `project_maintenance_configure` | 配置默认关闭的项目自动维护 |
+| `project_maintenance_configure` | 配置项目自动维护（默认开启） |
 | `project_backup_remote` / `project_restore_remote` | 使用显式配置的 S3 目标加密备份或隔离恢复知识包 |
 | `project_search_enhanced` | 使用明确配置的 embedding 插件检索，失败时回退本地文本搜索 |
 | `project_definition` | 使用本机管理员配置的可信 LSP 查询已索引文件中的定义 |

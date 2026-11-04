@@ -15,6 +15,8 @@ import { ProjectService, type ProjectRecord } from "../projects/project-service.
 import { indexProject, type IndexOptions, type IndexResult } from "../indexing/indexer.js";
 import { readContentProtection } from "../indexing/content-protection.js";
 import { waitForOtherIndexer, withIndexLease } from "../indexing/index-lease.js";
+import { isOutdatedProcessError, outdatedProcessError, processFreshness } from "../shared/process-freshness.js";
+import { PROJECT_SCHEMA_VERSION } from "../storage/schema.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
 import { readSearchRanking, readSearchRankingSync, writeSearchRanking, type SearchRankingSettings } from "../search/search-ranking.js";
 import {
@@ -45,7 +47,7 @@ import {
 } from "../vcs/vcs-service.js";
 import { backupProjectDatabase, doctorProject, exportProject } from "../maintenance/maintenance-service.js";
 import {
-  cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, indexLogQuerySchema, databaseUsage, maintenanceSettings, setMaintenancePolicy, runAutomaticMaintenance,
+  cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, indexLogQuerySchema, databaseUsage, maintenanceSettings, setMaintenancePolicy, runAutomaticMaintenance, storageSummary,
   type CleanupOptions, maintenancePolicySchema,
 } from "../maintenance/storage-maintenance.js";
 import {
@@ -270,50 +272,66 @@ export class ProjectContextApp {
     vcs: Omit<VersionControlSnapshot, "diff">;
   }> {
     const project = this.projects.get(projectId);
+    if (processFreshness.codeChanged()) throw outdatedProcessError();
     if (activeIndexes.has(projectId)) {
       throw new ProjectContextError("INDEX_ALREADY_RUNNING", `An index run is already active for project: ${projectId}`);
     }
     activeIndexes.add(projectId);
     try {
-      return await this.withDbAsync(projectId, (db) => withIndexLease(db, options.signal, async (runId) => {
-        const sourceHashes = new Map((db.prepare("SELECT path, content_hash FROM sources").all() as Array<{
-          path: string; content_hash: string;
-        }>).map((row) => [row.path, row.content_hash]));
-        const result = await indexProject(db, project, { ...options, runId });
-        const vcs = await captureVersionControlState(db, project.rootPath);
-        const vcsCandidates = generateVersionControlCandidates(db, vcs);
-        const vcsChangedPaths = new Set(vcs.changes.map((change) => change.path));
-        const fileCandidates = generateFileCandidates(
-          db,
-          indexedSourceChanges(db, sourceHashes).filter((change) => !vcsChangedPaths.has(change.path)),
-        );
-        const generatedCandidates = [...vcsCandidates, ...fileCandidates];
-        const staleMemories = detectMemoryDrift(db);
-        const { diff: _diff, ...safeVcs } = vcs;
-        const safeGit: Omit<GitSnapshot, "diff"> = {
-          available: vcs.kind === "git",
-          head: vcs.kind === "git" ? vcs.revision : null,
-          branch: vcs.kind === "git" ? vcs.branch : null,
-          changes: vcs.kind === "git" ? vcs.changes : [],
-          diffHash: vcs.kind === "git" ? vcs.diffHash : null,
-          capturedAt: vcs.capturedAt,
-        };
-        // Maintenance failure must not turn an otherwise successful index into a failure.
-        try { if (!activeMigrations.has(projectId)) runAutomaticMaintenance(db); }
-        catch (error) { console.error("Automatic database maintenance:", error instanceof Error ? error.message : String(error)); }
-        return {
-          ...result,
-          symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
-          relations: scalar(db, "SELECT COUNT(*) FROM relations"),
-          staleMemories,
-          generatedCandidates,
-          git: safeGit,
-          vcs: safeVcs,
-        };
-      }));
+      return await this.withDbAsync(projectId, (db) => {
+        const schema = db.pragma("user_version", { simple: true }) as number;
+        if (schema > PROJECT_SCHEMA_VERSION) {
+          throw outdatedProcessError(`The project database uses schema ${schema}, newer than this process supports (${PROJECT_SCHEMA_VERSION}).`);
+        }
+        return withIndexLease(db, options.signal, (runId) => this.runIndex(db, project, projectId, options, runId));
+      });
     } finally {
       activeIndexes.delete(projectId);
     }
+  }
+
+  private async runIndex(db: SqliteDatabase, project: ProjectRecord, projectId: string, options: IndexOptions, runId: string): Promise<IndexResult & {
+    symbols: number;
+    relations: number;
+    staleMemories: string[];
+    generatedCandidates: MemoryCandidate[];
+    git: Omit<GitSnapshot, "diff">;
+    vcs: Omit<VersionControlSnapshot, "diff">;
+  }> {
+    const sourceHashes = new Map((db.prepare("SELECT path, content_hash FROM sources").all() as Array<{
+      path: string; content_hash: string;
+    }>).map((row) => [row.path, row.content_hash]));
+    const result = await indexProject(db, project, { ...options, runId });
+    const vcs = await captureVersionControlState(db, project.rootPath);
+    const vcsCandidates = generateVersionControlCandidates(db, vcs);
+    const vcsChangedPaths = new Set(vcs.changes.map((change) => change.path));
+    const fileCandidates = generateFileCandidates(
+      db,
+      indexedSourceChanges(db, sourceHashes).filter((change) => !vcsChangedPaths.has(change.path)),
+    );
+    const generatedCandidates = [...vcsCandidates, ...fileCandidates];
+    const staleMemories = detectMemoryDrift(db);
+    const { diff: _diff, ...safeVcs } = vcs;
+    const safeGit: Omit<GitSnapshot, "diff"> = {
+      available: vcs.kind === "git",
+      head: vcs.kind === "git" ? vcs.revision : null,
+      branch: vcs.kind === "git" ? vcs.branch : null,
+      changes: vcs.kind === "git" ? vcs.changes : [],
+      diffHash: vcs.kind === "git" ? vcs.diffHash : null,
+      capturedAt: vcs.capturedAt,
+    };
+    // Maintenance failure must not turn an otherwise successful index into a failure.
+    try { if (!activeMigrations.has(projectId)) runAutomaticMaintenance(db); }
+    catch (error) { console.error("Automatic database maintenance:", error instanceof Error ? error.message : String(error)); }
+    return {
+      ...result,
+      symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
+      relations: scalar(db, "SELECT COUNT(*) FROM relations"),
+      staleMemories,
+      generatedCandidates,
+      git: safeGit,
+      vcs: safeVcs,
+    };
   }
 
   /**
@@ -590,6 +608,7 @@ export class ProjectContextApp {
           contentProtection: readContentProtection(db),
           lastIndexRun: db.prepare("SELECT * FROM index_runs ORDER BY started_at DESC LIMIT 1").get() ?? null,
         },
+        storage: storageSummary(db),
         statuses: {
           memories: rowsToObject(db, "SELECT status, COUNT(*) AS count FROM memories GROUP BY status"),
           candidates: rowsToObject(db, "SELECT status, COUNT(*) AS count FROM memory_candidates GROUP BY status"),
@@ -722,6 +741,8 @@ export class ProjectContextApp {
           const checkpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
           checkpointBusy = checkpoint.some(row => row.busy !== 0);
           if (!checkpointBusy) {
+            // As in cleanupDatabase: after this rewrite, later reclamation runs in short steps.
+            db.pragma("auto_vacuum = INCREMENTAL");
             db.exec("VACUUM");
             vacuumCompleted = true;
             phase = "checkpoint";
@@ -1025,10 +1046,18 @@ function safeMigrationDirectory(path: string): boolean {
 const activeMigrations = new Set<string>();
 const activeIndexes = new Set<string>();
 const projectWatches = new ProjectWatchService(async (projectId, changedAt) => {
+  // An outdated process stops watching altogether; its client restarts it on the new build.
+  if (processFreshness.codeChanged()) {
+    projectWatches.stopAll();
+    return;
+  }
   const app = await ProjectContextApp.create();
   try {
     if (changedAt && await app.indexedSince(projectId, changedAt)) return;
     await app.index(projectId);
+  } catch (error) {
+    if (!isOutdatedProcessError(error)) throw error;
+    projectWatches.stopAll();
   } finally {
     app.close();
   }

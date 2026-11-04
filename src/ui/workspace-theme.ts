@@ -299,12 +299,15 @@ main { height: calc(100dvh - 60px); }
 .portrait-toolbar { position: static; }
 .portrait-actions { align-items: center; }
 .portrait-identity { padding: 18px 24px; }
-.portrait-heading, .portrait-metrics { max-width: 1480px; }
+.portrait-heading, .portrait-metrics, .storage-hint { max-width: 1480px; }
+.storage-hint { border-left-width: 1px; border-radius: 10px; }
 .portrait-heading { margin-bottom: 14px; }
 .portrait-metric, .portrait-metric:last-child, .portrait-metric:nth-child(2), .portrait-metric:nth-child(-n+2) { padding: 12px 16px; min-height: 0; }
 .portrait-mode-tabs { position: sticky; top: 0; min-height: 44px; justify-content: flex-start; padding-inline: 24px; }
 #portrait-content[data-mode="graph"] .portrait-metrics,
-#portrait-content[data-mode="maintenance"] .portrait-metrics { display: none; }
+#portrait-content[data-mode="maintenance"] .portrait-metrics,
+#portrait-content[data-mode="graph"] .storage-hint,
+#portrait-content[data-mode="maintenance"] .storage-hint { display: none; }
 #portrait-content[data-mode="graph"] .portrait-heading,
 #portrait-content[data-mode="maintenance"] .portrait-heading { margin-bottom: 0; }
 .portrait-grid { max-width: 1530px; padding: 18px 24px; gap: 16px; }

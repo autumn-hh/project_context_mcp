@@ -95,13 +95,12 @@ describe("Project Context MCP", () => {
       await call(client, "project_watch_stop", { projectId });
       const usage = object(await call(client, "project_storage", { projectId }));
       expect(usage.databaseBytes).toBeGreaterThan(0);
-      expect(object(usage.policy).enabled).toBe(false);
+      expect(object(usage.policy).enabled).toBe(true);
       expect(object(await call(client, "project_cleanup", { projectId })).dryRun).toBe(true);
       const unconfirmed = await client.callTool({ name: "project_cleanup", arguments: { projectId, dryRun: false } });
       expect(unconfirmed.isError).toBe(true);
       expect(object(await call(client, "project_cleanup", { projectId, dryRun: false, confirmProjectId: projectId })).vacuumCompleted).toBe(true);
-      expect(object(await call(client, "project_maintenance_configure", { projectId, enabled: true })).enabled).toBe(true);
-      await call(client, "project_maintenance_configure", { projectId, enabled: false });
+      expect(object(await call(client, "project_maintenance_configure", { projectId, enabled: false })).enabled).toBe(false);
       const indexed = await call(client, "project_index", { projectId });
       expect(object(indexed).errors).toHaveLength(0);
       await call(client, "project_search", { projectId, query: "memory local" });

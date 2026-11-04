@@ -8,6 +8,14 @@ import type { RunLog } from "../indexing/run-log.js";
 const DAY_MS = 86_400_000;
 const KEEP_RECENT_RUNS = 10;
 const AUTO_VACUUM_MIN_BYTES = 16 * 1024 * 1024;
+// A full VACUUM rewrites the whole file under the write lock (about 30 s for 1.2 GB), too long
+// to run unasked after an index. Automatic maintenance does it only for small databases;
+// larger ones are compacted once from the workbench, after which reclamation is incremental.
+const AUTO_FULL_VACUUM_MAX_BYTES = 256 * 1024 * 1024;
+// Each incremental step is its own short write transaction, so other connections interleave.
+const INCREMENTAL_VACUUM_PAGES = 2_048;
+const INCREMENTAL_VACUUM_STEPS = 64;
+const AUTO_VACUUM_MODES = ["none", "full", "incremental"] as const;
 const POLICY_KEY = "storage_maintenance_policy";
 const LAST_RUN_KEY = "storage_maintenance_last_run";
 const HISTORY_KEY = "storage_cleanup_history";
@@ -107,12 +115,57 @@ export function databaseUsage(db: SqliteDatabase) {
     databasePath: db.name, databaseBytes, walBytes, shmBytes,
     totalBytes: databaseBytes + walBytes + shmBytes,
     pageSize, pageCount, freePages, reclaimableBytes: freePages * pageSize, counts,
+    autoVacuum: autoVacuumMode(db),
   };
+}
+
+/** Reclaimable space for the workbench overview; page counts only, so frequent refreshes stay cheap. */
+export function storageSummary(db: SqliteDatabase) {
+  const pageSize = db.pragma("page_size", { simple: true }) as number;
+  const pageCount = db.pragma("page_count", { simple: true }) as number;
+  const freePages = db.pragma("freelist_count", { simple: true }) as number;
+  const databaseBytes = pageSize * pageCount;
+  const reclaimableBytes = pageSize * freePages;
+  const autoVacuum = autoVacuumMode(db);
+  const { enabled, retentionDays } = maintenanceSettings(db);
+  return {
+    databaseBytes, reclaimableBytes, autoVacuum, automaticMaintenance: enabled, retentionDays,
+    automaticCompaction: automaticCompaction({ autoVacuum, freePages, pageCount, reclaimableBytes, totalBytes: databaseBytes }),
+  };
+}
+
+/** How automatic maintenance may compact: incremental steps, a full rewrite of a small file, or nothing. */
+export function automaticCompaction(usage: {
+  autoVacuum: typeof AUTO_VACUUM_MODES[number]; freePages: number; pageCount: number; reclaimableBytes: number; totalBytes: number;
+}): "incremental" | "full" | "too-large" | "none" {
+  // A few free pages are reused by the next index anyway; returning them would only churn the file.
+  if (usage.reclaimableBytes < AUTO_VACUUM_MIN_BYTES) return "none";
+  if (usage.autoVacuum === "incremental") return "incremental";
+  if (usage.freePages < usage.pageCount * 0.2) return "none";
+  return usage.totalBytes > AUTO_FULL_VACUUM_MAX_BYTES ? "too-large" : "full";
+}
+
+function autoVacuumMode(db: SqliteDatabase): typeof AUTO_VACUUM_MODES[number] {
+  return AUTO_VACUUM_MODES[db.pragma("auto_vacuum", { simple: true }) as 0 | 1 | 2] ?? "none";
+}
+
+/**
+ * Return free pages to the file system in short steps; needs auto_vacuum = INCREMENTAL.
+ * Cost follows the free pages rather than the file size. Reports whether none remain.
+ */
+function reclaimIncrementally(db: SqliteDatabase, maxSteps: number): boolean {
+  for (let step = 0; step < maxSteps; step++) {
+    const freePages = db.pragma("freelist_count", { simple: true }) as number;
+    if (freePages === 0) return true;
+    db.pragma(`incremental_vacuum(${Math.min(freePages, INCREMENTAL_VACUUM_PAGES)})`);
+  }
+  return db.pragma("freelist_count", { simple: true }) === 0;
 }
 
 export function maintenanceSettings(db: SqliteDatabase) {
   const stored = readMetadata(db, POLICY_KEY);
-  const policy = maintenancePolicySchema.parse(stored ?? { enabled: false });
+  // On unless the project explicitly turned it off: it only prunes old index logs and reclaims free space.
+  const policy = maintenancePolicySchema.parse(stored ?? { enabled: true });
   const lastRun = readMetadata(db, LAST_RUN_KEY) as {
     attemptedAt: string; deletedIndexRuns: number; vacuumCompleted: boolean; warnings: string[];
   } | null;
@@ -150,8 +203,9 @@ export function cleanupDatabase(
   let deletedIndexRuns = 0;
   let vacuumCompleted = false;
   let checkpointBusy = false;
+  let pending: CleanupHistoryEntry | null = null;
   if (!dryRun) {
-    deletedIndexRuns = db.transaction(() => {
+    const deletion = db.transaction(() => {
       // Capture the exact deleted rows under the same write lock as deletion.
       details = readDetails();
       const deleted = db.prepare(`DELETE FROM index_runs WHERE ${eligibleRuns}`).run(cutoff).changes;
@@ -164,27 +218,50 @@ export function cleanupDatabase(
         beforeBytes: before.totalBytes, afterBytes: before.totalBytes, reclaimedBytes: 0,
         phase: "cleanup_committed", warnings: [],
       };
-      writeMetadata(db, HISTORY_KEY, [entry, ...cleanupHistory(db)].slice(0, HISTORY_LIMIT));
-      return deleted;
+      // An automatic run that deletes nothing is recorded only if it compacts, so routine runs
+      // cannot push manual cleanups out of the bounded history.
+      const recorded = deleted > 0 || !automatic;
+      if (recorded) writeMetadata(db, HISTORY_KEY, [entry, ...cleanupHistory(db)].slice(0, HISTORY_LIMIT));
+      return { deleted, entry, recorded };
     }).immediate();
+    deletedIndexRuns = deletion.deleted;
+    if (!deletion.recorded) pending = deletion.entry;
     eligibleIndexRuns = deletedIndexRuns;
+    // Once a database is in incremental mode, manual runs also reclaim in steps instead of rewriting it.
+    let incremental = before.autoVacuum === "incremental";
     if (automatic && vacuumRequested) {
       const usage = databaseUsage(db);
-      vacuumRequested = usage.reclaimableBytes >= AUTO_VACUUM_MIN_BYTES && usage.freePages >= usage.pageCount * 0.2;
+      const compaction = automaticCompaction(usage);
+      incremental = compaction === "incremental";
+      vacuumRequested = compaction === "incremental" || compaction === "full";
+      if (compaction === "too-large") {
+        warnings.push(`About ${Math.round(usage.reclaimableBytes / 1_048_576)} MiB can be reclaimed. Large databases are compacted once from the workbench or with project_cleanup; automatic maintenance then reclaims space in small steps.`);
+      }
     }
     if (vacuumRequested) {
       // Deletion is already committed. Report compaction failures separately so retries are safe.
       try {
-        const checkpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
-        checkpointBusy = checkpoint.some((row) => row.busy !== 0);
-        if (checkpointBusy) {
-          warnings.push("History cleanup committed, but another connection prevented WAL truncation; retry compaction when idle.");
+        if (incremental) {
+          // Automatic runs cap the work per run; whatever remains is reclaimed next time.
+          vacuumCompleted = reclaimIncrementally(db, automatic ? INCREMENTAL_VACUUM_STEPS : Number.POSITIVE_INFINITY);
+          const checkpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+          checkpointBusy = checkpoint.some((row) => row.busy !== 0);
+          if (checkpointBusy) warnings.push("Space reclaimed, but WAL truncation is pending because another connection is active.");
         } else {
-          db.exec("VACUUM");
-          vacuumCompleted = true;
-          const afterCheckpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
-          checkpointBusy = afterCheckpoint.some((row) => row.busy !== 0);
-          if (checkpointBusy) warnings.push("Database compacted, but WAL truncation is pending because another connection is active.");
+          const checkpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+          checkpointBusy = checkpoint.some((row) => row.busy !== 0);
+          if (checkpointBusy) {
+            warnings.push("History cleanup committed, but another connection prevented WAL truncation; retry compaction when idle.");
+          } else {
+            // The rewrite also switches the file to incremental mode, so later automatic runs
+            // can return free pages in short steps instead of rewriting the whole database.
+            db.pragma("auto_vacuum = INCREMENTAL");
+            db.exec("VACUUM");
+            vacuumCompleted = true;
+            const afterCheckpoint = db.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
+            checkpointBusy = afterCheckpoint.some((row) => row.busy !== 0);
+            if (checkpointBusy) warnings.push("Database compacted, but WAL truncation is pending because another connection is active.");
+          }
         }
       } catch (error) {
         warnings.push(`History cleanup committed; space reclamation did not finish: ${error instanceof Error ? error.message : String(error)}`);
@@ -196,11 +273,15 @@ export function cleanupDatabase(
   const after = dryRun ? before : databaseUsage(db);
   const reclaimedBytes = dryRun ? 0 : Math.max(0, before.totalBytes - after.totalBytes);
   if (!dryRun) {
+    const finish = (entry: CleanupHistoryEntry): CleanupHistoryEntry => ({
+      ...entry, afterBytes: after.totalBytes, reclaimedBytes, vacuumRequested, vacuumCompleted,
+      checkpointBusy, warnings, phase: "finished",
+    });
+    const unrecorded = pending;
     db.transaction(() => {
-      writeMetadata(db, HISTORY_KEY, cleanupHistory(db).map((entry) => entry.id === historyId ? {
-        ...entry, afterBytes: after.totalBytes, reclaimedBytes, vacuumRequested, vacuumCompleted,
-        checkpointBusy, warnings, phase: "finished",
-      } : entry));
+      const history = cleanupHistory(db);
+      if (!unrecorded) writeMetadata(db, HISTORY_KEY, history.map((entry) => entry.id === historyId ? finish(entry) : entry));
+      else if (vacuumRequested) writeMetadata(db, HISTORY_KEY, [finish(unrecorded), ...history].slice(0, HISTORY_LIMIT));
     }).immediate();
   }
   return {
@@ -213,8 +294,8 @@ export function cleanupDatabase(
   };
 }
 
-// Invoked after a successful index. No timers, no work while the service is stopped,
-// and no automatic maintenance until the user explicitly enables it for this project.
+// Invoked after a successful index. No timers and no work while the service is stopped;
+// on by default, and a project that turns it off stays off.
 export function runAutomaticMaintenance(db: SqliteDatabase, now = new Date()): void {
   const policy = maintenanceSettings(db);
   if (!policy.enabled) return;
