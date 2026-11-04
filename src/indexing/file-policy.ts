@@ -4,7 +4,8 @@ import ignore, { type Ignore } from "ignore";
 import { sha256 } from "../shared/ids.js";
 
 export const DEFAULT_IGNORE_PATTERNS = [
-  ".git/",
+  // A file in worktrees and submodules, a directory elsewhere.
+  ".git",
   ".hg/",
   ".svn/",
   ".project-context/",
@@ -73,8 +74,11 @@ export function defaultIgnorePatterns(rootPath: string): string[] {
     : DEFAULT_IGNORE_PATTERNS;
 }
 
-/** Root-level files whose rules apply to indexing; nested .gitignore files are not read. */
-export const PROJECT_IGNORE_FILES: readonly string[] = [".gitignore", ".project-context-ignore"];
+/**
+ * Root-level rule files in Git's precedence order: later files win, so .gitignore can re-include
+ * what the local exclude file hides. Nested .gitignore files are not read.
+ */
+export const PROJECT_IGNORE_FILES: readonly string[] = [".git/info/exclude", ".gitignore", ".project-context-ignore"];
 
 /** Default patterns plus the project's root ignore files. The indexer and watcher must share this. */
 export function projectIgnoreMatcher(rootPath: string): Ignore {
@@ -83,7 +87,8 @@ export function projectIgnoreMatcher(rootPath: string): Ignore {
     try {
       matcher.add(readFileSync(join(rootPath, fileName), "utf8"));
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      // ENOTDIR: in worktrees and submodules .git is a file; their shared exclude file is not read.
+      if (!["ENOENT", "ENOTDIR"].includes((error as NodeJS.ErrnoException).code ?? "")) throw error;
     }
   }
   return matcher;

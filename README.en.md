@@ -84,7 +84,7 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Project databases stored with their projects at `<project>/.project-context/project.db`
 - SQLite WAL databases with hybrid FTS5, Unicode n-gram, and code-relationship search
 - Coverage-normalized n-gram ranking merged with FTS results and exact symbol-name boosts
-- Directory-pruned `.gitignore` and `.project-context-ignore` aware incremental indexing
+- Directory-pruned incremental indexing that honors `.git/info/exclude`, `.gitignore`, and `.project-context-ignore` in Git precedence order (later files can re-include with `!`)
 - Files with unchanged size and modification time are not read; a content-rule change or a full check older than 24 hours re-reads every file, and recently written or redacted files are always re-read
 - Per-project index locking, MCP cancellation, and progress notifications
 - Deferred legacy n-gram migrations with cancellable, bounded-transaction rebuilds during `project_index`
@@ -487,7 +487,7 @@ retain conservative whole-file invalidation. Registry schema v2 adds project arc
 MCP `project_open` synchronizes the index and starts controlled change tracking automatically. Explicit
 `project_watch_start`, `project_watch_stop`, and `project_index` tools remain available for diagnostics and
 manual control. The watcher ignores internal databases, VCS metadata, dependencies, and common build output,
-applies the same root `.gitignore` and `.project-context-ignore` rules as the indexer (reloaded when edited),
+applies the same `.git/info/exclude`, root `.gitignore`, and `.project-context-ignore` rules as the indexer (reloaded when edited),
 debounces other events, and runs the same incremental index. When several processes (for example Claude Code,
 Codex, and the Web workbench) watch one project, an index lease in the database lets only one of them index at a
 time; the others wait and skip when that run already covered the file changes they saw. The holder renews the lease
