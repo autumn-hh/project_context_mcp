@@ -7,6 +7,7 @@ import { startUiServer, type UiServerHandle } from "../src/ui/server.js";
 import type { TaskCheckpoint } from "../src/tasks/task-service.js";
 import { exportProject } from "../src/maintenance/maintenance-service.js";
 import { ProjectService } from "../src/projects/project-service.js";
+import { completedFixture, fixtureAcceptance } from './helpers/task-acceptance.js';
 
 describe("complete task browsing and history API", () => {
   let root: string;
@@ -71,6 +72,7 @@ describe("complete task browsing and history API", () => {
     expect(summary.summary).toHaveLength(500);
     expect(summary.hasBlockers).toBe(true);
     const full = await (await request(`/api/projects/${target.id}/tasks/${task.id}`)).json();
+    expect(full.revision).toBe(app.taskHistory(target.id,task.id).items[0]!.sequence);
     expect(full.checkpoint.completed).toEqual(completed);
     const history = await (await request(`/api/projects/${target.id}/tasks/${task.id}/history`)).json();
     expect(history.items[0].snapshot.checkpoint.completed).toEqual(completed);
@@ -78,6 +80,37 @@ describe("complete task browsing and history API", () => {
     expect(discovery).not.toHaveBeenCalled();
     expect(memories).not.toHaveBeenCalled();
     expect((await fetch(`${ui.url}/api/tasks?view=summary`, { headers: { Origin: ui.url, "X-Project-Context-UI": "1" } })).status).toBe(401);
+  });
+
+  it('validates workflow edits, authorization, completion rejection and explicit reopening', async () => {
+    const p=await project('workflow');const other=await project('other');
+    const task=app.startTask(p.id,'download and launch');
+    const path=`/api/projects/${p.id}/tasks/${task.id}`;
+    const send=(suffix:string,body:unknown,authenticated=true)=>fetch(`${ui.url}${path}/${suffix}`,{method:'POST',
+      headers:{...(authenticated?{Cookie:cookie}:{}),Origin:ui.url,'X-Project-Context-UI':'1','Content-Type':'application/json'},body:JSON.stringify(body)});
+    const workflow={stage:'acceptance',expectedUpdatedAt:task.updatedAt,expectedRevision:app.taskHistory(p.id,task.id).items[0]!.sequence,acceptance:[{criterion:'launch',status:'pending'}]};
+    expect((await send('workflow',workflow,false)).status).toBe(401);
+    expect((await request(`/api/projects/${other.id}/tasks/${task.id}/complete`,'POST')).status).toBe(404);
+    expect((await send('workflow',{...workflow,stage:'invalid'})).status).toBe(400);
+    expect((await send('workflow',{...workflow,expectedUpdatedAt:'old'})).status).toBe(400);
+    expect((await send('workflow',workflow)).status).toBe(200);
+    expect((await send('complete',{})).status).toBe(400);
+    app.checkpoint(p.id,task.id,completedFixture());
+    const view=await (await request(path)).json();
+    app.checkpoint(p.id,task.id,{summary:'Newer evidence'});
+    expect((await send('complete',{expectedRevision:view.revision})).status).toBe(400);
+    expect((await send('cancel',{expectedRevision:view.revision})).status).toBe(400);
+    expect(app.task(p.id,task.id).status).toBe('in_progress');
+    const done=await send('complete',{});expect(done.status).toBe(200);
+    const timestamp=(await done.json()).completedAt;
+    expect((await send('reopen',{reason:' ' })).status).toBe(400);
+    const reopenRequest={reason:'required device test omitted',requestId:'web-reopen',expectedRevision:app.taskHistory(p.id,task.id).items[0]!.sequence};
+    const reopened=await send('reopen',reopenRequest);
+    expect(await reopened.json()).toMatchObject({status:'in_progress',completedAt:null,checkpoint:{stage:'acceptance'}});
+    expect(app.taskHistory(p.id,task.id).items.find(e=>e.kind==='completed')?.snapshot.completedAt).toBe(timestamp);
+    app.completeTask(p.id,task.id,completedFixture());
+    expect(await (await send('reopen',reopenRequest)).json()).toMatchObject({status:'completed'});
+    expect((await send('reopen',{...reopenRequest,requestId:'stale-new'})).status).toBe(400);
   });
 
   it("authenticates missing-registration removal and refuses healthy databases or wrong confirmation", async () => {
@@ -103,7 +136,7 @@ describe("complete task browsing and history API", () => {
     const a = await project("a");
     const b = await project("b");
     for (let n = 0; n < 13; n++) app.startTask(a.id, `任务 ${n}`);
-    for (let n = 0; n < 7; n++) app.completeTask(b.id, app.startTask(b.id, `已完成 ${n}`).id);
+    for (let n = 0; n < 7; n++) app.completeTask(b.id, app.startTask(b.id, `已完成 ${n}`).id, completedFixture());
     const cancelled = app.startTask(b.id, "取消的任务");
     app.cancelTask(b.id, cancelled.id);
     const seen: string[] = [];
@@ -135,8 +168,9 @@ describe("complete task browsing and history API", () => {
     const unrelated = app.startTask(a.id, "Keep this task running");
     const target = app.startTask(b.id, "Review before completing");
     const checkpoint: TaskCheckpoint = {
+      ...fixtureAcceptance(),
       summary: "Verification does not imply all production cases passed", completed: ["local implementation"],
-      next: ["remote validation"], changedFiles: ["src/very-long-module.ts"],
+      next: [], changedFiles: ["src/very-long-module.ts"],
       verification: [{ command: "npm test", status: "passed", summary: "local fixtures only" }],
       blockers: [], risks: ["Remote database has not been tested"],
     };

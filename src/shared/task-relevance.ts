@@ -6,7 +6,10 @@ const STOP_WORDS = new Set([
 export function taskTokens(value: string): string[] {
   const normalized = value.normalize("NFKC").toLowerCase();
   const result = new Set<string>();
-  for (const word of normalized.match(/[\p{L}\p{N}_-]+/gu) ?? []) {
+  // Technical identifiers adjacent to Han text remain independent terms.
+  const separated = normalized.replace(/(\p{Script=Han})([\p{Script=Latin}\p{N}_-])/gu, '$1 $2')
+    .replace(/([\p{Script=Latin}\p{N}_-])(\p{Script=Han})/gu, '$1 $2');
+  for (const word of separated.match(/[\p{L}\p{N}_-]+/gu) ?? []) {
     if (word.length >= 2 && !STOP_WORDS.has(word)) result.add(word);
   }
   // Han text commonly has no spaces; meaningful bigrams also match substrings.

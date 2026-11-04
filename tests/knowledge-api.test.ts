@@ -72,7 +72,7 @@ describe("local knowledge API and MCP", () => {
     const [a, b] = InMemoryTransport.createLinkedPair(); await Promise.all([server.connect(b), client.connect(a)]);
     const call = async (name: string, args: Record<string, unknown>) => client.callTool({ name, arguments: args });
     try {
-      expect((await client.listTools()).tools).toHaveLength(52);
+      expect((await client.listTools()).tools).toHaveLength(53);
       const invalid = await call("memory_remember", { projectId, type: "fact", title: "Invalid", content: "Different content", sourceKind: "user", knowledge: document });
       expect(invalid.isError).toBe(true);
       expect(app.memories(projectId, "active", 100)).toHaveLength(1);

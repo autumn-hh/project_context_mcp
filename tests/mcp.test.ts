@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { promisify } from "node:util";
@@ -57,7 +57,13 @@ describe("Project Context MCP", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     try {
       const tools = await client.listTools();
-      expect(tools.tools).toHaveLength(52);
+      expect(tools.tools).toHaveLength(53);
+      for (const path of ['README.md', 'README.en.md']) {
+        const readme = await readFile(path, 'utf8');
+        const section = readme.split(/^## MCP (?:工具|Tools).*$/m)[1]!.split(/^## /m)[0]!;
+        const documented = [...section.matchAll(/`((?:storage|project|memory|user_memory|task|sync)_[a-z_]+)`/g)].map(match => match[1]);
+        expect([...new Set(documented)].sort()).toEqual(tools.tools.map(tool => tool.name).sort());
+      }
       expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["project_backup_remote", "project_restore_remote"]));
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);
 
@@ -121,11 +127,14 @@ describe("Project Context MCP", () => {
         changedFiles: [], verification: [], blockers: [], risks: [],
       });
       await call(client, "task_list", { projectId, status: "in_progress" });
-      const checkpointRetry = { projectId, taskId, summary: "Ready for resources", requestId: "mcp-checkpoint-1" };
+      const checkpointRetry = { projectId, taskId, summary: "Ready for resources", requestId: "mcp-checkpoint-1", acceptance:[{criterion:'Fixture contract',status:'passed',evidence:'test:mcp-fixture'}] };
       await call(client, "task_checkpoint", checkpointRetry);
       await call(client, "task_checkpoint", { ...checkpointRetry, requestId: "mcp-checkpoint-2", summary: "Newer progress" });
       const replayed = object(await call(client, "task_checkpoint", checkpointRetry));
       expect(object(replayed.checkpoint).summary).toBe("Newer progress");
+      expect(object(replayed.checkpoint).next).toEqual(['Resources']);
+      const premature=await client.callTool({name:'task_complete',arguments:{projectId,taskId}});
+      expect(premature.isError).toBe(true);
       const history = object(await call(client, "task_history", { projectId, taskId, limit: 2 }));
       expect(history.total).toBe(4);
       expect(array(history.items)).toHaveLength(2);
@@ -138,7 +147,18 @@ describe("Project Context MCP", () => {
       expect(JSON.stringify(conflict.content)).toContain("TASK_REQUEST_CONFLICT");
       await call(client, "project_watch_start", { projectId, initialIndex: false, debounceMs: 100 });
       await writeFile(join(projectRoot, "src", "completion.ts"), "export const finalRefresh = 'task completion refresh';\n", "utf8");
+      await call(client,'task_checkpoint',{projectId,taskId,next:[]});
+      for(const name of ['task_complete','task_cancel']) {
+        const stale=await client.callTool({name,arguments:{projectId,taskId,expectedRevision:0}});
+        expect(stale.isError).toBe(true);expect(JSON.stringify(stale.content)).toContain('TASK_UPDATE_CONFLICT');
+      }
       await call(client, "task_complete", { projectId, taskId });
+      const doneHistory=object(await call(client,'task_history',{projectId,taskId}));
+      const reopening={projectId,taskId,reason:'required launch validation',requestId:'reopen-mcp',expectedRevision:object(array(doneHistory.items)[0]).sequence};
+      await call(client,'task_reopen',reopening);
+      await call(client,'task_checkpoint',{projectId,taskId,next:[],acceptance:[{criterion:'launch',status:'passed',evidence:'fixture:launch'}]});
+      await call(client,'task_complete',{projectId,taskId});
+      expect(object(await call(client,'task_reopen',reopening)).status).toBe('completed');
       const completionVerifier = await ProjectContextApp.create();
       try {
         expect(completionVerifier.search(projectId, "task completion refresh")).not.toHaveLength(0);
@@ -218,7 +238,7 @@ describe("Project Context MCP", () => {
     const client = new Client({ name: "stdio-test", version: "1.0.0" });
     try {
       await client.connect(transport);
-      expect((await client.listTools()).tools).toHaveLength(52);
+      expect((await client.listTools()).tools).toHaveLength(53);
       const status = await client.callTool({ name: "storage_status", arguments: {} });
       expect(status.structuredContent).toMatchObject({ result: { configured: true } });
     } finally {

@@ -18,6 +18,7 @@ import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { MigrationJobs } from "./migration-jobs.js";
 import { IndexPreviewJobs } from "./index-preview-jobs.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
+import { taskWorkflowSchema } from '../tasks/task-workflow.js';
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { TeamService } from "../team/team-service.js";
 import { TeamKnowledgeService } from "../team/knowledge-service.js";
@@ -501,6 +502,7 @@ async function routeRequest(
       const input = taskQuerySchema.parse({
         projectId: url.searchParams.get("projectId") ?? undefined,
         status: url.searchParams.get("status") ?? undefined,
+        stage: url.searchParams.get('stage') || undefined,
         q: url.searchParams.get("q") ?? undefined,
         sort: url.searchParams.get("sort") ?? undefined,
         limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
@@ -519,17 +521,34 @@ async function routeRequest(
         limit: z.coerce.number().int().min(1).max(100).parse(url.searchParams.get("limit") ?? "20"),
         offset: z.coerce.number().int().min(0).max(100_000).parse(url.searchParams.get("offset") ?? "0"),
       };
-      await withApp(response, (app) => taskReadMatch[3] ? app.taskHistory(projectId, taskId, options) : app.task(projectId, taskId), false);
+      await withApp(response, (app) => taskReadMatch[3] ? app.taskHistory(projectId, taskId, options) : app.taskDetail(projectId, taskId), false);
       return;
     }
-    const taskActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(complete|cancel)$/);
+    const taskActionMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/tasks\/([^/]+)\/(complete|cancel|reopen|workflow)$/);
     if (request.method === "POST" && taskActionMatch) {
       const projectId = decodeSegment(taskActionMatch[1]!);
       const taskId = decodeSegment(taskActionMatch[2]!);
       const action = taskActionMatch[3]!;
+      if (action === 'workflow') {
+        const input = taskWorkflowSchema.extend({ expectedUpdatedAt:z.string().min(1), expectedRevision:z.number().int().min(0), next:z.array(z.string().trim().min(1).max(4000)).max(100).optional(), blockers:z.array(z.string().trim().min(1).max(4000)).max(100).optional() }).parse(await readJsonBody(request));
+        await withApp(response, app => {
+          const task=app.task(projectId,taskId);
+          if(task.updatedAt!==input.expectedUpdatedAt) throw new ProjectContextError('TASK_UPDATE_CONFLICT','任务已更新，请刷新后再保存。');
+          const {expectedUpdatedAt:_,expectedRevision,...workflow}=input;
+          return app.checkpoint(projectId,taskId,workflow,{source:'web',expectedUpdatedAt:input.expectedUpdatedAt,expectedRevision});
+        });
+        return;
+      }
+      if (action === 'reopen') {
+        const input=z.object({reason:z.string().trim().min(1).max(2000),requestId:z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/-]+$/),expectedRevision:z.number().int().min(0)}).strict().parse(await readJsonBody(request));
+        await withApp(response,app=>app.reopenTask(projectId,taskId,input.reason,{source:'web',requestId:input.requestId,expectedRevision:input.expectedRevision}));
+        return;
+      }
+      const input=z.object({expectedRevision:z.number().int().min(0).optional()}).strict().parse(await readJsonBody(request, true));
+      const options={source:'web',...(input.expectedRevision !== undefined ? {expectedRevision:input.expectedRevision} : {})};
       await withApp(response, (app) => action === "complete"
-        ? app.completeTask(projectId, taskId, undefined, { source: "web" })
-        : app.cancelTask(projectId, taskId, { source: "web" }));
+        ? app.completeTask(projectId, taskId, undefined, options)
+        : app.cancelTask(projectId, taskId, options));
       return;
     }
     const knowledgeMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/memory-knowledge(?:\/([^/]+)\/review)?$/);
@@ -694,7 +713,7 @@ function authenticated(request: IncomingMessage, sessionToken: string): boolean 
   return safeEqual(cookies[SESSION_COOKIE] ?? "", sessionToken);
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJsonBody(request: IncomingMessage, allowEmpty = false): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
@@ -704,6 +723,7 @@ async function readJsonBody(request: IncomingMessage): Promise<Record<string, un
     chunks.push(buffer);
   }
   try {
+    if (allowEmpty && size === 0) return {};
     const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
     return parsed as Record<string, unknown>;

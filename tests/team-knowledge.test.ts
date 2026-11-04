@@ -65,7 +65,7 @@ describe("shared knowledge infrastructure with independent developer clients", (
     expect(await call(b, "team_search", { shareId, query: "Central memory" })).toHaveLength(1);
     const plan = await call(a, "team_task_start", { shareId, goal: "Implement local checkout independently" });
     expect((await call(b, "team_task_list", { shareId })).items.map((t: any) => t.id)).toEqual([plan.id]);
-    const checkpoint = { summary: "Bob finished the first step", completed: ["First step"], next: ["Review"] };
+    const checkpoint = { summary: "Bob finished the first step", completed: ["First step"], next: [], acceptance:[{criterion:'Shared fixture',status:'passed',evidence:'test:fixture'}] };
     const updated = await call(b, "team_task_checkpoint", { shareId, taskId: plan.id, expectedVersion: plan.version, requestId: "checkpoint-1", checkpoint });
     const rule = await call(a, "team_rule_put", { shareId, title: "Review changes", content: "Run relevant local checks before sharing progress." });
     const context = await call(b, "team_context", { shareId });
@@ -79,6 +79,15 @@ describe("shared knowledge infrastructure with independent developer clients", (
     const c = (await connect("alice", "reconnected")).client;
     expect((await call(c, "team_task_get", { shareId, taskId: plan.id })).status).toBe("completed");
     expect((await call(c, "team_rule_list", { shareId })).items[0].id).toBe(rule.id);
+  });
+
+  it('preserves required work through summary-only shared checkpoints',async()=>{
+    const a=(await connect('alice','patch-client')).client;
+    const task=await call(a,'team_task_start',{shareId,goal:'verify required work'});
+    const required=await call(a,'team_task_checkpoint',{shareId,taskId:task.id,expectedVersion:task.version,requestId:'required',checkpoint:{next:['launch'],blockers:['device'],verification:[{command:'launch',status:'failed'}],acceptance:[{criterion:'launch',status:'passed',evidence:'contradictory fixture'}]}});
+    const note=await call(a,'team_task_checkpoint',{shareId,taskId:task.id,expectedVersion:required.version,requestId:'note',checkpoint:{summary:'implementation done'}});
+    expect(note.checkpoint).toMatchObject({next:['launch'],blockers:['device'],verification:[{command:'launch',status:'failed'}]});
+    await denied(a,'team_task_finish',{shareId,taskId:task.id,expectedVersion:note.version,status:'completed'},'TASK_ACCEPTANCE_REQUIRED');
   });
 
   it("rejects concurrent stale writes and keeps checkpoint retries and rule history consistent", async () => {

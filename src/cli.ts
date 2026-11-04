@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { readFile } from 'node:fs/promises';
 import { Command, Option } from "commander";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
@@ -9,7 +10,8 @@ import { connectionStatusFromDisk, saveConnectionConfig } from "./config/connect
 import { ProjectContextError, errorMessage } from "./shared/errors.js";
 import { memoryStatusSchema, memoryTypeSchema } from "./memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "./memory/user-memory-service.js";
-import type { TaskCheckpoint } from "./tasks/task-service.js";
+import type { TaskCheckpointPatch } from "./tasks/task-service.js";
+import { taskStageSchema, taskWorkflowSchema } from './tasks/task-workflow.js';
 import { taskQuerySchema } from "./tasks/task-query.js";
 import { startUiServer } from "./ui/server.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "./indexing/watch-service.js";
@@ -313,7 +315,12 @@ const task = program.command("task").description("Manage cross-session task chec
 task.command("start")
   .argument("<project-id>")
   .argument("<goal>")
-  .action(withApp((app, projectId: string, goal: string) => print(app.startTask(projectId, goal, { source: "cli" }))));
+  .addOption(new Option('--stage <stage>', 'work stage; use backlog for unscheduled work').choices(taskStageSchema.options).default('executing'))
+  .option('--waiting-reason <text>', 'required for waiting or explicitly user-paused work')
+  .action(withApp((app, projectId: string, goal: string, options: {stage:string;waitingReason?:string}) => print(app.startTask(projectId, goal, {
+    source: "cli", stage:taskStageSchema.parse(options.stage),
+    ...(options.waitingReason !== undefined ? {waitingReason:options.waitingReason} : {}),
+  }))));
 task.command("list")
   .argument("<project-id>")
   .option("--status <status>", "task status", "in_progress")
@@ -323,6 +330,7 @@ task.command("list")
 task.command("query")
   .description("Page through tasks in one or all projects")
   .option("--project <id>", "limit results to this project")
+  .addOption(new Option('--stage <stage>', 'filter unfinished tasks by work stage').choices(taskStageSchema.options))
   .option("--status <status>", "all, in_progress, completed, or cancelled", "all")
   .option("--query <text>", "search goals and checkpoint summaries", "")
   .option("--sort <field>", "updated, created, or completed", "updated")
@@ -330,7 +338,7 @@ task.command("query")
   .option("--offset <number>", "number of rows to skip", numberOption, 0)
   .option("--include-archived", "include archived projects", false)
   .action(withApp((app, options: Record<string, unknown>) => print(app.queryTasks(taskQuerySchema.parse({
-    projectId: options.project, status: options.status, q: options.query, sort: options.sort,
+    projectId: options.project, status: options.status, stage:options.stage, q: options.query, sort: options.sort,
     limit: options.limit, offset: options.offset, includeArchived: options.includeArchived,
   })))));
 task.command("history")
@@ -350,6 +358,7 @@ task.command("checkpoint")
   .option("--changed-file <path...>")
   .option("--blocker <item...>")
   .option("--risk <item...>")
+  .option('--clear <field...>', 'explicitly clear completed, next, changedFiles, verification, blockers or risks')
   .option("--request-id <id>", "reuse on retries to avoid replaying an older checkpoint")
   .action(withApp((app, projectId: string, taskId: string, options: Record<string, unknown>) => {
     print(app.checkpoint(projectId, taskId, checkpointFromOptions(options), {
@@ -359,11 +368,23 @@ task.command("checkpoint")
 task.command("complete")
   .argument("<project-id>")
   .argument("<task-id>")
-  .action(withApp((app, projectId: string, taskId: string) => print(app.completeTask(projectId, taskId, undefined, { source: "cli" }))));
+  .option('--expected-revision <number>', 'reject a stale task history sequence', numberOption)
+  .action(withApp((app, projectId: string, taskId: string, options:{expectedRevision?:number}) => print(app.completeTask(projectId, taskId, undefined, { source: "cli", ...options }))));
+task.command('workflow').argument('<project-id>').argument('<task-id>')
+  .requiredOption('--file <path>', 'JSON containing stage, acceptance criteria/evidence and waitingReason')
+  .action(withApp(async (app, projectId:string, taskId:string, options:{file:string}) => {
+    const workflow=taskWorkflowSchema.parse(JSON.parse(await readFile(options.file,'utf8')));
+    print(app.checkpoint(projectId,taskId,workflow,{source:'cli'}));
+  }));
+task.command('reopen').argument('<project-id>').argument('<task-id>').requiredOption('--reason <text>')
+  .requiredOption('--request-id <id>', 'reuse for retries')
+  .requiredOption('--expected-revision <number>', 'latest task history sequence', numberOption)
+  .action(withApp((app,projectId:string,taskId:string,options:{reason:string;requestId:string;expectedRevision:number})=>print(app.reopenTask(projectId,taskId,options.reason,{source:'cli',requestId:options.requestId,expectedRevision:options.expectedRevision}))));
 task.command("cancel")
   .argument("<project-id>")
   .argument("<task-id>")
-  .action(withApp((app, projectId: string, taskId: string) => print(app.cancelTask(projectId, taskId, { source: "cli" }))));
+  .option('--expected-revision <number>', 'reject a stale task history sequence', numberOption)
+  .action(withApp((app, projectId: string, taskId: string, options:{expectedRevision?:number}) => print(app.cancelTask(projectId, taskId, { source: "cli", ...options }))));
 
 program.command("context")
   .argument("<project-id>")
@@ -587,16 +608,19 @@ function resolveStorage(storage: string, projectRoot?: string): string {
   return storage;
 }
 
-function checkpointFromOptions(options: Record<string, unknown>): TaskCheckpoint {
-  return {
-    ...(options.summary ? { summary: String(options.summary) } : {}),
-    completed: (options.completed as string[] | undefined) ?? [],
-    next: (options.next as string[] | undefined) ?? [],
-    changedFiles: (options.changedFile as string[] | undefined) ?? [],
-    verification: [],
-    blockers: (options.blocker as string[] | undefined) ?? [],
-    risks: (options.risk as string[] | undefined) ?? [],
+function checkpointFromOptions(options: Record<string, unknown>): TaskCheckpointPatch {
+  const patch: TaskCheckpointPatch = {
+    ...(options.summary !== undefined ? { summary: String(options.summary) } : {}),
+    completed: options.completed as string[] | undefined, next: options.next as string[] | undefined,
+    changedFiles: options.changedFile as string[] | undefined, blockers: options.blocker as string[] | undefined, risks: options.risk as string[] | undefined,
   };
+  for (const field of (options.clear as string[] | undefined) ?? []) {
+    if (!['completed','next','changedFiles','verification','blockers','risks'].includes(field) || patch[field as keyof TaskCheckpointPatch] !== undefined) {
+      throw new ProjectContextError('INVALID_TASK_OPTIONS', `Invalid or conflicting clear field: ${field}`);
+    }
+    Object.assign(patch, {[field]:[]});
+  }
+  return patch;
 }
 
 function numberOption(value: string): number {

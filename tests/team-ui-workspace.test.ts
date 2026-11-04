@@ -37,7 +37,7 @@ describe.each(["local", "remote-team"] as const)("team web workspace through %s"
     expect((await call("accept",{candidateId:proposal.body.id})).response.status).toBe(200);
     expect((await call("memories",undefined,"&query=shared%20from%20web")).body).toHaveLength(1);
     const created=(await call("task-start",{goal:"Shared plan"})).body;
-    const checkpoint={summary:"work done",completed:["first"],changedFiles:["local.ts"],verification:[{command:"typecheck",status:"passed"}]};
+    const checkpoint={summary:"work done",completed:["first"],changedFiles:["local.ts"],verification:[{command:"typecheck",status:"passed"}],acceptance:[{criterion:'Shared fixture',status:'passed',evidence:'test:fixture'}]};
     const updated=await call("task-checkpoint",{taskId:created.id,expectedVersion:created.version,requestId:"one",checkpoint});expect(updated.response.status).toBe(200);
     expect((await call("task-checkpoint",{taskId:created.id,expectedVersion:1,requestId:"stale",checkpoint:{summary:"old"}})).response.status).toBe(409);
     expect((await call("task",undefined,"&taskId="+created.id)).body.checkpoint).toMatchObject(checkpoint);

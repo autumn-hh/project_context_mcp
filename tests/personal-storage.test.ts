@@ -408,7 +408,7 @@ describe("personal storage lifecycle", () => {
       const task = app.startTask(project.id, "finish durable cleanup");
       await expect(app.deleteProject(project.id, { confirmProjectId: project.id, purge: true }))
         .rejects.toMatchObject({ code: "PROJECT_DELETE_BLOCKED" });
-      app.completeTask(project.id, task.id);
+      app.completeTask(project.id, task.id, {summary:'Cleanup fixture complete',completed:[],next:[],changedFiles:[],verification:[],blockers:[],risks:[],acceptance:[{criterion:'Fixture cleanup',status:'passed',evidence:'test:fixture'}]});
 
       const db = app.projects.projectDatabase(project.id);
       try {

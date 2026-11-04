@@ -125,6 +125,10 @@ export const TEAM_WORKSPACE_JS = String.raw`
     item.append(element("summary","",record.title||record.goal));
     item.append(element("p","",record.content||(record.checkpoint&&record.checkpoint.summary)||"尚无进度说明"));
     if(record.checkpoint)["completed","next","blockers","risks","changedFiles"].forEach(function(key,i){if(record.checkpoint[key]&&record.checkpoint[key].length)item.append(element("p","",["已完成","下一步","阻塞","风险","修改文件"][i]+"：\n"+record.checkpoint[key].join("\n")));});
+    if(record.checkpoint) {
+      item.append(element('p','', '工作阶段：' + taskStageLabel(record)));
+      (record.checkpoint.acceptance || []).forEach(function(a){item.append(element('p','', '验收：'+a.criterion+' · '+(a.status==='passed'?'已通过':'待验收')+' · '+(a.evidence||'尚无证据')));});
+    }
     item.append(element("p","maintenance-note","版本 "+record.version+" · "+({in_progress:"进行中",completed:"已完成",cancelled:"已取消",active:"生效中",deleted:"已停用"}[record.status]||record.status)+" · "+record.id));
     if(kind==="tasks"&&s.role!=="viewer"&&record.status==="in_progress"){
       actions.append(teamButton("更新进度",function(){if(teamCurrent(target))openTeamEditor("task-checkpoint",record);}));
@@ -153,6 +157,20 @@ export const TEAM_WORKSPACE_JS = String.raw`
     if(action==="task-start")teamField("goal","计划目标", "",8000,true).required=true;
     else if(action==="task-checkpoint"){
       var cp=record.checkpoint||{};teamField("summary","进度说明",cp.summary,8000,true);
+      var stageBox=element('div','field'), stageLabel=element('label','','工作阶段'),stage=element('select');stage.id='team-field-stage';stageLabel.htmlFor=stage.id;
+      [['untriaged','待核对'],['backlog','待排期'],['executing','执行中'],['acceptance','待验收'],['waiting','等待外部条件'],['paused','暂缓（用户明确决定）']].forEach(function(e){addOption(stage,e[0],e[1]);});
+      stage.value=cp.stage||'untriaged';stageBox.append(stageLabel,stage);remoteElement('team-editor-fields').append(stageBox);
+      teamField('waitingReason','等待或暂缓原因',cp.waitingReason,2000,true);
+      var acceptanceRows=element('div','task-acceptance-rows');acceptanceRows.id='team-acceptance-rows';
+      function addAcceptance(a){
+        var row=element('fieldset','task-acceptance-row');row.append(element('legend','','验收项'));
+        var cLabel=element('label','','完成条件'),c=element('textarea');c.maxLength=2000;c.required=true;c.value=a.criterion||'';cLabel.append(c);
+        var eLabel=element('label','','验证证据'),e=element('textarea');e.maxLength=4000;e.value=a.evidence||'';eLabel.append(e);
+        var pLabel=element('label','','已通过'),p=element('input');p.type='checkbox';p.checked=a.status==='passed';pLabel.append(p);
+        row.append(cLabel,eLabel,pLabel);row.readAcceptance=function(){return {criterion:c.value.trim(),status:p.checked?'passed':'pending',evidence:e.value.trim()};};acceptanceRows.append(row);
+      }
+      (cp.acceptance||[]).forEach(addAcceptance);var add=teamButton('添加验收项',function(){addAcceptance({});});
+      remoteElement('team-editor-fields').append(acceptanceRows,add);
       ["completed","next","blockers","risks"].forEach(function(key,i){teamField(key,["已完成（每行一项）","下一步（每行一项）","阻塞（每行一项）","风险（每行一项）"][i],(cp[key]||[]).join("\n"),60000,true);});
       remoteElement("team-editor-fields").append(element("p","maintenance-note","修改文件和验证记录保留原值；未改动的列表保留原始条目。"));
     }else{
@@ -169,6 +187,8 @@ export const TEAM_WORKSPACE_JS = String.raw`
     if(editor.action==="task-start")args.goal=value("goal");
     else if(editor.action==="task-checkpoint"){
       var cp=Object.assign({},editor.record.checkpoint,{summary:value("summary")});
+      cp.stage=value('stage');cp.waitingReason=value('waitingReason');
+      cp.acceptance=Array.from(remoteElement('team-acceptance-rows').children).map(function(row){return row.readAcceptance();});
       ["completed","next","blockers","risks"].forEach(function(key){var raw=value(key),old=editor.record.checkpoint[key]||[];cp[key]=raw===old.join("\n")?old:raw.split("\n").map(function(v){return v.trim();}).filter(Boolean);});
       var payload=JSON.stringify(cp);if(payload!==editor.payload){editor.payload=payload;editor.requestId=crypto.randomUUID();}
       args={taskId:editor.record.id,expectedVersion:editor.record.version,requestId:editor.requestId,checkpoint:cp};

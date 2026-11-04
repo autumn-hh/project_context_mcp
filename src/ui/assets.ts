@@ -1,6 +1,7 @@
 import { TEAM_EDITOR_HTML, TEAM_WORKSPACE_CSS, TEAM_WORKSPACE_JS } from "./team-workspace-assets.js";
 import { REMOTE_BACKUP_HTML, TEAM_WORKSPACE_HTML, REMOTE_BACKUP_CSS, REMOTE_BACKUP_JS } from "./remote-backup-assets.js";
 import { MEMORY_GRAPH_HTML, MEMORY_GRAPH_CSS, MEMORY_GRAPH_JS } from "./memory-graph-assets.js";
+import { summarizeVerification } from '../tasks/task-verification.js';
 
 export const UI_HTML = String.raw`<!doctype html>
 <html lang="zh-CN">
@@ -202,6 +203,7 @@ export const UI_HTML = String.raw`<!doctype html>
       <div class="task-filters" aria-label="任务筛选">
         <label class="task-query-field">搜索任务<input id="task-query" type="search" maxlength="200" placeholder="任务目标或当前摘要"></label>
         <details class="task-filter-options"><summary>筛选与排序</summary><div class="task-filter-fields"><label>状态<select id="task-status"><option value="all">全部状态</option><option value="in_progress">进行中</option><option value="completed">已完成</option><option value="cancelled">已取消</option></select></label>
+        <label>工作阶段<select id="task-stage"><option value="">全部阶段</option><option value="untriaged">待核对</option><option value="backlog">待排期</option><option value="executing">执行中</option><option value="acceptance">待验收</option><option value="waiting">等待外部条件</option><option value="paused">暂缓</option></select></label>
         <label>排序<select id="task-sort"><option value="updated">最近更新</option><option value="created">最近创建</option><option value="completed">最近完成</option></select></label>
         <label class="task-archive-filter"><input id="task-archived" type="checkbox">包含归档项目</label>
         </div></details>
@@ -432,6 +434,14 @@ h1, h2, p { margin: 0; }
 .task-filters label { display: grid; gap: 5px; color: var(--muted); font-size: 11px; min-width: 0; }
 .task-filters .task-query-field { flex: 1 1 300px; max-width: 640px; }
 .task-filters input, .task-filters select { min-width: 0; width: 100%; }
+.task-workflow-editor { flex: 1 1 100%; min-width: 0; }
+.task-workflow-form, .task-acceptance-rows, .task-acceptance-row { display: grid; gap: 12px; min-width: 0; }
+.task-workflow-form { padding: 16px 0; }
+.task-workflow-form label { display: grid; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.task-workflow-form textarea, .task-workflow-form select { width: 100%; min-width: 0; max-width: 100%; }
+.task-workflow-form textarea { min-height: 70px; resize: vertical; }
+.task-acceptance-row { border: 1px solid var(--line); padding: 12px; }
+.task-workflow-form input[type=checkbox] { justify-self: start; }
 .task-filters .task-archive-filter { display: flex; align-items: center; min-height: 38px; }
 .task-archive-filter input { width: auto; }
 .task-pagination { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 0; flex: 0 0 auto; }
@@ -597,7 +607,7 @@ h1, h2, p { margin: 0; }
 .task-detail-empty { height: 100%; display: grid; place-items: center; padding: 40px; text-align: center; }
 .task-detail-empty strong { display: block; font-size: 16px; }
 .task-detail-empty span { display: block; max-width: 460px; margin-top: 7px; color: var(--muted); line-height: 1.55; }
-.task-detail-actions { max-width: 1120px; display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px 28px; margin: 0 auto; }
+.task-detail-actions { max-width: 1120px; display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: flex-end; gap: 8px; padding: 16px 24px 28px; margin: 0 auto; }
 .task-detail.task-updated { animation: task-update 650ms ease-out; }
 @keyframes live-pulse { 0% { box-shadow: 0 0 0 0 rgba(54,164,116,.28); } 70%, 100% { box-shadow: 0 0 0 7px rgba(54,164,116,0); } }
 @keyframes task-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(.78); } }
@@ -942,6 +952,7 @@ ${MEMORY_GRAPH_CSS}
 
 export const UI_JS = String.raw`(function () {
   "use strict";
+  const summarizeVerification = ${summarizeVerification.toString()};
   var state = {
     projects: [], memories: [], scope: "all", selectedId: null, portraitProjectId: null, portrait: null,
     graphCy: null, graphProjectId: null, graphRoot: null, graphScope: "files",
@@ -991,7 +1002,7 @@ export const UI_JS = String.raw`(function () {
       "storage-path", "storage-usage", "storage-counts", "refresh-storage", "cleanup-retention", "preview-cleanup", "execute-cleanup", "cleanup-result", "maintenance-auto", "maintenance-retention", "maintenance-interval", "save-maintenance", "maintenance-result", "ranking-settings-form", "ranking-business-chunk", "ranking-business-symbol", "ranking-memory", "ranking-low-chunk", "ranking-low-symbol", "reset-ranking", "save-ranking", "ranking-settings-status", "ranking-settings-result",
       "cleanup-details", "cleanup-details-title", "cleanup-details-note", "cleanup-details-table", "cleanup-history-count", "cleanup-history-list",
       "recent-index-count", "recent-index-list", "index-log-limit", "index-log-status", "index-log-prev", "index-log-next", "index-log-page", "cleanup-history-limit", "refresh-index-logs",
-      "task-query", "task-status", "task-sort", "task-limit", "task-archived", "task-warnings", "task-page", "task-prev", "task-next",
+      "task-query", "task-status", "task-stage", "task-sort", "task-limit", "task-archived", "task-warnings", "task-page", "task-prev", "task-next",
       "task-project", "task-project-search", "task-project-results", "refresh-tasks", "task-loading", "task-empty", "task-workspace", "task-count", "task-list", "task-detail",
       "portrait-project", "edit-project", "index-project", "toggle-watch", "refresh-portrait", "portrait-loading", "portrait-empty", "portrait-content",
       "portrait-name", "portrait-state", "portrait-path", "portrait-index-state", "portrait-metrics", "optimize-index",
@@ -1056,7 +1067,7 @@ export const UI_JS = String.raw`(function () {
       state.taskOffset = 0; state.taskDetailMode = "current"; state.taskHistorySequence++;
       loadTaskView(true, false);
     }
-    ["task-status", "task-sort", "task-limit", "task-archived"].forEach(function (id) { els[id].addEventListener("change", changeTaskFilter); });
+    ["task-status", "task-stage", "task-sort", "task-limit", "task-archived"].forEach(function (id) { els[id].addEventListener("change", changeTaskFilter); });
     els["task-query"].addEventListener("input", function () {
       window.clearTimeout(state.taskSearchTimer); state.taskSequence++;
       state.taskSearchTimer = window.setTimeout(changeTaskFilter, 300);
@@ -1068,7 +1079,7 @@ export const UI_JS = String.raw`(function () {
       var projectId = els["portrait-project"].value;
       if (!projectId) return;
       window.clearTimeout(state.taskSearchTimer); state.taskSearchTimer = null;
-      els["task-query"].value = ""; els["task-status"].value = "all";
+      els["task-query"].value = ""; els["task-status"].value = "all"; els['task-stage'].value = '';
       els["task-project"].value = projectId;
       var project = projectById(projectId);
       if (project && project.archivedAt) els["task-archived"].checked = true;
@@ -1969,14 +1980,14 @@ export const UI_JS = String.raw`(function () {
   function taskKey(task) { return task.projectId + ":" + task.id; }
 
   function taskQuery() {
-    var query = new URLSearchParams({ view: "summary", status: els["task-status"].value, q: els["task-query"].value.trim(), sort: els["task-sort"].value, limit: els["task-limit"].value, offset: String(state.taskOffset), includeArchived: String(els["task-archived"].checked) });
+    var query = new URLSearchParams({ view: "summary", status: els["task-status"].value, stage: els['task-stage'].value, q: els["task-query"].value.trim(), sort: els["task-sort"].value, limit: els["task-limit"].value, offset: String(state.taskOffset), includeArchived: String(els["task-archived"].checked) });
     if (els["task-project"].value) query.set("projectId", els["task-project"].value);
     return query.toString();
   }
 
   async function loadTaskView(force, silent) {
     var filterSummary = document.querySelector(".task-filter-options > summary");
-    filterSummary.textContent = "筛选 · " + els["task-status"].selectedOptions[0].textContent + " · " + els["task-sort"].selectedOptions[0].textContent + (els["task-archived"].checked ? " · 含归档" : "");
+    filterSummary.textContent = "筛选 · " + els["task-status"].selectedOptions[0].textContent + (els['task-stage'].value ? ' · ' + els['task-stage'].selectedOptions[0].textContent : '') + " · " + els["task-sort"].selectedOptions[0].textContent + (els["task-archived"].checked ? " · 含归档" : "");
     var query = taskQuery();
     if (!force && state.taskQueryKey === query && state.taskPortrait) return;
     if (silent && state.taskLoading) return;
@@ -1985,10 +1996,17 @@ export const UI_JS = String.raw`(function () {
     if (!silent) {
       state.taskReadingMore = false; state.taskDetailMode = "current";
       state.taskHistoryOffset = 0; state.taskHistorySequence++;
+      state.taskDetailSequence++;
+      if (state.taskDetailController) state.taskDetailController.abort();
       els["task-detail"].dataset.loadedKey = "";
       els["task-loading"].replaceChildren(element("strong", "", "正在读取任务动态"));
-      els["task-loading"].hidden = false;
-      els["task-workspace"].hidden = true;
+      // Keep the filters, focus and previous result in place during subsequent reads.
+      els["task-loading"].hidden = Boolean(state.taskPortrait);
+      els["task-workspace"].hidden = !state.taskPortrait;
+      els["task-workspace"].setAttribute("aria-busy", "true");
+      els["task-list"].inert = els["task-detail"].inert = true;
+      els["task-prev"].disabled = els["task-next"].disabled = true;
+      syncTaskLiveState();
       els["task-empty"].hidden = true;
       els["refresh-tasks"].disabled = true;
     }
@@ -2001,21 +2019,30 @@ export const UI_JS = String.raw`(function () {
       }
       var signature = JSON.stringify(page);
       var unchanged = state.taskQueryKey === query && state.taskSignature === signature;
-      var changed = Boolean(state.taskSignature && !unchanged);
+      var changed = Boolean(state.taskQueryKey === query && state.taskSignature && !unchanged);
       state.taskPortrait = page; state.taskQueryKey = query; state.taskSignature = signature;
       if (silent && unchanged) return;
       renderTaskView(page, changed);
     } catch (error) {
       if (sequence !== state.taskSequence) return;
-      if (!silent) {
+      if (!state.taskPortrait) {
         els["task-loading"].hidden = false;
         els["task-loading"].replaceChildren(errorState(error.message || "无法读取任务动态"));
       } else {
         els["task-warnings"].hidden = false;
-        els["task-warnings"].textContent = "自动刷新失败，当前仍为上次读取结果：" + (error.message || String(error));
+        els["task-warnings"].textContent = (silent ? "自动刷新失败" : "筛选或刷新失败") + "，当前仍为上次读取结果，尚未应用新的筛选条件。请点击刷新重试：" + (error.message || String(error));
       }
     } finally {
-      if (sequence === state.taskSequence) { state.taskLoading = false; els["refresh-tasks"].disabled = false; }
+      if (sequence === state.taskSequence) {
+        state.taskLoading = false; els["refresh-tasks"].disabled = false;
+        els["task-workspace"].setAttribute("aria-busy", "false");
+        els["task-list"].inert = els["task-detail"].inert = false;
+        var currentPage = state.taskPortrait;
+        var currentQuery = state.taskQueryKey === taskQuery();
+        els["task-prev"].disabled = !currentQuery || !currentPage || currentPage.offset === 0;
+        els["task-next"].disabled = !currentQuery || !currentPage || currentPage.offset + currentPage.limit >= currentPage.total;
+        syncTaskLiveState();
+      }
     }
   }
 
@@ -2051,11 +2078,13 @@ export const UI_JS = String.raw`(function () {
       var title = element("span", "task-list-title");
       var goal = element("strong", "", task.goal); goal.title = task.goal;
       var blocked = task.status === "in_progress" && task.hasBlockers;
-      title.append(goal, element("span", "task-state-badge " + (blocked ? "blocked" : task.status), blocked ? "有阻塞" : statusLabel(task.status)));
+      title.append(goal, element("span", "task-state-badge " + (blocked ? "blocked" : task.status), taskStageLabel(task)));
       var summary = element("span", "task-list-summary", task.summary || "尚未记录摘要"); summary.title = task.summary || "尚未记录摘要";
       var metadata = element("span", "task-list-metadata");
       metadata.append(element("small", "", task.projectName + (task.projectArchived ? "（已归档）" : "")), element("small", "", formatRelativeTime(task.updatedAt)));
       copy.append(title, summary, metadata);
+      var nextAction = element('span', 'task-list-summary', task.status !== 'in_progress' ? '记录已保留，可查看验收证据' : ['waiting','paused'].includes(task.stage) && task.waitingReason ? '原因：' + task.waitingReason : '下一步：' + (task.nextAction || '待补充'));
+      nextAction.title = nextAction.textContent; copy.append(nextAction);
       button.append(element("span", "task-list-indicator"), copy);
       button.addEventListener("click", function () {
         els["task-detail"].dataset.loadedKey = ""; state.taskReadingMore = false; state.selectedTaskId = taskKey(task); state.taskDetailMode = "current"; state.taskHistoryOffset = 0; state.taskHistorySequence++;
@@ -2105,6 +2134,12 @@ export const UI_JS = String.raw`(function () {
 
   function syncTaskLiveState() {
     var live = document.querySelector(".task-live-state");
+    if (state.taskLoading && els["task-workspace"].getAttribute("aria-busy") === "true") {
+      live.replaceChildren(element("span"), document.createTextNode("更新中…"));
+      live.setAttribute("aria-label", "正在更新任务，当前保留上次读取结果");
+      live.classList.remove("paused");
+      return;
+    }
     live.replaceChildren(element("span"), document.createTextNode(state.taskDetailMode === "history" ? "历史阅读中" : state.taskReadingMore ? "明细阅读中" : "实时更新"));
     live.setAttribute("aria-label", state.taskDetailMode === "history" || state.taskReadingMore ? "阅读时暂停自动刷新，点击刷新可获取最新数据" : "自动刷新已开启");
     live.classList.toggle("paused", state.taskDetailMode === "history" || state.taskReadingMore);
@@ -2119,7 +2154,7 @@ export const UI_JS = String.raw`(function () {
     var title = element("div", "task-focus-title");
     title.append(element("span", "panel-label", "任务目标"), element("h2", "", task.goal));
     title.append(element("p", "task-identity-line", task.projectName + (task.projectArchived ? "（已归档）" : "") + " · 更新于 " + formatRelativeTime(task.updatedAt)));
-    heading.append(title, element("span", "status-badge " + task.status, statusLabel(task.status)));
+    heading.append(title, element("span", "status-badge " + task.status, taskStageLabel(task)));
     var meta = element("div", "task-focus-meta");
     meta.append(
       element("span", "", "所属项目 " + task.projectName + (task.projectArchived ? "（已归档）" : "")),
@@ -2146,6 +2181,8 @@ export const UI_JS = String.raw`(function () {
     var details = element("div", "task-detail-grid");
     details.append(
       taskDetailSection("最新进展", checkpoint.summary ? [checkpoint.summary] : [], "尚未记录摘要", ""),
+      taskDetailSection('完成条件', (checkpoint.acceptance || []).map(function (item) { return (item.status === 'passed' ? '已通过：' : '待验收：') + item.criterion + (item.evidence ? '；证据：' + item.evidence : '；尚无证据'); }), '尚未记录完成条件', ''),
+      taskDetailSection('工作阶段', [taskStageLabel(task)].concat(checkpoint.waitingReason ? ['原因：' + checkpoint.waitingReason] : []), '', ''),
       taskDetailSection("接下来", checkpoint.next, task.status === "completed" ? "任务已经收尾" : "尚未记录下一步", ""),
       taskDetailSection("已完成", checkpoint.completed, "尚未记录完成事项", "success"),
       taskIssuesSection(checkpoint.blockers, checkpoint.risks),
@@ -2161,6 +2198,18 @@ export const UI_JS = String.raw`(function () {
       complete.addEventListener("click", function () { updateTaskFromActivity(task, "complete", complete); });
       cancel.addEventListener("click", function () { updateTaskFromActivity(task, "cancel", cancel); });
       actions.append(complete, cancel);
+      actions.append(taskWorkflowEditor(task));
+    } else {
+      var reopen = element('button', 'secondary-button', '重新打开'); reopen.type = 'button';
+      reopen.addEventListener('click', function () {
+        if (!task.reopenRequest) {
+          var reason = window.prompt('请填写遗漏的必要验收或重新打开原因');
+          if (!reason || !reason.trim()) return;
+          task.reopenRequest = {reason:reason.trim(),requestId:crypto.randomUUID(),expectedRevision:task.revision};
+        }
+        updateTaskFromActivity(task, 'reopen', reopen, task.reopenRequest);
+      });
+      actions.append(reopen);
     }
     var tabs = element("div", "task-detail-tabs");
     [ ["current", "当前状态"], ["history", "更新历史"] ].forEach(function (entry) {
@@ -2190,13 +2239,14 @@ export const UI_JS = String.raw`(function () {
       var kinds = { created: "创建任务", checkpoint: "更新检查点", completed: "完成任务", cancelled: "取消任务", migration_snapshot: "迁移时快照" };
       page.items.forEach(function (event) {
         var record = element("details", "task-history-record");
-        record.append(element("summary", "", "#" + event.sequence + " · " + (kinds[event.kind] || event.kind) + " · " + formatDate(event.recordedAt)));
+        record.append(element("summary", "", "#" + event.sequence + " · " + (event.source.endsWith(':reopen') ? '重新打开' : kinds[event.kind] || event.kind) + " · " + formatDate(event.recordedAt)));
         record.addEventListener("toggle", function () {
         if (!record.open || record.dataset.rendered) return; record.dataset.rendered = "true";
         var snapshot = event.snapshot, checkpoint = snapshot.checkpoint;
         record.append(element("p", "", "状态：" + statusLabel(snapshot.status) + " · 来源：" + event.source), element("p", "", "目标：" + snapshot.goal));
         if (event.kind === "migration_snapshot") record.append(element("p", "task-history-note", "这是迁移时保存的现存状态，不代表此前的完整历史。"));
         var grid = element("div", "task-detail-grid");
+        grid.append(taskDetailSection('工作阶段', [taskStageLabel(snapshot)].concat(checkpoint.waitingReason ? [checkpoint.waitingReason] : []), '', ''), taskDetailSection('完成条件', (checkpoint.acceptance || []).map(function(item){return item.criterion + ' · ' + (item.status === 'passed' ? '已通过' : '待验收') + ' · ' + (item.evidence || '尚无证据');}), '尚未记录', ''));
         grid.append(taskDetailSection("工作摘要", checkpoint.summary ? [checkpoint.summary] : [], "未记录摘要", ""), taskDetailSection("已完成事项", checkpoint.completed, "未记录完成事项", "success"), taskDetailSection("下一步", checkpoint.next, "未记录下一步", ""), taskDetailSection("修改文件", checkpoint.changedFiles || [], "未记录修改文件", ""), verificationSection(checkpoint.verification), taskIssuesSection(checkpoint.blockers, checkpoint.risks));
         record.append(grid);
         });
@@ -2377,15 +2427,29 @@ export const UI_JS = String.raw`(function () {
 
   function verificationSection(items) {
     var section = element("section", "task-detail-section"); section.append(element("h3", "", "验证状态"));
+    var result = summarizeVerification(items);
+    if (items.length) section.append(element('p', 'task-history-note', result.unresolved ? '当前仍有 ' + result.unresolved + ' 项验证未通过' : '当前 ' + result.current.length + ' 项验证均已通过'));
     var list = element("div", "task-activity-list");
     if (!items.length) list.append(element("div", "task-activity", "尚未记录验证结果"));
-    else pagedTaskItems(list, items.length, function (i) {
-      var item = items[i]; var passing = /pass|success|complete|ok/i.test(item.status);
+    else pagedTaskItems(list, result.current.length, function (i) {
+      var item = result.current[i]; var passing = item.passed;
       var entry = element("div", "task-activity " + (passing ? "success" : "warning"));
       entry.append(readableTaskText(item.command));
       var note = element("small"); note.append(readableTaskText(item.status + (item.summary ? " · " + item.summary : ""))); entry.append(note); return entry;
     });
-    section.append(list); return section;
+    section.append(list);
+    if (result.superseded.length) {
+      var history=element('details','task-verification-history');
+      history.append(element('summary','','查看已被后续结果替代的记录（' + result.superseded.length + '）'));
+      history.addEventListener('toggle',function(){
+        if(!history.open) return; state.taskReadingMore=true;syncTaskLiveState();
+        if(history.dataset.rendered) return; history.dataset.rendered='true';
+        var old=element('div','task-activity-list');
+        pagedTaskItems(old,result.superseded.length,function(i){var item=result.superseded[i],row=element('div','task-activity');row.append(readableTaskText(item.command),readableTaskText('历史结果：' + item.status + (item.summary ? ' · ' + item.summary : '')));return row;});
+        history.append(old);
+      });section.append(history);
+    }
+    return section;
   }
 
   function taskIssuesSection(blockers, risks) {
@@ -2399,17 +2463,52 @@ export const UI_JS = String.raw`(function () {
     section.append(list); return section;
   }
 
-  async function updateTaskFromActivity(task, action, control) {
+  function taskStageLabel(task) {
+    if (task.status !== 'in_progress') return statusLabel(task.status);
+    var labels = {untriaged:'待核对',backlog:'待排期',executing:'执行中',acceptance:'待验收',waiting:'等待外部条件',paused:'暂缓'};
+    return labels[(task.checkpoint && task.checkpoint.stage) || task.stage || 'untriaged'] || '待核对';
+  }
+
+  function taskWorkflowEditor(task) {
+    var panel = element('details', 'task-workflow-editor'); panel.append(element('summary', '', '维护阶段与验收条件'));
+    var form = element('form', 'task-workflow-form');
+    var stageLabel=element('label','','工作阶段'), stage=element('select');
+    [['untriaged','待核对'],['backlog','待排期'],['executing','执行中'],['acceptance','待验收'],['waiting','等待外部条件'],['paused','暂缓（用户明确决定）']].forEach(function (entry) {
+      var option=element('option','',entry[1]); option.value=entry[0]; stage.append(option);
+    });
+    stage.value=task.checkpoint.stage || 'untriaged'; stageLabel.append(stage);
+    var reasonLabel=element('label','','等待或暂缓原因'), reason=element('textarea'); reason.maxLength=2000; reason.value=task.checkpoint.waitingReason || ''; reasonLabel.append(reason);
+    var nextLabel=element('label','','必要下一步（每行一项，完成后清空）'), next=element('textarea'); next.maxLength=16000; next.value=(task.checkpoint.next || []).join('\n'); nextLabel.append(next);
+    var rows=element('div','task-acceptance-rows');
+    var blockersLabel=element('label','','阻塞事项（每行一项，解除后清空）'), blockers=element('textarea'); blockers.maxLength=16000; blockers.value=(task.checkpoint.blockers || []).join(String.fromCharCode(10)); blockersLabel.append(blockers);
+    function addRow(item) {
+      var row=element('fieldset','task-acceptance-row'); row.append(element('legend','','验收项'));
+      var criterionLabel=element('label','','完成条件'), criterion=element('textarea'); criterion.required=true; criterion.maxLength=2000; criterion.value=item.criterion || ''; criterionLabel.append(criterion);
+      var evidenceLabel=element('label','','验证证据'), evidence=element('textarea'); evidence.maxLength=4000; evidence.value=item.evidence || ''; evidenceLabel.append(evidence);
+      var passedLabel=element('label','','已通过'), passed=element('input'); passed.type='checkbox'; passed.checked=item.status==='passed'; passedLabel.append(passed);
+      row.append(criterionLabel,evidenceLabel,passedLabel); row.readAcceptance=function () { return {criterion:criterion.value.trim(),status:passed.checked?'passed':'pending',evidence:evidence.value.trim()}; }; rows.append(row);
+    }
+    (task.checkpoint.acceptance || []).forEach(addRow);
+    var add=element('button','secondary-button','添加验收项'); add.type='button'; add.addEventListener('click',function(){addRow({});});
+    var save=element('button','secondary-button','保存阶段与验收'); save.type='submit';
+    form.append(stageLabel,reasonLabel,nextLabel,blockersLabel,rows,add,save); panel.append(form);
+    panel.addEventListener('toggle',function(){if(panel.open) {state.taskReadingMore=true;syncTaskLiveState();}});
+    form.addEventListener('submit',function(event){event.preventDefault();updateTaskFromActivity(task,'workflow',save,{stage:stage.value,waitingReason:reason.value.trim(),next:next.value.split('\n').map(function(value){return value.trim();}).filter(Boolean),acceptance:Array.from(rows.children).map(function(row){return row.readAcceptance();}),expectedUpdatedAt:task.updatedAt,expectedRevision:task.revision,blockers:blockers.value.split(String.fromCharCode(10)).map(function(value){return value.trim();}).filter(Boolean)});});
+    return panel;
+  }
+
+  async function updateTaskFromActivity(task, action, control, body) {
     var projectId = task.projectId, taskId = task.id;
     if (state.taskMutating) return;
     state.taskMutating = true;
     control.disabled = true;
     try {
-      await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/" + action, { method: "POST", body: {} });
+      await fetchJson("/api/projects/" + encodeURIComponent(projectId) + "/tasks/" + encodeURIComponent(taskId) + "/" + action, { method: "POST", body: body || {expectedRevision:task.revision} });
+      state.taskDetailCache=null; state.taskReadingMore=false;
       state.selectedTaskId = taskKey(task);
       await loadTaskView(true, true);
       state.portraitProjectId = null;
-      toast(action === "complete" ? "任务已完成" : "任务已取消");
+      toast(({complete:'任务已完成',cancel:'任务已取消',reopen:'任务已重新打开',workflow:'阶段与验收已保存'})[action]);
     } catch (error) {
       toast(error.message || String(error), true);
     } finally {

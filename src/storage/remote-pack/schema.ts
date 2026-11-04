@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { taskWorkflowShape } from '../../tasks/task-workflow.js';
 import { memoryStatusSchema, memoryTypeSchema } from "../../memory/memory-service.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../../memory/user-memory-service.js";
 import { PROJECT_SCHEMA_VERSION } from "../schema.js";
@@ -20,6 +21,7 @@ const json = <T extends z.ZodType>(schema: T) => text.refine(value => {
   try { return schema.safeParse(JSON.parse(value)).success; } catch { return false; }
 }, "Invalid structured JSON");
 const checkpoint = z.object({
+  ...taskWorkflowShape,
   summary: text.optional(), completed: z.array(text), next: z.array(text), changedFiles: z.array(text),
   verification: z.array(z.object({ command: text, status: text, summary: text.optional() }).strict()),
   blockers: z.array(text), risks: z.array(text),

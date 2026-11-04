@@ -18,7 +18,7 @@ const MAX_MATCHED_NAMES = 8;
 
 /** Only explicitly reviewed aliases identify entities. Ambiguous names never expand a query. */
 export function recallEntityMemories(db: SqliteDatabase, task: string,
-  accepts: (memory: MemoryRecord) => boolean, limit = 4,
+  accepts: (memory: MemoryRecord, evidence: EntityRecallEvidence) => boolean, limit = 4,
 ): { items: Array<{ memory: MemoryRecord; evidence: EntityRecallEvidence }>; truncated: boolean } {
   if (!Number.isInteger(limit) || limit < 0 || limit > 4) {
     throw new ProjectContextError("INVALID_ENTITY_RECALL", "Entity recall limit must be an integer from 0 to 4.");
@@ -46,8 +46,6 @@ export function recallEntityMemories(db: SqliteDatabase, task: string,
     for (const binding of snapshot.bindings.filter((entry) => entry.entityId === entity.id)) {
       if (seen.has(binding.memoryId)) continue;
       const memory = getMemory(db, binding.memoryId);
-      if (!accepts(memory)) continue;
-      if (items.length >= limit) return { items, truncated: true };
       const relationEvidence = snapshot.relations.filter((edge) => edge.memoryId === memory.id
         && edge.annotationId === binding.annotationId && (edge.from === entity.id || edge.to === entity.id))
         .slice(0, 2).map((edge) => ({
@@ -55,10 +53,13 @@ export function recallEntityMemories(db: SqliteDatabase, task: string,
           to: snapshot.entities.find((entry) => entry.id === edge.to)!.name,
           type: edge.type, quote: edge.quote, annotationId: edge.annotationId,
         }));
-      items.push({ memory, evidence: {
+      const evidence: EntityRecallEvidence = {
         entityId: entity.id, name: entity.name, matchedName: displayName,
         annotationId: binding.annotationId, quote: binding.quote, relations: relationEvidence,
-      } });
+      };
+      if (!accepts(memory, evidence)) continue;
+      if (items.length >= limit) return { items, truncated: true };
+      items.push({ memory, evidence });
       seen.add(memory.id);
     }
   }

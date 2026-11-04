@@ -62,7 +62,7 @@ describe("transactional sync events and causal merge", () => {
     const task = startTask(a, "shared work"); await exchange();
     const left = { ...task.checkpoint, summary: "left" }; const right = { ...task.checkpoint, summary: "right" };
     checkpointTask(a, task.id, left, { requestId: "a:1" }); checkpointTask(b, task.id, right, { requestId: "b:1" });
-    completeTask(a, task.id); cancelTask(b, task.id); await exchange();
+    completeTask(a, task.id, { ...left, summary:'Fixture complete', next:[], blockers:[], acceptance:[{criterion:'Fixture scope',status:'passed',evidence:'test:sync'}] }); cancelTask(b, task.id); await exchange();
     expect(syncConflicts(a).some(conflict => conflict.table === "tasks")).toBe(true);
     expect(listTaskHistory(a, task.id).total).toBe(5); expect(listTaskHistory(b, task.id).total).toBe(5);
     const current = b.prepare("SELECT checkpoint_json FROM tasks WHERE id=?").pluck().get(task.id);

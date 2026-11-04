@@ -2,6 +2,7 @@ import type { SqliteDatabase } from "../storage/database.js";
 import { matchingNgramItems, type SearchItemKind } from "./ngram-index.js";
 import { rrfMerge, type FusedItem } from "./rank-fusion.js";
 import { DEFAULT_SEARCH_RANKING, type SearchRankingSettings } from "./search-ranking.js";
+import { recallMemories } from '../memory/recall-service.js';
 
 export interface SearchHit {
   kind: "chunk" | "memory" | "symbol";
@@ -12,6 +13,7 @@ export interface SearchHit {
   startLine: number | null;
   score: number;
   status: string | null;
+  recall?: { matchedTerms: string[]; channels: string[] };
 }
 
 export interface SearchOptions {
@@ -97,15 +99,20 @@ export function searchProject(
     .map((item) => ngramHit(db, item.kind, item.id, item.coverage, query))
     .filter((hit): hit is SearchHit => hit !== null);
   const symbolExact = exact.filter((hit) => isExactSymbolMatch(hit, query));
+  const knowledge = recallMemories(db, query, { limit: Math.min(64, perKind), includeTaskSummaries: !options.excludeTaskSummaries })
+    .map(({memory, score, matchedTerms, channels}): SearchHit => ({ kind:'memory', id:memory.id, title:memory.title,
+      content:memory.content, source:memory.sourceRef, startLine:null, status:memory.status, score, recall:{matchedTerms,channels} }));
+  const knowledgeById = new Map(knowledge.map(hit => [hit.id, hit]));
   const fused = rrfMerge(
     [
       { items: exact },
       { items: fuzzy },
       { items: symbolExact, weight: SYMBOL_FUSION_WEIGHT },
+      { items: knowledge, weight: 1.5 },
     ],
     (hit) => hit.id,
   ).map(({ item, score }) => ({
-    item,
+    item: knowledgeById.get(item.id) ?? item,
     score: score * relevanceWeight(item, ranking),
   })).sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id));
   const direct = normalizeFusionScores(fused);
@@ -312,5 +319,5 @@ function toFtsQuery(query: string): string {
 }
 
 function normalizeRank(rank: number): number {
-  return 1 / (1 + Math.abs(rank));
+  return Math.abs(rank) / (1 + Math.abs(rank));
 }

@@ -58,6 +58,18 @@ describe("reviewed entity recall", () => {
     expect(recallEntityMemories(db, "UnseenAlias", () => true).items).toEqual([]);
   });
 
+  it('uses reviewed application identity without granting unrelated or file scopes',()=>{
+    const good=annotate('OrionCoordinator',['星河协调中心'],{scope:['external-local-app:OrionCoordinator-2.0']});
+    const wrong=annotate('OrionCoordinator',['星河协调中心'],{scope:['external-local-app:OtherApplication'],suffix:' unrelated scope'});
+    const pending=annotate('PendingCoordinator',['待审协调中心'],{scope:['external-local-app:PendingCoordinator'],accept:false});
+    const context=JSON.stringify(buildProjectContext(db,project,'星河协调中心的最终结论'));
+    expect(context).toContain(good.memory.id);expect(context).not.toContain(wrong.memory.id);
+    expect(JSON.stringify(buildProjectContext(db,project,'待审协调中心的最终结论'))).not.toContain(pending.memory.id);
+    expect(JSON.stringify(buildProjectContext(db,project,'星河协调中心 src/auth.ts'))).not.toContain(good.memory.id);
+    reviewMemoryKnowledge(db,{id:good.annotation.id,action:'reject',expectedVersion:good.annotation.version});
+    expect(JSON.stringify(buildProjectContext(db,project,'星河协调中心的最终结论'))).not.toContain(good.memory.id);
+  });
+
   it("invalidates alias recall when the source changes or becomes inactive", () => {
     const first = annotate("OldCoordinator", ["FirstAlias"]);
     db.prepare("UPDATE memories SET content='A new conclusion.' WHERE id=?").run(first.memory.id);

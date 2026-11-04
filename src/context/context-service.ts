@@ -9,6 +9,7 @@ import { recallMemories } from "../memory/recall-service.js";
 import { relatedGraphMemories, type GraphMemoryRecall } from "../memory/graph-service.js";
 import { contentMatchesTask, findContentRelations } from "../memory/content-relations.js";
 import { recallEntityMemories, type EntityRecallEvidence } from "../memory/knowledge-recall.js";
+import { applicationIdentities, applicationTargets, matchedApplications } from './application-scope.js';
 
 type SupportingMemory = Pick<MemoryRecord, "id" | "sourceKind" | "sourceRef" | "confidence">;
 type GraphRecallEvidence = Omit<GraphMemoryRecall, "memory"> | {
@@ -25,6 +26,7 @@ export interface ContextMemory extends MemoryRecord {
   supportingMemories?: SupportingMemory[];
   graphRecall?: GraphRecallEvidence;
   entityRecall?: EntityRecallEvidence;
+  recall?: { matchedTerms: string[]; channels: string[] };
 }
 
 export interface ContextSearchHit extends SearchHit {
@@ -76,22 +78,41 @@ export function buildProjectContext(
   userMemories: UserMemoryRecord[] = [],
 ): ProjectContext {
   // Search code and knowledge independently so code hits cannot consume the
-  // memory quota. Only indexed sources can establish a scope, never a memory itself.
+  // memory quota. Repository paths require indexed source evidence; explicit
+  // external application identities are handled separately below.
   const recallSummaries = /task_[a-z0-9]+|(?:回顾|复盘|恢复|继续).{0,30}(?:任务|工作)|(?:review|recap|resume|continue)\s+(?:the\s+)?(?:task|work)/iu.test(task);
   const searched = searchProject(db, task, SEARCH_HIT_CANDIDATE_LIMIT, undefined, {
     excludeTaskSummaries: !recallSummaries,
   });
   const codeHits = searched.filter((hit) => hit.kind !== "memory");
+  const applications=applicationTargets(db,task);
+  // Reviewed entity evidence can establish an external application identity,
+  // but never bypass a repository file scope. Discover it before lexical filters.
+  const entityMatches = recallEntityMemories(db, task, (memory, evidence) => scopeMatches(memory, task, codeHits, evidence));
+  const entityEvidence = new Map(entityMatches.items.map(({memory,evidence}) => [memory.id,evidence]));
+  for(const {memory,evidence} of entityMatches.items) {
+    for(const app of applicationIdentities(memory)) if(app.name===normalizeScopeText(evidence.name)) applications.names.add(app.name);
+  }
   const accepts = (memory: MemoryRecord): boolean => memory.type === "task-summary"
     ? recallSummaries && summaryMatches(memory, task)
-    : scopeMatches(memory, task, codeHits);
+    : scopeMatches(memory, task, codeHits, entityEvidence.get(memory.id), applications.names);
   const recalled = recallMemories(db, task, { includeTaskSummaries: recallSummaries, accepts });
   const memoryScores = new Map(recalled.map(({ memory, score }) => [memory.id, score]));
+  const recallEvidence = new Map(recalled.map(({ memory, matchedTerms, channels }) => [memory.id, {matchedTerms,channels}]));
   // Retain the existing mixed search's fuzzy Latin matches as a fallback.
   for (const hit of searched.filter((item) => item.kind === "memory")) {
     if (!memoryScores.has(hit.id) && accepts(getMemory(db, hit.id))) memoryScores.set(hit.id, hit.score * 0.5);
   }
   const relevantMemoryIds = new Set(memoryScores.keys());
+  for(const id of applications.ids) {
+    const memory=getMemory(db,id);
+    if(accepts(memory)) {
+      relevantMemoryIds.add(id);if(!memoryScores.has(id))memoryScores.set(id,0.45);
+      const evidence=recallEvidence.get(id);
+      recallEvidence.set(id,{matchedTerms:[...new Set([...(evidence?.matchedTerms??[]),...matchedApplications(memory,task)])],
+        channels:[...(evidence?.channels??[]),'application-identity']});
+    }
+  }
   for (const taskId of task.match(/task_[a-z0-9]+/giu) ?? []) {
     const ids = db.prepare(`
       SELECT id FROM memories WHERE status = 'active' AND type = 'task-summary' AND source_ref = ?
@@ -102,11 +123,9 @@ export function buildProjectContext(
       memoryScores.set(id, 1);
     }
   }
-  const entityMatches = recallEntityMemories(db, task, (memory) => !relevantMemoryIds.has(memory.id) && accepts(memory));
-  const entityEvidence = new Map<string, EntityRecallEvidence>();
   for (const { memory, evidence } of entityMatches.items) {
     relevantMemoryIds.add(memory.id);
-    memoryScores.set(memory.id, 0.45);
+    if (!memoryScores.has(memory.id)) memoryScores.set(memory.id, 0.45);
     entityEvidence.set(memory.id, evidence);
   }
   const graphBudget = 4 - entityEvidence.size;
@@ -138,6 +157,7 @@ export function buildProjectContext(
   }
   const memories: ContextMemory[] = memoryCandidates(db, relevantMemoryIds, recallSummaries).map((memory) => ({
     ...memory, ...(graphEvidence.has(memory.id) ? { graphRecall: graphEvidence.get(memory.id)! } : {}),
+    ...(recallEvidence.has(memory.id) ? { recall:recallEvidence.get(memory.id)! } : {}),
     ...(entityEvidence.has(memory.id) ? { entityRecall: entityEvidence.get(memory.id)! } : {}),
   }));
   const taskTokens = tokens(task);
@@ -164,7 +184,13 @@ export function buildProjectContext(
       review.map(({ memory }) => `${memory.id} (${memory.status})`).join(", ")
     }.`);
   }
-  if (failedIndexCount > 0) warnings.push(`${failedIndexCount} index runs failed; project search may be incomplete.`);
+  if (failedIndexCount > 0) {
+    const latest=db.prepare("SELECT status,started_at FROM index_runs WHERE status IN ('completed','failed') ORDER BY started_at DESC,id DESC LIMIT 1").get() as {status:string;started_at:string}|undefined;
+    warnings.push(latest?.status==='completed'
+      ? `${failedIndexCount} historical index failures are retained; latest finished run completed (${latest.started_at}). Historical failures alone do not establish current index damage.`
+      : `${failedIndexCount} index runs failed; latest finished run failed. Project search may be incomplete.`);
+  }
+  if(applications.truncated) warnings.push('Application identity inventory reached its limit; specify the application scope or reviewed alias for ambiguous queries.');
 
   if (entityMatches.truncated) warnings.push("Entity recall reached its bounded inventory or result limit; some confirmed knowledge was omitted. Use the entity graph to inspect it.");
   const context: ProjectContext = {
@@ -196,6 +222,7 @@ export function buildProjectContext(
       ...(memory.supportingMemories ? { supportingMemories: memory.supportingMemories } : {}),
       ...(memory.graphRecall ? { graphRecall: memory.graphRecall } : {}),
       ...(memory.entityRecall ? { entityRecall: memory.entityRecall } : {}),
+      ...(memory.recall ? { recall: memory.recall } : {}),
     })),
     ...codeHits,
   ].sort((a, b) => b.score - a.score).slice(0, SEARCH_HIT_CANDIDATE_LIMIT);
@@ -347,21 +374,30 @@ function memoryCandidates(db: SqliteDatabase, relevantMemoryIds: Set<string>, re
   return [...candidates.values()];
 }
 
-function scopeMatches(memory: MemoryRecord, task: string, relevant: SearchHit[]): boolean {
+export function scopeMatches(memory: MemoryRecord, task: string, relevant: SearchHit[], entity?: EntityRecallEvidence, targetApplications: ReadonlySet<string> = new Set()): boolean {
   if (memory.scope.length === 0) return true;
+  const identities=applicationIdentities(memory);
+  if(identities.length && targetApplications.size && !identities.some(app=>targetApplications.has(app.name))) return false;
   const normalizedTask = normalizeScopeText(task);
   const taskTokens = tokens(task);
   const explicitPaths = normalizedTask.match(/(?:[a-z]:)?(?:[\p{L}\p{N}_@.$~+-]+\/)+[\p{L}\p{N}_@.$~+-]+/gu) ?? [];
   return memory.scope.some((scope) => {
     const normalizedScope = normalizeScopeText(scope);
     if (!normalizedScope) return false;
+    if (normalizedScope.startsWith('external-local-app:')) {
+      if (explicitPaths.length) return false;
+      return matchedApplications(memory,task).length>0
+        || !!entity && identities.some(app=>normalizeScopeText(entity.name)===app.name);
+    }
     // An explicit file/directory target takes precedence over fuzzy word matches
     // and incidental search hits. "src/storagex" is not inside "src/storage".
     if (normalizedScope.includes("/") && explicitPaths.length) {
       return explicitPaths.some((path) => pathMatchesScope(path, normalizedScope));
     }
     if (!normalizedScope.includes("/") && taskTokens.includes(normalizedScope)) return true;
-    const scopeTokens = normalizedScope.split(/[\\/._-]+/u).filter((token) => (
+    const identifier=normalizedScope.split('/').at(-1)!;
+    if(identifier.includes('_') && /^[a-z0-9_]+$/u.test(identifier)) return taskTokens.includes(identifier);
+    const scopeTokens = [...normalizedScope.split(/[\\/._-]+/u), ...tokens(normalizedScope)].filter((token) => (
       token.length >= 3 && !SCOPE_STOP_WORDS.has(token)
     ));
     if (scopeTokens.some((scopeToken) => taskTokens.some((taskToken) => (

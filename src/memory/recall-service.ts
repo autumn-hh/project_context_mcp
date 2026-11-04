@@ -6,6 +6,8 @@ import { rrfMerge } from "../search/rank-fusion.js";
 export interface MemoryRecall {
   memory: MemoryRecord;
   score: number;
+  matchedTerms: string[];
+  channels: string[];
 }
 
 const MAX_QUERY_TERMS = 64;
@@ -47,7 +49,7 @@ export function recallMemories(
   const cached = new Map<string, MemoryRecord>();
   // Scope is evaluated using task/source evidence. Fetch additional bounded pages
   // when inapplicable modules fill a page, without scanning all stored memories.
-  const collect = (page: (offset: number) => Array<{ id: string }>): MemoryRecord[] => {
+  const collect = (page: (offset: number) => Array<{ id: string }>, matches: (memory: MemoryRecord) => boolean = () => true): MemoryRecord[] => {
     const accepted: MemoryRecord[] = [];
     for (let index = 0; index < MAX_CHANNEL_PAGES && accepted.length < CHANNEL_LIMIT; index += 1) {
       const rows = page(index * CHANNEL_LIMIT);
@@ -57,13 +59,14 @@ export function recallMemories(
           memory = getMemory(db, id);
           cached.set(id, memory);
         }
-        if (!options.accepts || options.accepts(memory)) accepted.push(memory);
+        if (matches(memory) && (!options.accepts || options.accepts(memory))) accepted.push(memory);
       }
       if (rows.length < CHANNEL_LIMIT) break;
     }
     return accepted.slice(0, CHANNEL_LIMIT);
   };
-  const exact = collect((offset) => exactQuery.all(ftsQuery, CHANNEL_LIMIT, offset) as Array<{ id: string }>);
+  const exact = collect((offset) => exactQuery.all(ftsQuery, CHANNEL_LIMIT, offset) as Array<{ id: string }>,
+    memory => taskOverlap(terms, `${memory.title} ${memory.content}`) > 0);
 
   // A question's filler words must not require 60% coverage of the entire sentence.
   // The existing n-gram index already stores Han bigrams; no migration/rebuild needed.
@@ -78,8 +81,24 @@ export function recallMemories(
   const partial = partialQuery ? collect(
     (offset) => partialQuery.all(...hanTerms, CHANNEL_LIMIT, offset) as Array<{ id: string }>,
   ) : [];
+  // Legacy unicode61/ngram indexes can swallow identifiers touching Han text.
+  // Rank title/term coverage before LIMIT; recency alone loses older conclusions.
+  // The legacy fallback scans memory text, but materializes only bounded pages.
+  const identifiers = terms.filter(term => /^[a-z0-9][a-z0-9_-]*$/u.test(term));
+  const identifierPatterns = identifiers.map(term => `*[^a-z0-9_-]${term}[^a-z0-9_-]*`);
+  const identifierQuery = identifiers.length ? db.prepare(`
+    SELECT m.id FROM memories m WHERE ${statusFilter} ${typeFilter}
+      AND (${identifiers.map(() => "lower(' ' || m.title || ' ' || m.content || ' ') GLOB ?").join(' OR ')})
+    ORDER BY (${identifiers.map(() => "2 * (lower(' ' || m.title || ' ') GLOB ?) + (lower(' ' || m.content || ' ') GLOB ?)").join(' + ')}) DESC,
+      m.updated_at DESC, m.id LIMIT ? OFFSET ?
+  `) : null;
+  const identifierMatches = identifierQuery ? collect(
+    offset => identifierQuery.all(...identifierPatterns, ...identifierPatterns.flatMap(term => [term,term]), CHANNEL_LIMIT, offset) as Array<{id:string}>,
+    memory => taskOverlap(identifiers, `${memory.title} ${memory.content}`) > 0,
+  ) : [];
 
-  const ranked = rrfMerge([{ items: exact }, { items: partial }], (item) => item.id)
+  const channels = [{ name: 'fts', items: exact }, { name: 'han-bigram', items: partial }, { name: 'identifier', items: identifierMatches }];
+  const ranked = rrfMerge(channels, (item) => item.id)
     .map(({ item: memory, score }) => {
       const overlap = taskOverlap(terms, memory.content) + 2 * taskOverlap(terms, memory.title);
       return { memory, score: score * (1 + overlap / terms.length) };
@@ -88,5 +107,8 @@ export function recallMemories(
       || b.memory.updatedAt.localeCompare(a.memory.updatedAt)
       || a.memory.id.localeCompare(b.memory.id));
   const maximum = ranked[0]?.score ?? 1;
-  return ranked.slice(0, limit).map(({ memory, score }) => ({ memory, score: score / maximum }));
+  return ranked.slice(0, limit).map(({ memory, score }) => ({ memory, score: score / maximum,
+    matchedTerms: terms.filter(term => taskOverlap([term], `${memory.title} ${memory.content}`) > 0),
+    channels: channels.filter(channel => channel.items.some(item => item.id === memory.id)).map(channel => channel.name),
+  }));
 }

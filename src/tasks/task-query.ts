@@ -3,10 +3,12 @@ import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
 import { errorMessage, ProjectContextError } from "../shared/errors.js";
 import type { TaskCheckpoint, TaskRecord } from "./task-service.js";
+import { taskStageSchema, type TaskWorkflow } from './task-workflow.js';
 
 export const taskQuerySchema = z.object({
   projectId: z.string().min(1).optional(),
   status: z.enum(["all", "in_progress", "completed", "cancelled"]).default("all"),
+  stage: taskStageSchema.optional(),
   q: z.string().trim().max(200).default(""),
   sort: z.enum(["updated", "created", "completed"]).default("updated"),
   limit: z.number().int().min(1).max(100).default(20),
@@ -16,7 +18,7 @@ export const taskQuerySchema = z.object({
 export type TaskQuery = z.output<typeof taskQuerySchema>;
 export type TaskQueryInput = z.input<typeof taskQuerySchema>;
 export interface TaskQueryPage { items: TaskRecord[]; total: number; limit: number; offset: number }
-export type TaskSummary = Omit<TaskRecord, "checkpoint"> & { summary: string; hasBlockers: boolean; revision: number };
+export type TaskSummary = Omit<TaskRecord, "checkpoint"> & { summary: string; hasBlockers: boolean; revision: number; stage: TaskWorkflow['stage']; nextAction: string; waitingReason: string };
 interface QueryPage<T> { items: T[]; total: number; limit: number; offset: number }
 type ProjectFields = Pick<WorkspaceTask, "projectId" | "projectName" | "projectRoot" | "projectArchived">;
 export type WorkspaceTaskSummary = TaskSummary & ProjectFields;
@@ -37,6 +39,10 @@ function queryParts(input: TaskQuery) {
   const where: string[] = [];
   const parameters: string[] = [];
   if (input.status !== "all") { where.push("status = ?"); parameters.push(input.status); }
+  if (input.stage) {
+    where.push("status = 'in_progress' AND (CASE WHEN json_valid(checkpoint_json) THEN COALESCE(json_extract(checkpoint_json, '$.stage'), 'untriaged') ELSE 'untriaged' END) = ?");
+    parameters.push(input.stage);
+  }
   if (input.q) {
     const literal = `%${input.q.replace(/[\\%_]/g, "\\$&")}%`;
     where.push(`(goal LIKE ? ESCAPE '\\' OR
@@ -74,11 +80,15 @@ function readSummaryPage(db: SqliteDatabase, input: TaskQuery, limit: number, of
     ) SELECT id, goal, status, created_at, updated_at, completed_at,
       CASE WHEN json_valid(checkpoint_json) THEN substr(COALESCE(json_extract(checkpoint_json, '$.summary'), ''), 1, 500) ELSE '' END AS summary,
       CASE WHEN json_valid(checkpoint_json) THEN COALESCE(json_array_length(checkpoint_json, '$.blockers'), 0) > 0 ELSE 0 END AS has_blockers,
+      CASE WHEN json_valid(checkpoint_json) THEN COALESCE(json_extract(checkpoint_json, '$.stage'), 'untriaged') ELSE 'untriaged' END AS stage,
+      CASE WHEN json_valid(checkpoint_json) THEN substr(COALESCE(json_extract(checkpoint_json, '$.next[0]'), ''),1,500) ELSE '' END AS next_action,
+      CASE WHEN json_valid(checkpoint_json) THEN substr(COALESCE(json_extract(checkpoint_json, '$.waitingReason'), ''),1,500) ELSE '' END AS waiting_reason,
       COALESCE((SELECT MAX(sequence) FROM task_events WHERE task_id = page.id), 0) AS revision
       FROM page JOIN tasks USING (id) ORDER BY ${column} DESC, id COLLATE BINARY ASC`).all(...parameters, limit, offset) as Array<
-        Omit<TaskRow, "checkpoint_json"> & { summary: string; has_blockers: number; revision: number }>;
+        Omit<TaskRow, "checkpoint_json"> & { summary: string; has_blockers: number; revision: number; stage: TaskWorkflow['stage']; next_action:string; waiting_reason:string }>;
     return { items: rows.map(row => ({ id: row.id, goal: row.goal, status: row.status,
       summary: row.summary, hasBlockers: Boolean(row.has_blockers), revision: row.revision,
+      stage:row.stage, nextAction:row.next_action, waitingReason:row.waiting_reason,
       createdAt: row.created_at, updatedAt: row.updated_at, completedAt: row.completed_at,
     })), total, limit, offset };
   })();

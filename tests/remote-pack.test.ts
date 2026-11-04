@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { fixtureAcceptance } from './helpers/task-acceptance.js';
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -7,7 +8,7 @@ import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject, migrateRegistry } from "../src/storage/schema.js";
 import { remember, detectMemoryDrift } from "../src/memory/memory-service.js";
 import { UserMemoryService } from "../src/memory/user-memory-service.js";
-import { checkpointTask, startTask, completeTask, listTaskHistory } from "../src/tasks/task-service.js";
+import { checkpointTask, startTask, completeTask, listTaskHistory, reopenTask } from "../src/tasks/task-service.js";
 import { exportKnowledgePack, inspectKnowledgePack, restoreKnowledgePack } from "../src/storage/remote-pack/pack.js";
 import { PACK_MAGIC, PACK_LIMITS } from "../src/storage/remote-pack/schema.js";
 
@@ -42,8 +43,10 @@ describe("knowledge snapshot packages", () => {
     const old = remember(db, { type: "decision", title: "原方案", content: "旧内容", sourceKind: "user" });
     const current = remember(db, { type: "decision", title: "新方案", content: "选择明确可恢复的包格式", sourceKind: "user", supersedesId: old.id });
     const task = startTask(db, "同步开发");
-    const checkpoint = { ...task.checkpoint, summary: "已完成包格式", completed: ["导出", "恢复"] };
+    const checkpoint = { ...task.checkpoint, ...fixtureAcceptance(), summary: "已完成包格式", completed: ["导出", "恢复"] };
     checkpointTask(db, task.id, checkpoint, { requestId: "device-a:1" }); completeTask(db, task.id);
+    const reopenOptions={requestId:'device-a:1',expectedRevision:listTaskHistory(db,task.id).items[0]!.sequence};
+    reopenTask(db,task.id,'verify restored receipts',reopenOptions);completeTask(db,task.id,checkpoint);
     db.prepare("INSERT INTO sources VALUES ('src', 'index.ts', 'code', 'hash', 12, 0, ?)").run(new Date().toISOString());
     db.prepare("INSERT INTO chunks VALUES ('chunk', 'src', 'index.ts', 'SOURCE_ONLY_SENTINEL', 1, 1)").run();
     db.prepare("UPDATE memory_sources SET source_id = 'src', source_hash = 'hash', source_excerpt = 'EXCERPT_ONLY_SENTINEL'").run();
@@ -58,6 +61,8 @@ describe("knowledge snapshot packages", () => {
       expect(copy.prepare("SELECT source_id, source_hash FROM memory_sources LIMIT 1").get()).toEqual({ source_id: null, source_hash: "hash" });
       expect(listTaskHistory(copy, task.id).items).toEqual(listTaskHistory(db, task.id).items);
       expect(checkpointTask(copy, task.id, checkpoint, { requestId: "device-a:1" }).status).toBe("completed");
+      expect(reopenTask(copy,task.id,'verify restored receipts',reopenOptions).status).toBe('completed');
+      expect(listTaskHistory(copy,task.id).items).toEqual(listTaskHistory(db,task.id).items);
       expect(copy.prepare("SELECT COUNT(*) FROM chunks").pluck().get()).toBe(0);
       expect(copy.prepare("SELECT COUNT(*) FROM memories_fts").pluck().get()).toBe(2);
       expect(copy.prepare("SELECT COUNT(*) FROM search_ngrams").pluck().get()).toBeGreaterThan(0);

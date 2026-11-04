@@ -464,6 +464,8 @@ Decision: use encrypted local storage.
 
 ### 任务 checkpoint 如何补足长期记忆
 
+当前任务工作阶段与生命周期分开。新任务默认 executing，待排期使用 backlog；旧记录缺失阶段显示 untriaged。waiting/paused 必须说明原因，paused 仅用于用户明确暂缓。检查点省略字段保留现值、传入数组替换整个字段、空数组清空。完成前必须有最终结论、通过的验收条件与证据、各验证命令的最新通过结果，并且没有必要下一步或阻塞。遗漏必要验收应先重新打开，原完成事件保留。接口参数、CLI 用法及团队限制见[任务工作流](task-workflow.md)。
+
 长期记忆适合保存稳定规则，但不适合记录每一步临时进度。任务 checkpoint 专门负责短中期连续性：
 
 Schema v8 起，任务继续保留最新 checkpoint，并追加创建、检查点更新、完成、取消事件及其快照。旧任务仅生成迁移时快照，不能据此还原此前工作时间线。最新任务与事件在同一写事务提交；相同检查点内容不重复追加。`task_checkpoint` 可选 `requestId` 提供跨请求重试幂等：相同 ID 的旧请求不会覆盖后续进展，不同内容复用 ID 会拒绝。
@@ -728,7 +730,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
 3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
-5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
+5. For non-trivial work, call `task_start` with an appropriate stage and acceptance criteria. Save concrete progress/next actions with `task_checkpoint`; omitted fields are preserved and supplied arrays replace the field. Complete only after required verification passes, acceptance evidence is saved, and no next actions/blockers remain. Use `task_reopen` with a reason, requestId and latest task_history sequence as expectedRevision if required work was omitted. Completion flushes pending project changes.
 
 ## Memory Rules
 - Review `memory_candidates` after indexing Git changes. Accept or reject candidates explicitly; never accept them automatically.

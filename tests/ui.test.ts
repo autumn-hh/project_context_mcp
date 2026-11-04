@@ -53,11 +53,13 @@ describe("localhost rule manager", () => {
       });
       const knowledgeTask = app.startTask(project.id, "Record durable policy");
       app.completeTask(project.id, knowledgeTask.id, {
+        acceptance:[{criterion:'Knowledge fixture',status:'passed',evidence:'test:fixture'}],
         completed: ["Decision: source evidence remains available."], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
       });
       for (let index = 0; index < 8; index += 1) {
         const task = app.startTask(project.id, `Task summary ${index}`);
         app.completeTask(project.id, task.id, {
+          acceptance:[{criterion:'Summary fixture',status:'passed',evidence:'test:fixture'}],
           summary: `Completed execution ${index}.`, completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
         });
         const candidate = app.candidates(project.id).find((item) => item.sourceRef === `task:${task.id}`)!;
@@ -90,6 +92,7 @@ describe("localhost rule manager", () => {
     });
     const reviewTask = app.startTask(project.id, "Generate review candidates");
     app.completeTask(project.id, reviewTask.id, {
+      acceptance:[{criterion:'Review fixture',status:'passed',evidence:'test:fixture'}],
       summary: "The project portrait must expose explicit knowledge review actions.",
       completed: [], next: [], changedFiles: [], verification: [], blockers: [],
       risks: ["Automatic indexing must never accept memory candidates."],
@@ -101,6 +104,7 @@ describe("localhost rule manager", () => {
     );
     await app.index(project.id);
     const taskToComplete = app.startTask(project.id, "Finish project portrait cleanup");
+    app.checkpoint(project.id,taskToComplete.id,{...taskToComplete.checkpoint,completed:['Cleanup fixture complete'],acceptance:[{criterion:'Cleanup fixture',status:'passed',evidence:'test:fixture'}]});
     const taskToCancel = app.startTask(project.id, "Retire obsolete project portrait work");
     app.close();
     ui = await startUiServer({ openBrowser: false });

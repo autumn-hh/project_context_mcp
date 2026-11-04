@@ -51,11 +51,13 @@ import {
   checkpointTask,
   cancelTask,
   completeTask,
+  reopenTask,
   listTasks,
   getTask,
+  taskDetail,
   startTask,
   listTaskHistory,
-  type TaskCheckpoint,
+  type TaskCheckpointPatch,
   type TaskRecord,
 } from "../tasks/task-service.js";
 import { queryWorkspaceTasks, queryWorkspaceTaskSummaries, type TaskQueryInput } from "../tasks/task-query.js";
@@ -458,15 +460,15 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => rejectCandidate(db, candidateId));
   }
 
-  startTask(projectId: string, goal: string, options: { source?: string } = {}): TaskRecord {
+  startTask(projectId: string, goal: string, options: Parameters<typeof startTask>[2] = {}): TaskRecord {
     return this.withDb(projectId, (db) => startTask(db, goal, options));
   }
 
-  checkpoint(projectId: string, taskId: string, checkpoint: TaskCheckpoint, options: { requestId?: string; source?: string } = {}): TaskRecord {
+  checkpoint(projectId: string, taskId: string, checkpoint: TaskCheckpointPatch, options: Parameters<typeof checkpointTask>[3] = {}): TaskRecord {
     return this.withDb(projectId, (db) => checkpointTask(db, taskId, checkpoint, options));
   }
 
-  completeTask(projectId: string, taskId: string, checkpoint?: TaskCheckpoint, options: { source?: string } = {}): TaskRecord {
+  completeTask(projectId: string, taskId: string, checkpoint?: TaskCheckpointPatch, options: Parameters<typeof completeTask>[3] = {}): TaskRecord {
     return this.withDb(projectId, (db) => {
       const task = completeTask(db, taskId, checkpoint, options);
       generateTaskCandidates(db, task);
@@ -474,8 +476,12 @@ export class ProjectContextApp {
     });
   }
 
-  cancelTask(projectId: string, taskId: string, options: { source?: string } = {}): TaskRecord {
+  cancelTask(projectId: string, taskId: string, options: Parameters<typeof cancelTask>[2] = {}): TaskRecord {
     return this.withDb(projectId, (db) => cancelTask(db, taskId, options));
+  }
+
+  reopenTask(projectId: string, taskId: string, reason: string, options: Parameters<typeof reopenTask>[3] = {}): TaskRecord {
+    return this.withDb(projectId, db => reopenTask(db, taskId, reason, options));
   }
 
   tasks(projectId: string, status = "in_progress", limit = 20): TaskRecord[] {
@@ -484,6 +490,10 @@ export class ProjectContextApp {
 
   task(projectId: string, taskId: string): TaskRecord {
     return this.withDb(projectId, (db) => getTask(db, taskId));
+  }
+
+  taskDetail(projectId: string, taskId: string) {
+    return this.withDb(projectId, db => taskDetail(db,taskId));
   }
 
   queryTasks(input: TaskQueryInput = {}) {

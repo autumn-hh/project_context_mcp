@@ -14,6 +14,7 @@ import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
 import { maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
+import { taskWorkflowShape } from '../tasks/task-workflow.js';
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
 import { searchWithEmbeddings } from "../search/embeddings.js";
 import { lspDefinition } from "../lsp/bridge.js";
@@ -21,17 +22,18 @@ import { memoryGraphInputShape, memoryGraphNodeIdSchema } from "../memory/graph-
 import { knowledgeDocumentSchema } from "../memory/knowledge-schema.js";
 
 const checkpointSchema = {
+  ...taskWorkflowShape,
   summary: z.string().optional(),
-  completed: z.array(z.string()).default([]),
-  next: z.array(z.string()).default([]),
-  changedFiles: z.array(z.string()).default([]),
+  completed: z.array(z.string()).optional(),
+  next: z.array(z.string()).optional(),
+  changedFiles: z.array(z.string()).optional(),
   verification: z.array(z.object({
     command: z.string(),
     status: z.string(),
     summary: z.string().optional(),
-  })).default([]),
-  blockers: z.array(z.string()).default([]),
-  risks: z.array(z.string()).default([]),
+  })).optional(),
+  blockers: z.array(z.string()).optional(),
+  risks: z.array(z.string()).optional(),
 };
 const outputSchema = { result: z.unknown() };
 const MAX_TEXT_CONTENT_CHARS = 2_000;
@@ -224,7 +226,7 @@ export function createMcpServer(): McpServer {
   })));
 
   server.registerTool("project_search", {
-    description: "Search indexed project content and active long-term memories with FTS5.",
+    description: "Search indexed text, symbols and active memories using FTS5, n-grams and fused memory recall. Memory hits can include matched terms and channels; use project_context for task-scoped selection.",
     outputSchema,
     inputSchema: {
       projectId: z.string().min(1),
@@ -425,29 +427,21 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, candidateId }) => withApp((app) => app.rejectCandidate(projectId, candidateId)));
 
   server.registerTool("task_start", {
-    description: "Start a persistent cross-session project task.",
+    description: "Start a persistent task with an acceptance goal. Defaults to executing; use backlog for unscheduled work. Waiting/paused require waitingReason; pause only on explicit user instruction.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), goal: z.string().min(1) },
+    inputSchema: { projectId: z.string().min(1), goal: z.string().min(1), ...taskWorkflowShape },
     annotations: { idempotentHint: false },
-  }, ({ projectId, goal }) => withApp((app) => app.startTask(projectId, goal, { source: "mcp" })));
+  }, ({ projectId, goal, ...workflow }) => withApp((app) => app.startTask(projectId, goal, { source: "mcp", ...workflow })));
 
   server.registerTool("task_checkpoint", {
-    description: "Save the latest task checkpoint and append its history atomically. Reuse requestId to retry safely without reverting newer progress.",
+    description: "Patch a task checkpoint atomically: omitted fields are preserved; supplied arrays replace the whole field and [] clears it. Record stage, next actions and acceptance evidence. Reuse requestId only for an identical retry. Closed tasks require task_reopen before changing required work or verification.",
     outputSchema,
     inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1), requestId: z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/-]+$/).optional(), ...checkpointSchema },
     annotations: { idempotentHint: true },
-  }, ({ projectId, taskId, requestId, summary, verification, ...checkpoint }) => withApp((app) => app.checkpoint(
+  }, ({ projectId, taskId, requestId, verification, ...checkpoint }) => withApp((app) => app.checkpoint(
     projectId,
     taskId,
-    {
-      ...checkpoint,
-      ...(summary ? { summary } : {}),
-      verification: verification.map((item) => ({
-        command: item.command,
-        status: item.status,
-        ...(item.summary ? { summary: item.summary } : {}),
-      })),
-    },
+    { ...checkpoint, ...(verification !== undefined ? {verification:verification.map(item => ({command:item.command,status:item.status,...(item.summary !== undefined ? {summary:item.summary} : {})}))} : {}) },
     { source: "mcp", ...(requestId ? { requestId } : {}) },
   )));
 
@@ -463,14 +457,14 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, status, limit }) => withApp((app) => app.tasks(projectId, status, limit)));
 
   server.registerTool("task_query", {
-    description: "Page through all recorded tasks in one or all projects, including completed and cancelled tasks. Returns project provenance and partial-read warnings; archived projects are excluded by default.",
+    description: "Page through tasks in one or all projects. Stage filters only unfinished tasks; missing legacy stages match untriaged. Returns project provenance and partial-read warnings; archived projects are excluded by default.",
     outputSchema,
     inputSchema: taskQuerySchema.shape,
     annotations: { readOnlyHint: true, idempotentHint: true },
   }, (input) => withApp((app) => app.queryTasks(input)));
 
   server.registerTool("task_history", {
-    description: "Read recorded task checkpoints and lifecycle events with pagination. Legacy migration snapshots do not reconstruct past history.",
+    description: "Read task snapshots newest first with pagination. The newest event sequence is expectedRevision for reopen/complete/cancel. Legacy migration snapshots do not reconstruct earlier history.",
     outputSchema,
     inputSchema: {
       projectId: z.string().min(1), taskId: z.string().min(1),
@@ -481,23 +475,30 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, taskId, limit, offset }) => withApp((app) => app.taskHistory(projectId, taskId, { limit, offset })));
 
   server.registerTool("task_complete", {
-    description: "Flush managed project changes, then complete a persistent task while retaining its checkpoint.",
+    description: "Flush pending index changes, then complete only with a final conclusion, no next actions/blockers, passed acceptance criteria with evidence and passing latest results for each verification command. Supply expectedRevision to reject stale writes; otherwise keep the task unfinished.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1) },
+    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1), expectedRevision:z.number().int().min(0).optional() },
     annotations: { idempotentHint: true },
-  }, ({ projectId, taskId }) => withApp(async (app) => {
+  }, ({ projectId, taskId, expectedRevision }) => withApp(async (app) => {
     await app.watchFlush(projectId);
-    return app.completeTask(projectId, taskId, undefined, { source: "mcp" });
+    return app.completeTask(projectId, taskId, undefined, { source: "mcp", ...(expectedRevision !== undefined ? {expectedRevision} : {}) });
   }));
+
+  server.registerTool('task_reopen', {
+    description: 'Reopen a closed task into acceptance with a reason and a pending criterion, preserving original completion history. Read the newest task_history sequence as expectedRevision; reuse requestId and the identical payload for retries.',
+    outputSchema, inputSchema: { projectId:z.string().min(1), taskId:z.string().min(1), reason:z.string().trim().min(1).max(2000),
+      requestId:z.string().min(1).max(128).regex(/^[a-zA-Z0-9_.:/-]+$/), expectedRevision:z.number().int().min(0) },
+    annotations: { idempotentHint:true },
+  }, ({projectId,taskId,reason,requestId,expectedRevision}) => withApp(app => app.reopenTask(projectId,taskId,reason,{source:'mcp',requestId,expectedRevision})));
 
   server.registerTool("task_cancel", {
     description: "Flush managed project changes, then cancel an in-progress task while retaining its checkpoint.",
     outputSchema,
-    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1) },
+    inputSchema: { projectId: z.string().min(1), taskId: z.string().min(1), expectedRevision:z.number().int().min(0).optional() },
     annotations: { destructiveHint: true, idempotentHint: true },
-  }, ({ projectId, taskId }) => withApp(async (app) => {
+  }, ({ projectId, taskId, expectedRevision }) => withApp(async (app) => {
     await app.watchFlush(projectId);
-    return app.cancelTask(projectId, taskId, { source: "mcp" });
+    return app.cancelTask(projectId, taskId, { source: "mcp", ...(expectedRevision !== undefined ? {expectedRevision} : {}) });
   }));
 
   server.registerTool("project_health", {

@@ -50,6 +50,10 @@
 
 ## 完整任务浏览与更新历史
 
+工作阶段与生命周期现已分开：待排期、执行中、待验收、等待外部条件、暂缓；旧任务缺失阶段显示待核对。完成前须记录最终结论、验收条件与通过证据，确保没有未完成的下一步或阻塞，并核对各验证命令最新结果通过；遗漏必要验证时使用 `task_reopen`，原完成历史保留。阶段、检查点增量更新、CLI 与重开示例见[任务工作流](docs/task-workflow.md)。比特/NO_PROXY 复现和审计结果见[执行记录](docs/accuracy-task-workflow-2026-11-03.md)。更新后请重新构建并重启相关 MCP/Web 进程。
+
+切换任务筛选时保留已有内容和输入焦点，显示更新中；请求失败会提示当前仍是上次结果，支持刷新重试。工作阶段筛选只匹配未完成任务。当前没有独立存量整理统计页，也不会自动合并项目迁移副本。
+
 Web 的“任务流水线”支持全部项目或单项目查询、目标/当前摘要搜索、进行中/已完成/已取消筛选，以及每页 10/20/50 条。可按更新时间、创建时间或结束时间排序；归档项目默认排除。部分项目不可读取时，其余结果仍可查看，并明确提示总数仅覆盖已读取项目。项目画像继续保留近期摘要，可从“查看全部任务”进入完整列表。
 
 工作台采用统一的浅色卡片与分段导航，分页集中在任务队列底部；详情通过紧凑步骤展示检查点阶段，流程示意默认折叠，不代表后台自动执行或验证通过。设计参考和响应式验收范围见 [界面说明](docs/ui-design.md)。
@@ -414,7 +418,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
 3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
-5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
+5. For non-trivial work, call `task_start` with an appropriate stage and acceptance criteria. Save concrete progress/next actions with `task_checkpoint`; omitted fields are preserved and supplied arrays replace the field. Complete only after required verification passes, acceptance evidence is saved, and no next actions/blockers remain. Use `task_reopen` with a reason, requestId and latest task_history sequence as expectedRevision if required work was omitted. Completion flushes pending project changes.
 
 ## Memory Rules
 - Review `memory_candidates` after indexing Git changes. Accept or reject candidates explicitly; never accept them automatically.
@@ -453,11 +457,11 @@ project_context
 
 客户端配置细节可参考对应官方文档：Codex 的 [MCP](https://developers.openai.com/codex/mcp/) 与 [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/)，以及 Claude Code 的 [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) 文档。
 
-## MCP 工具（52 个，本地 stdio）
+## MCP 工具（53 个，本地 stdio）
 
-- project_backup_remote、project_restore_remote
-- sync_status、sync_push、sync_pull、sync_conflicts、sync_resolve
-- project_search_enhanced、project_definition（明确配置插件/服务后使用）
+- `project_backup_remote`、`project_restore_remote`
+- `sync_status`、`sync_push`、`sync_pull`、`sync_conflicts`、`sync_resolve`
+- `project_search_enhanced`、`project_definition`（明确配置插件/服务后使用）
 
 - `storage_status`
 - `project_open`、`project_list`、`project_update`、`project_archive`、`project_unarchive`、`project_relocate`
@@ -471,7 +475,7 @@ project_context
 - `memory_knowledge`：本地实体、别名和带原文证据的关系候选，支持查询、提议与明确审核；网页入口为“记忆关系 → 实体与关系”。无需新增服务或模型依赖，审核后别名参与任务上下文。见[整理与使用说明](docs/memory-graph.md)。
 - `memory_candidates`、`memory_candidate_accept`、`memory_candidate_reject`
 - `user_memory_remember`、`user_memory_list`、`user_memory_update_status`
-- `task_start`、`task_checkpoint`、`task_list`、`task_query`、`task_history`、`task_complete`、`task_cancel`
+- `task_start`、`task_checkpoint`、`task_list`、`task_query`、`task_history`、`task_complete`、`task_cancel`、`task_reopen`
 
 `project_index` 会返回符号与关系总数、过期记忆 ID、新生成的候选以及 Git 元数据。索引和 watcher 会跳过常见跨语言编译产物，包括 C/C++ 的 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、预编译头、Java/Python 字节码以及覆盖率和性能分析输出。存在 Git 时优先使用 Git 证据；没有 Git 的项目仍可以根据新增或修改的知识文档生成候选。每个已完成任务最多生成一条候选，依次优先使用任务摘要、第一条风险和第一条明确具有长期价值的已完成事项，避免把普通执行记录拆成多条待审记忆。系统不会返回或保存完整 diff。候选记忆在调用 `memory_candidate_accept` 前始终只处于待审核状态。
 

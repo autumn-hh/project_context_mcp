@@ -123,7 +123,9 @@ HTTP 按认证身份提供工具子集，每次操作重新检查实际 workspac
 
 所有成员可用 team_projects、team_search、team_presence_list、team_code_graph。写入角色另有 team_candidate_list、team_propose、team_candidate_accept、team_presence；owner/reviewer 另有 team_conflict_list、team_conflict_resolve、team_audit_export。
 
-共享知识新增 11 个工具：所有成员可用 team_context、team_task_list/get/history、team_rule_list/history；owner/reviewer/editor 可用 team_task_start/checkpoint/finish；owner/reviewer 可用 team_rule_put/disable。单一 reviewer/owner 工作区共 22 个工具，viewer 共 10 个。本地 stdio 的 49 个工具保持独立，不向团队成员开放服务端文件管理和索引入口。
+共享知识新增 11 个工具：所有成员可用 team_context、team_task_list/get/history、team_rule_list/history；owner/reviewer/editor 可用 team_task_start/checkpoint/finish；owner/reviewer 可用 team_rule_put/disable。单一 reviewer/owner 工作区共 22 个工具，viewer 共 10 个。本地 stdio 的 53 个工具保持独立，不向团队成员开放服务端文件管理和索引入口。
+
+团队检查点支持工作阶段、等待原因和验收条件；省略字段保留现值，传入数组替换对应字段。完成任务须有最终结论、通过证据、无必要下一步或阻塞，且各验证命令最新结果通过；取消不要求验收。继续使用 `expectedVersion` 做并发检查。团队 HTTP 尚无重新打开任务工具，本地 `task_reopen` 不是团队接口。详细示例和边界见[任务工作流](task-workflow.md)。
 
 团队冲突审核复用 P1 因果事件日志：项目先配置单用户同步，出现并发版本后，由授权审核者在 Web 或 MCP 选择版本。只展示该共享类型范围内的 memory 冲突。首版提供“择一”而非文本编辑合并；选择后生成引用全部冲突头的新事件，旧版本保留。团队共同使用一个服务端项目数据库，不在每台客户端自动建立项目副本。P1 对象存储共同凭据不是团队 ACL，不应向不可信成员发放该凭据。
 

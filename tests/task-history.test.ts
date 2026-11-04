@@ -1,4 +1,5 @@
 import Database from "better-sqlite3";
+import { fixtureAcceptance } from './helpers/task-acceptance.js';
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -26,7 +27,7 @@ function database(): SqliteDatabase {
 }
 
 function checkpoint(summary: string): TaskCheckpoint {
-  return { summary, completed: [summary], next: ["verify"], changedFiles: ["src/example.ts"],
+  return { ...fixtureAcceptance(), stage:'executing', summary, completed: [summary], next: [], changedFiles: ["src/example.ts"],
     verification: [{ command: "test", status: "passed", summary: "focused" }], blockers: [], risks: ["remote unverified"] };
 }
 
@@ -88,7 +89,7 @@ describe("persistent task history", () => {
     const db = database();
     for (let index = 0; index < 20; index++) {
       const task = startTask(db, `indexed task ${index}`);
-      if (index % 2 === 0) completeTask(db, task.id);
+      if (index % 2 === 0) completeTask(db, task.id, checkpoint('done'));
     }
     const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'tasks_%_id_idx'").all();
     expect(indexes).toHaveLength(6);
@@ -156,7 +157,7 @@ describe("persistent task history", () => {
     const task = startTask(db, "idempotent retries");
     const firstPayload = checkpoint("first");
     const saved = checkpointTask(db, task.id, firstPayload, { requestId: "request-1" });
-    const reordered = { risks: firstPayload.risks, blockers: firstPayload.blockers, verification: [
+    const reordered = { ...fixtureAcceptance(), stage:'executing' as const, risks: firstPayload.risks, blockers: firstPayload.blockers, verification: [
       { summary: "focused", status: "passed", command: "test" },
     ], changedFiles: firstPayload.changedFiles, next: firstPayload.next, completed: firstPayload.completed, summary: "first" };
     expect(checkpointTask(db, task.id, reordered)).toEqual(saved);
@@ -210,7 +211,7 @@ describe("persistent task history", () => {
     db.exec("CREATE TRIGGER fail_event BEFORE INSERT ON task_events BEGIN SELECT RAISE(ABORT, 'injected event failure'); END;");
     expect(() => startTask(db, "must not remain")).toThrow("injected event failure");
     expect(() => checkpointTask(db, task.id, checkpoint("must not remain"), { requestId: "retry-after-failure" })).toThrow("injected event failure");
-    expect(() => completeTask(db, task.id)).toThrow("injected event failure");
+    expect(() => completeTask(db, task.id, checkpoint('done'))).toThrow("injected event failure");
     expect(() => cancelTask(db, task.id)).toThrow("injected event failure");
     expect(getTask(db, task.id)).toEqual(task);
     expect(db.prepare("SELECT COUNT(*) AS n FROM tasks").get()).toEqual({ n: 1 });

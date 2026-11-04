@@ -5,12 +5,14 @@ import { ProjectContextError } from "../shared/errors.js";
 import { containsLikelySecret } from "../indexing/file-policy.js";
 import type { SqliteDatabase } from "../storage/database.js";
 import { startTask, getTask, checkpointTask, completeTask, cancelTask, listTaskHistory } from "../tasks/task-service.js";
+import { taskWorkflowShape } from '../tasks/task-workflow.js';
 
 const text = z.string().max(8000);
 export const sharedCheckpointSchema = z.object({
-  summary: text.optional(), completed: z.array(text).max(100).default([]), next: z.array(text).max(100).default([]),
-  changedFiles: z.array(text).max(100).default([]), blockers: z.array(text).max(100).default([]), risks: z.array(text).max(100).default([]),
-  verification: z.array(z.object({ command: text, status: text, summary: text.optional() }).strict()).max(100).default([]),
+  ...taskWorkflowShape,
+  summary: text.optional(), completed: z.array(text).max(100).optional(), next: z.array(text).max(100).optional(),
+  changedFiles: z.array(text).max(100).optional(), blockers: z.array(text).max(100).optional(), risks: z.array(text).max(100).optional(),
+  verification: z.array(z.object({ command: text, status: text, summary: text.optional() }).strict()).max(100).optional(),
 }).strict();
 const writeRoles = ["owner", "editor", "reviewer"] as const;
 type SharedRule = { id: string; shareId: string; title: string; content: string; version: number; status: "active" | "deleted"; updatedBy: string; updatedAt: string };
@@ -78,10 +80,13 @@ export class TeamKnowledgeService {
         if (current.status !== "in_progress") throw new ProjectContextError("TASK_TRANSITION_BLOCKED", "A finished shared task cannot be edited.");
       }
       checkpointTask(db, taskId, {
+        ...(checkpoint.stage !== undefined ? {stage:checkpoint.stage} : {}),
+        ...(checkpoint.acceptance !== undefined ? {acceptance:checkpoint.acceptance} : {}),
+        ...(checkpoint.waitingReason !== undefined ? {waitingReason:checkpoint.waitingReason} : {}),
         completed: checkpoint.completed, next: checkpoint.next, changedFiles: checkpoint.changedFiles,
         blockers: checkpoint.blockers, risks: checkpoint.risks,
         ...(checkpoint.summary !== undefined ? { summary: checkpoint.summary } : {}),
-        verification: checkpoint.verification.map(item => ({ command: item.command, status: item.status, ...(item.summary !== undefined ? { summary: item.summary } : {}) })),
+        ...(checkpoint.verification !== undefined ? {verification: checkpoint.verification.map(item => ({ command: item.command, status: item.status, ...(item.summary !== undefined ? { summary: item.summary } : {}) }))} : {}),
       }, { requestId: scopedRequest, source: "team" });
       return this.taskValue(db, shareId, taskId);
     }).immediate()));

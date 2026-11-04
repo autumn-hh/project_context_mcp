@@ -271,6 +271,7 @@ describe("Project Context core", () => {
       const project = await app.openProject(projectRoot);
       const task = app.startTask(project.id, "Adopt a durable token policy");
       app.checkpoint(project.id, task.id, {
+        acceptance:[{criterion:'Token policy',status:'passed',evidence:'test:fixture'}],
         summary: "The refresh-token policy now rotates tokens after every use.",
         completed: ["Decision: keep project memory local by default.", "Added implementation details."],
         next: [],
@@ -311,6 +312,7 @@ describe("Project Context core", () => {
       const task = app.startTask(project.id, "Implement refresh rotation");
       app.completeTask(project.id, task.id, {
         summary: "Decision: refresh tokens rotate after every use. Validation is complete.",
+        acceptance:[{criterion:'Rotation policy',status:'passed',evidence:'test:fixture'}],
         completed: [], next: [], changedFiles: ["src/auth.ts"], verification: [], blockers: [], risks: [],
       });
       const candidate = app.candidates(project.id)[0]!;
@@ -326,6 +328,7 @@ describe("Project Context core", () => {
 
       const reviewedTask = app.startTask(project.id, "Review durable rotation policy");
       app.completeTask(project.id, reviewedTask.id, {
+        acceptance:[{criterion:'Policy review',status:'passed',evidence:'test:fixture'}],
         summary: "Added token implementation and verification.",
         completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
       });
@@ -345,6 +348,7 @@ describe("Project Context core", () => {
       const project = await app.openProject(projectRoot);
       const riskTask = app.startTask(project.id, "Record a task risk");
       app.completeTask(project.id, riskTask.id, {
+        acceptance:[{criterion:'Risk review',status:'passed',evidence:'test:fixture'}],
         completed: ["Decision: keep project memory local by default."], next: [], changedFiles: [], verification: [],
         blockers: [], risks: ["Legacy clients may not support token rotation.", "A second risk must not become a candidate."],
       });
@@ -357,6 +361,7 @@ describe("Project Context core", () => {
 
       const completedTask = app.startTask(project.id, "Record a durable completed item");
       app.completeTask(project.id, completedTask.id, {
+        acceptance:[{criterion:'Durable item',status:'passed',evidence:'test:fixture'}],
         completed: ["Added routine implementation details.", "Decision: keep project memory local by default."],
         next: [], changedFiles: [], verification: [], blockers: [], risks: [],
       });
@@ -379,6 +384,7 @@ describe("Project Context core", () => {
       const task = app.startTask(project.id, "Investigate credential handling");
       app.completeTask(project.id, task.id, {
         summary: "api_key=abcdefghijklmnopqrstuvwxyz123456",
+        acceptance:[{criterion:'Sensitive candidate rejection',status:'passed',evidence:'test:fixture'}],
         completed: [],
         next: [],
         changedFiles: [],
@@ -671,6 +677,7 @@ describe("Project Context core", () => {
       const task = app.startTask(project.id, "Preserve task evidence");
       app.completeTask(project.id, task.id, {
         summary: "Decision: indexed knowledge must remain available after database maintenance.",
+        acceptance:[{criterion:'Preservation fixture',status:'passed',evidence:'test:fixture'}],
         completed: [], next: [], changedFiles: [], verification: [], blockers: [], risks: [],
       });
       const candidate = app.candidates(project.id).find((row) => row.sourceRef === `task:${task.id}`)!;

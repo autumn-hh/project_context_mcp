@@ -33,6 +33,10 @@ New to MCP? → [Beginner Setup](#beginner-setup-connect-an-mcp-client-and-initi
 
 ## Complete Task Browsing and History
 
+Work stage is separate from lifecycle status: backlog, executing, acceptance, waiting, paused, and untriaged for legacy records without a stage. Completion requires a final conclusion, passed acceptance criteria with evidence, no remaining next actions/blockers, and passing latest results for recorded verification commands. Reopen omitted required work with `task_reopen`, preserving the original completion history. See [task workflow and CLI examples](docs/task-workflow.md) and [recall/audit evidence](docs/accuracy-task-workflow-2026-11-03.md). Rebuild and restart Web/MCP processes after upgrading.
+
+Filtering preserves existing content and input focus while loading. Failures explain that the previous result is still shown and allow retry. Stage filters match unfinished tasks only. A separate inventory dashboard and automatic merging of migrated project duplicates are not implemented.
+
 The task workspace supports all-project or single-project browsing, goal/current-summary search, status filters including cancelled tasks, and 10/20/50 rows per page. Sort by update, creation, or end time. Archived projects are excluded by default. Unavailable projects produce explicit partial-result warnings without hiding accessible tasks. Project portraits retain recent summaries and link to the full task list.
 
 Task details now include current state and paginated history. Creation, changed checkpoints, completion, and cancellation atomically append snapshots with verification, changed files, blockers, and risks. History reading pauses automatic polling. Completion does not imply every environment has been verified.
@@ -406,7 +410,7 @@ Use project-context-mcp to retain sourced project knowledge across AI coding ses
 2. Call `project_open` with the repository's absolute root path and reuse the returned project ID. The MCP server synchronizes the index and manages change tracking for the current process.
 3. Before substantial implementation work, call `project_context` with the current task and `budgetTokens: 3000`; increase the budget explicitly only when the task needs a larger snapshot.
 4. Use `project_search` for indexed text, symbols, memories, and code relationships instead of guessing. Managed pending changes are flushed before reads.
-5. For non-trivial work, call `task_start`, save progress with `task_checkpoint`, and call `task_complete` when finished. Completion flushes pending project changes.
+5. For non-trivial work, call `task_start` with an appropriate stage and acceptance criteria. Save concrete progress/next actions with `task_checkpoint`; omitted fields are preserved and supplied arrays replace the field. Complete only after required verification passes, acceptance evidence is saved, and no next actions/blockers remain. Use `task_reopen` with a reason, requestId and latest task_history sequence as expectedRevision if required work was omitted. Completion flushes pending project changes.
 
 ## Memory Rules
 - Review `memory_candidates` after indexing Git changes. Accept or reject candidates explicitly; never accept them automatically.
@@ -443,11 +447,11 @@ The client starts the server from its MCP configuration and follows its global i
 
 For client-specific configuration, see the official Codex documentation for [MCP](https://developers.openai.com/codex/mcp/) and [Customization / AGENTS.md](https://developers.openai.com/codex/concepts/customization/), or the Claude Code [MCP](https://docs.anthropic.com/en/docs/claude-code/mcp) documentation.
 
-## MCP Tools (52, local stdio)
+## MCP Tools (53, local stdio)
 
-- project_backup_remote, project_restore_remote
-- sync_status, sync_push, sync_pull, sync_conflicts, sync_resolve
-- project_search_enhanced, project_definition (explicit local configuration required)
+- `project_backup_remote`, `project_restore_remote`
+- `sync_status`, `sync_push`, `sync_pull`, `sync_conflicts`, `sync_resolve`
+- `project_search_enhanced`, `project_definition` (explicit local configuration required)
 
 - `storage_status`
 - `project_open`, `project_list`, `project_update`, `project_archive`, `project_unarchive`, `project_relocate`
@@ -461,7 +465,7 @@ For client-specific configuration, see the official Codex documentation for [MCP
 - `memory_knowledge`: list, propose and explicitly review local entities, aliases and relationships with original quotations. The memory graph includes an entity review form; accepted aliases can contribute to task context. No additional service or model dependency is required. See [memory graph](docs/memory-graph.md).
 - `memory_candidates`, `memory_candidate_accept`, `memory_candidate_reject`
 - `user_memory_remember`, `user_memory_list`, `user_memory_update_status`
-- `task_start`, `task_checkpoint`, `task_list`, `task_query`, `task_history`, `task_complete`, `task_cancel`
+- `task_start`, `task_checkpoint`, `task_list`, `task_query`, `task_history`, `task_complete`, `task_cancel`, `task_reopen`
 
 `project_index` returns symbol/relation totals, stale memory IDs, newly generated candidates, and Git metadata. The indexer and watcher skip common cross-language compiler artifacts, including C/C++ `.d` dependency files, `.o/.obj` objects, `.a/.lib` static libraries, precompiled headers, Java/Python bytecode, and coverage or profiling output. Git evidence is preferred when available; projects without Git can still generate candidates from added or changed indexed knowledge documents. Each completed task generates at most one candidate, preferring its summary, then its first risk, then its first explicitly durable completed item, so routine execution records do not become multiple review items. It never returns or stores the full diff. Candidate memories remain review-only until `memory_candidate_accept` is called.
 
