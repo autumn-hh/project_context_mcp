@@ -2,6 +2,10 @@
 
 每次向 GitHub 推送代码前，都必须在此文件中补充本次推送的用户可见修复、行为变化、重要实现和验证结果。
 
+## 未发布 — 更多语言的符号解析（2026-11-04）
+
+- Vue 与 Svelte 组件解析 `<script>` 块（含 `<script setup>`、Options API 的方法、`lang="ts"/"tsx"`），复用现有 TS/JS 语法，无新依赖。组件中脚本以外的字符替换为空格、保留换行，符号行列与 ID 直接对应组件原文件；属性值含 `>`（如 Vue 的 `generic`）也能正确定位，`src=` 外链脚本跳过，只有模板的组件计为已解析、无符号。已入库且内容未变的组件按新增语言版本自动补齐符号。hrbust_front_new 的 39 个组件全部解析成功，26 个产出 319 个函数符号，耗时 0.3 秒；其余 13 个只有模板、导入或 `defineProps`。模板事件绑定（如 `@click`）不产生调用关系。
+
 ## 未发布 — 检索索引瘦身，Schema v11（2026-11-04）
 
 - n-gram 行改为引用整数条目编号：新增 `search_items`（条目编号）与 `search_terms`（词条，`WITHOUT ROWID`），`search_ngrams` 改为兼容视图并带 INSTEAD OF 触发器，旧版进程照常读写。此前每行在主键与条目索引中各存一份 28 字节文本 ID，n-gram 占 hrbust_back_new 库 74%、hrbust_front_new 库 60%。逻辑版本仍为 1，新旧进程不会互相触发重建。

@@ -3,7 +3,7 @@ import TypeScript from "tree-sitter-typescript";
 import JavaScript from "tree-sitter-javascript";
 import { extname } from "node:path";
 import { sha256 } from "../shared/ids.js";
-import type { AnalysisLanguage } from "./languages.js";
+import { analysisLanguage, type AnalysisLanguage } from "./languages.js";
 import { analyzeAdditionalLanguage } from "./multilanguage-analyzer.js";
 
 export interface CodeSymbol {
@@ -42,9 +42,50 @@ export const CODE_ANALYSIS_VERSION = "3";
 const HIGH_FREQUENCY_CALLEE_LIMIT = 64;
 
 export function analyzeCode(sourcePath: string, content: string): CodeAnalysis | null {
+  const component = analysisLanguage(sourcePath);
+  if (component === "vue" || component === "svelte") {
+    const script = componentScript(content);
+    return { language: component, ...(script ? analyzeScript(sourcePath, script.content, scriptGrammar(script.lang)) : { symbols: [], relations: [] }) };
+  }
   const language = languageForPath(sourcePath);
   if (!language) return analyzeAdditionalLanguage(sourcePath, content);
-  parser.setLanguage(language.grammar);
+  return { language: language.name, ...analyzeScript(sourcePath, content, language.grammar) };
+}
+
+// Attribute values may contain ">", e.g. Vue's generic="T extends Map<string, number>".
+const COMPONENT_SCRIPT = /<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>([\s\S]*?)<\/script\s*>/giu;
+
+/**
+ * The script blocks of a Vue or Svelte component with every other character blanked, so the
+ * TS/JS grammars report the component's own line and column positions. External scripts
+ * (src=...) are skipped; any TypeScript block makes the whole component parse as TypeScript.
+ */
+function componentScript(content: string): { content: string; lang: string } | null {
+  const blank = (text: string) => text.replace(/[^\r\n]/g, " ");
+  let masked = "";
+  let last = 0;
+  let lang: string | null = null;
+  for (const match of content.matchAll(COMPONENT_SCRIPT)) {
+    const attributes = match[1] ?? "";
+    if (/\bsrc\s*=/iu.test(attributes)) continue;
+    const start = match.index + "<script".length + attributes.length + 1;
+    const end = start + (match[2] ?? "").length;
+    masked += blank(content.slice(last, start)) + content.slice(start, end);
+    last = end;
+    const declared = attributes.match(/\blang\s*=\s*["']?(tsx|ts|typescript|jsx)\b/iu)?.[1]?.toLowerCase();
+    if (lang === null || declared === "ts" || declared === "typescript" || declared === "tsx") {
+      lang = declared === "typescript" ? "ts" : declared ?? lang ?? "js";
+    }
+  }
+  return lang === null ? null : { content: masked + blank(content.slice(last)), lang };
+}
+
+function scriptGrammar(lang: string): unknown {
+  return lang === "ts" ? TypeScript.typescript : lang === "tsx" ? TypeScript.tsx : JavaScript;
+}
+
+function analyzeScript(sourcePath: string, content: string, grammar: unknown): Pick<CodeAnalysis, "symbols" | "relations"> {
+  parser.setLanguage(grammar);
   // The current Node binding rejects direct string inputs at 32,768 characters.
   const tree = content.length < DIRECT_PARSE_LIMIT
     ? parser.parse(content)
@@ -80,7 +121,7 @@ export function analyzeCode(sourcePath: string, content: string): CodeAnalysis |
     return localNames.has(target) || target.startsWith("this.")
       || localNames.has(target.split(".", 1)[0]!);
   });
-  return { language: language.name, symbols, relations: filteredRelations };
+  return { symbols, relations: filteredRelations };
 }
 
 function visit(

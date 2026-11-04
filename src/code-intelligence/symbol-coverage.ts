@@ -14,7 +14,6 @@ export const UNANALYZED_CODE_EXTENSIONS: ReadonlySet<string> = new Set([
   ".cs", ".fs", ".vb",
   ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".ino", ".m", ".mm",
   ".php", ".rb", ".swift", ".dart", ".lua", ".pl", ".r",
-  ".vue", ".svelte",
 ]);
 
 const MAX_LISTED_EXTENSIONS = 10;

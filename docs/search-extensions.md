@@ -18,7 +18,7 @@ P3 图谱导出供审阅，不用来替换本地索引。其 indexedRevision 是
 
 ## 多语言结构（P3-3）
 
-Tree-sitter 支持 TS/JS/TSX/JSX，以及 Python、Go、Rust。新增语言提取定义、导入和调用，Python 继承、Rust impl/trait 关系进入关系表；已解析的同文件调用能扩展搜索。动态 Python 调用、Go 跨 package/receiver 类型推断、Rust 宏和完整跨模块解析不等同于编译器语义分析；不确定目标保留未解析，不随意连接同名符号。需要精确语义定义时可配置 LSP。
+Tree-sitter 支持 TS/JS/TSX/JSX，以及 Python、Go、Rust 与 Vue/Svelte 组件。组件只解析 `<script>`（含 `<script setup>`、`lang="ts"`）块，其余内容按原位置留空，符号行号与组件文件一致；`src=` 外链脚本跳过，模板中的事件绑定不产生调用关系。新增语言提取定义、导入和调用，Python 继承、Rust impl/trait 关系进入关系表；已解析的同文件调用能扩展搜索。动态 Python 调用、Go 跨 package/receiver 类型推断、Rust 宏和完整跨模块解析不等同于编译器语义分析；不确定目标保留未解析，不随意连接同名符号。需要精确语义定义时可配置 LSP。
 
 ## Embedding 插件（P3-2）
 

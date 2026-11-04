@@ -22,7 +22,7 @@ Project Context MCP 是一套面向 AI 编程助手的本地项目上下文与�
 - **增量索引**：先比较文件大小与修改时间，有变化再用内容哈希确认，只处理新增、修改或删除的内容；每 24 小时及内容规则变化时全量核对一次。
 - **混合检索**：结合 SQLite FTS5、Unicode n-gram、精确符号匹配和代码关系排序。
 - **中文检索**：使用 Unicode n-gram 支持中文子串检索，不依赖在线分词或向量服务。
-- **代码智能**：通过 Tree-sitter 提取 JavaScript、TypeScript、Python、Go 和 Rust 的符号、调用、导入、继承与实现关系；Java、C/C++、Vue 等其他语言只做全文检索，`project_health` 的 `codeIntelligence` 会报告这部分文件的数量与占比。
+- **代码智能**：通过 Tree-sitter 提取 JavaScript、TypeScript、Python、Go、Rust 以及 Vue/Svelte 组件脚本的符号、调用、导入、继承与实现关系；Java、C/C++ 等其他语言只做全文检索，`project_health` 的 `codeIntelligence` 会报告这部分文件的数量与占比。
 - **记忆可治理**：自动发现的信息先成为候选，只有经过明确审核后才会进入长期记忆。
 - **任务可续接**：持久保存已完成事项、下一步、修改文件、验证结果、阻塞项和风险。
 - **多级个人记忆**：原生支持 `user`、`workspace`、`project`、`module`、`task` 五种作用域。

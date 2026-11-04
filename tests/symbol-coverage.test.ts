@@ -14,10 +14,10 @@ describe("symbol coverage", () => {
       "src/main/resources/static/js/page.js", "plugins/legacy/Legacy.java",
       "styles/app.scss", "index.html", "package.json", "README.md", "db/schema.sql", "deploy.sh", "Makefile",
     ])).toEqual({
-      analyzedSources: 3,
-      unanalyzedCodeSources: 3,
-      unanalyzedCodeShare: 0.5,
-      unanalyzed: [{ extension: ".java", sources: 2 }, { extension: ".vue", sources: 1 }],
+      analyzedSources: 4,
+      unanalyzedCodeSources: 2,
+      unanalyzedCodeShare: 0.3333,
+      unanalyzed: [{ extension: ".java", sources: 2 }],
       lowRelevanceCodeSources: 2,
       otherTextSources: 7,
     });
@@ -29,12 +29,12 @@ describe("symbol coverage", () => {
   });
 
   it("rounds the share, orders ties by extension and caps the listed extensions", () => {
-    const kinds = [".c", ".cpp", ".cs", ".dart", ".go", ".h", ".kt", ".lua", ".php", ".rb", ".swift", ".vue"];
+    const kinds = [".c", ".cpp", ".cs", ".dart", ".go", ".h", ".kt", ".lua", ".php", ".rb", ".scala", ".swift", ".vue"];
     const result = symbolCoverage(kinds.map((extension) => `src/file${extension}`));
-    expect(result.analyzedSources).toBe(1);
+    expect(result.analyzedSources).toBe(2);
     expect(result.unanalyzedCodeSources).toBe(11);
-    expect(result.unanalyzedCodeShare).toBe(0.9167);
-    expect(result.unanalyzed.map((item) => item.extension)).toEqual([".c", ".cpp", ".cs", ".dart", ".h", ".kt", ".lua", ".php", ".rb", ".swift"]);
+    expect(result.unanalyzedCodeShare).toBe(0.8462);
+    expect(result.unanalyzed.map((item) => item.extension)).toEqual([".c", ".cpp", ".cs", ".dart", ".h", ".kt", ".lua", ".php", ".rb", ".scala"]);
   });
 
   it("returns a zero share for a project without code", () => {
@@ -54,6 +54,8 @@ describe("symbol coverage", () => {
       ".py": "def a():\n    return 1\n",
       ".go": "package main\nfunc a() {}\n",
       ".rs": "fn a() {}\n",
+      ".vue": "<template><p /></template>\n<script setup>\nfunction a() {}\n</script>\n",
+      ".svelte": "<script>\nfunction a() {}\n</script>\n<p />\n",
     };
     for (const extension of SYMBOL_SUPPORTED_EXTENSIONS) {
       const source = snippets[extension];

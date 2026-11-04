@@ -1,10 +1,10 @@
 import { extname } from "node:path";
 
-export type AnalysisLanguage = "typescript" | "tsx" | "javascript" | "jsx" | "python" | "go" | "rust";
+export type AnalysisLanguage = "typescript" | "tsx" | "javascript" | "jsx" | "python" | "go" | "rust" | "vue" | "svelte";
 
 const LANGUAGE_BY_EXTENSION: Readonly<Record<string, AnalysisLanguage>> = {
   ".ts": "typescript", ".tsx": "tsx", ".js": "javascript", ".mjs": "javascript", ".cjs": "javascript", ".jsx": "jsx",
-  ".py": "python", ".go": "go", ".rs": "rust",
+  ".py": "python", ".go": "go", ".rs": "rust", ".vue": "vue", ".svelte": "svelte",
 };
 
 /**
@@ -20,7 +20,7 @@ export const ANALYZED_EXTENSIONS: ReadonlySet<string> = new Set(Object.keys(LANG
  * only, leaving their text indexes in place.
  */
 export const ANALYZER_VERSIONS: Readonly<Record<AnalysisLanguage, string>> = {
-  typescript: "3", tsx: "3", javascript: "3", jsx: "3", python: "3", go: "3", rust: "3",
+  typescript: "3", tsx: "3", javascript: "3", jsx: "3", python: "3", go: "3", rust: "3", vue: "1", svelte: "1",
 };
 
 export function analysisLanguage(path: string): AnalysisLanguage | null {

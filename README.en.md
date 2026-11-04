@@ -92,8 +92,8 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - Indexed chunk foreign keys for predictable source cleanup on large existing databases
 - Default exclusion of `.env`, credentials, private keys, databases, binaries, generated folders, and large files
 - Default exclusion of `.d` dependency files, `.o/.obj` objects, `.a/.lib` static libraries, bytecode, compiler caches, and coverage/profiling artifacts
-- Tree-sitter symbol and relation indexing for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, `.go`, and `.rs`; files in low-relevance directories such as `static`, `assets`, `plugins`, and `vendors` keep text search only
-- Java, Kotlin, C/C++, C#, PHP, Vue, Svelte, and other languages stay full-text searchable but produce no symbols; `codeIntelligence` in `project_health` reports how many such files exist, their main extensions, and their share of code files, counting low-relevance code separately
+- Tree-sitter symbol and relation indexing for `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs`, `.cjs`, `.py`, `.go`, `.rs`, and the `<script>` blocks of Vue and Svelte components; files in low-relevance directories such as `static`, `assets`, `plugins`, and `vendors` keep text search only
+- Java, Kotlin, C/C++, C#, PHP, and other languages stay full-text searchable but produce no symbols; `codeIntelligence` in `project_health` reports how many such files exist, their main extensions, and their share of code files, counting low-relevance code separately
 - Import, call, extends, and implements relationships included in search and task context
 - Automatic Git, Mercurial (hg), and Subversion (svn) detection with revision, branch, working-copy status, and diff-hash evidence without persisting full diffs
 - Reviewable memory candidates from Git, Mercurial, and Subversion changes, indexed knowledge documents, and completed task checkpoints

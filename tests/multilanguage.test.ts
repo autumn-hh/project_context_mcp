@@ -26,6 +26,39 @@ describe("additional Tree-sitter languages", () => {
     expect(result.language).toBe("rust"); expect(result.symbols.map(s=>s.qualifiedName)).toContain("lib.rs#Service#run");
     expect(result.relations).toEqual(expect.arrayContaining([expect.objectContaining({relationType:"IMPLEMENTS",toName:"Worker"}),expect.objectContaining({relationType:"CALLS",toName:"helper"})]));
   });
+  it("extracts Vue script blocks at their positions in the component", () => {
+    const component = [
+      "<template>",
+      "  <button @click=\"save\">保存实验记录</button>",
+      "</template>",
+      "<script setup lang=\"ts\" generic=\"T extends Map<string, number>\">",
+      "import { persist } from \"./store\";",
+      "function save(): void { persist(); }",
+      "const total = (items: T) => items.size;",
+      "</script>",
+      "<script>",
+      "export default { methods: { reset() { save(); } } };",
+      "</script>",
+      "<style>.button { color: red; }</style>",
+    ].join("\n");
+    const result = analyzeCode("src/views/Lab.vue", component)!;
+    expect(result.language).toBe("vue");
+    expect(result.symbols.map((symbol) => [symbol.name, symbol.kind, symbol.startLine])).toEqual([
+      ["save", "function", 6], ["total", "function", 7], ["reset", "method", 10],
+    ]);
+    expect(result.symbols[0]!.qualifiedName).toBe("src/views/Lab.vue#save");
+    expect(result.relations).toEqual(expect.arrayContaining([
+      expect.objectContaining({ relationType: "IMPORTS", toName: "./store", startLine: 5 }),
+      expect.objectContaining({ relationType: "CALLS", toName: "persist", fromName: "src/views/Lab.vue#save" }),
+    ]));
+  });
+
+  it("extracts Svelte scripts, skips external ones and keeps template-only components analyzed", () => {
+    const svelte = "<script src=\"./legacy.js\"></script>\n<script lang=\"ts\">\n  export function load(id: string) { return id; }\n</script>\n<h1>{title}</h1>\n";
+    expect(analyzeCode("Page.svelte", svelte)).toMatchObject({ language: "svelte", symbols: [{ name: "load", startLine: 3 }] });
+    expect(analyzeCode("Static.vue", "<template><p>说明</p></template>\n")).toEqual({ language: "vue", symbols: [], relations: [] });
+  });
+
   it("re-extracts unchanged files indexed before their analyzer without rewriting text indexes", async () => {
     const root = await mkdtemp(join(tmpdir(), "context-analyzer-refresh-"));
     const db = openDatabase(":memory:");
