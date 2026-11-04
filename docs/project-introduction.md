@@ -62,7 +62,7 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 
 ## MCP 工具链
 
-项目当前提供 51 个本地 stdio MCP 工具；包括远程备份恢复2项、同步5项、增强搜索与定义查询2项，以及记忆图谱与节点详情2项。记忆图谱见 [使用说明](memory-graph.md)；团队 HTTP 工具按角色提供，见 [团队服务](team-service.md)。
+项目当前提供 53 个本地 stdio MCP 工具；以下清单覆盖项目管理、记忆、同步和任务工作流。记忆图谱与实体审核见 [使用说明](memory-graph.md)；团队 HTTP 工具按角色提供，见 [团队服务](team-service.md)。
 
 ### 存储与项目管理
 
@@ -86,6 +86,21 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 | `project_backup` | 在线备份项目 SQLite 数据库 |
 | `project_backup_encrypted` | 创建 scrypt + AES-256-GCM 加密备份 |
 | `project_export` | 将项目知识导出为 JSONL 文件 |
+| `project_storage` | 查看数据库、WAL、空闲页和维护配置 |
+| `project_cleanup` | 预览或明确确认后清理旧索引日志与回收空间，保留任务及知识 |
+| `project_maintenance_configure` | 配置默认关闭的项目自动维护 |
+| `project_backup_remote` / `project_restore_remote` | 使用显式配置的 S3 目标加密备份或隔离恢复知识包 |
+| `project_search_enhanced` | 使用明确配置的 embedding 插件检索，失败时回退本地文本搜索 |
+| `project_definition` | 使用本机管理员配置的可信 LSP 查询已索引文件中的定义 |
+
+### 增量同步
+
+| 工具 | 作用 |
+| --- | --- |
+| `sync_status` | 查看同步身份、待上传事件与未解决冲突 |
+| `sync_push` / `sync_pull` | 向显式配置的同步空间推送或拉取加密事件 |
+| `sync_conflicts` | 列出未解决冲突及竞争版本 |
+| `sync_resolve` | 明确选择冲突版本并保留解决历史 |
 
 ### 长期记忆管理
 
@@ -97,6 +112,8 @@ Codex / Claude Code / Cursor 等 MCP 客户端
 | `memory_candidates` | 查看等待审核的记忆候选 |
 | `memory_candidate_accept` | 接受候选并创建正式记忆 |
 | `memory_candidate_reject` | 拒绝候选并保留审核记录 |
+| `memory_graph` / `memory_graph_node` | 探索记忆关联、来源和节点证据 |
+| `memory_knowledge` | 提议、查询及明确审核带原文证据的实体、别名与关系 |
 
 长期记忆可以表示事实、决策、约束、偏好、经验、问题、假设和任务总结。其生命周期包括 `candidate`、`active`、`superseded`、`stale`、`conflicted`、`rejected` 和 `deleted`。
 
@@ -143,8 +160,9 @@ user 全局约束
 | `task_list` | 查询进行中或已完成的任务 |
 | `task_query` | 按目标/当前摘要、状态和时间排序分页查询单项目或跨项目任务，支持已取消与归档筛选；返回部分读取警告 |
 | `task_history` | 分页查看任务事件与完整检查点快照，明确区分旧数据迁移快照 |
-| `task_complete` | 完成任务并保留最终检查点 |
+| `task_complete` | 验收证据及最新验证通过、无必要剩余工作后完成任务，保留最终检查点 |
 | `task_cancel` | 取消不再继续的任务并保留最终检查点 |
+| `task_reopen` | 使用原因、幂等请求 ID 和最新历史序号重新打开任务，保留原完成事件 |
 
 任务检查点支持记录：
 

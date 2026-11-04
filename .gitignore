@@ -12,3 +12,4 @@ output/
 *.db-wal
 
 .playwright-cli/
+/_restart_ui.py

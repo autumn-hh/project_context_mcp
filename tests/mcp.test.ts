@@ -58,11 +58,16 @@ describe("Project Context MCP", () => {
     try {
       const tools = await client.listTools();
       expect(tools.tools).toHaveLength(53);
-      for (const path of ['README.md', 'README.en.md']) {
+      for (const path of ['README.md', 'README.en.md', 'docs/project-introduction.md']) {
         const readme = await readFile(path, 'utf8');
-        const section = readme.split(/^## MCP (?:工具|Tools).*$/m)[1]!.split(/^## /m)[0]!;
+        const heading = /^## MCP (?:工具|Tools).*$/m.exec(readme);
+        expect(heading, path + ' must contain a tool section').not.toBeNull();
+        const section = readme.slice(heading!.index + heading![0].length).split(/^## /m)[0]!;
         const documented = [...section.matchAll(/`((?:storage|project|memory|user_memory|task|sync)_[a-z_]+)`/g)].map(match => match[1]);
-        expect([...new Set(documented)].sort()).toEqual(tools.tools.map(tool => tool.name).sort());
+        expect([...new Set(documented)].sort(), path + ' tool inventory').toEqual(tools.tools.map(tool => tool.name).sort());
+        const claimedCount = (heading![0] + section).match(/(?:MCP (?:工具|Tools)\s*[（(]|项目当前提供\s*)(\d+)/u);
+        expect(claimedCount, path + ' must declare its tool count').not.toBeNull();
+        expect(Number(claimedCount![1]), path + ' declared tool count').toBe(tools.tools.length);
       }
       expect(tools.tools.map(tool => tool.name)).toEqual(expect.arrayContaining(["project_backup_remote", "project_restore_remote"]));
       expect(tools.tools.every((tool) => tool.outputSchema !== undefined)).toBe(true);

@@ -2,6 +2,8 @@
 
 适用于本地 MCP、CLI 和 Web。任务生命周期仍为 `in_progress` / `completed` / `cancelled`，工作阶段保存在 `checkpoint.stage`。更新源码后运行 `npm run build`，再重启 Web、重连所属客户端的 stdio MCP；旧进程不会自动加载新工具。
 
+这不只是刷新说明文字：工具集合、Schema 和处理逻辑在服务进程启动时加载。修复前启动的 MCP 进程可能没有 `task_reopen`，也可能仍执行旧完成校验。重启一个 Web 服务不会更新其他客户端的 MCP 连接。应逐个重连仍在使用的客户端，并确认实际工具列表含 `task_reopen`、完成说明包含验收证据与最新验证要求；不能把工具缺失当成必须新建任务的理由。登记项目数量不是运行进程数量，是否完成升级以各连接实际返回的工具集合与行为为准。
+
 ## 工作阶段
 
 | 值 | 含义 / Meaning |
@@ -89,3 +91,5 @@ Checkpoints are patches: omitted fields remain unchanged; arrays replace the ent
 Read the newest task_history event's sequence as expectedRevision. task_reopen requires this revision, a reason and retry ID; it preserves the original completion event and adds pending acceptance work. Completion/cancellation optionally accept the revision too. Team tasks use expectedVersion and have no team reopen tool.
 
 The Web queue preserves content while filtering and explains stale results on failure. Rebuild and restart Web/MCP processes after upgrading. Historical cleanup, automatic duplicate merging and a separate inventory dashboard are outside this change.
+
+Restarting is required for behavior too: old MCP processes may lack task_reopen and still use earlier completion checks. Restarting Web alone does not update other clients. Reconnect each active client and verify its actual tool list and acceptance requirements. Registered projects are not a count of running processes; do not create a replacement task merely because an old connection lacks the reopen tool.
