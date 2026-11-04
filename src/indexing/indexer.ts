@@ -5,6 +5,7 @@ import type { SqliteDatabase } from "../storage/database.js";
 import type { ProjectRecord } from "../projects/project-service.js";
 import { createId, nowIso, sha256 } from "../shared/ids.js";
 import {
+  CONTENT_RULES_FINGERPRINT,
   redactLikelySecretLines,
   detectKind,
   isCandidateTextFile,
@@ -19,7 +20,7 @@ import { rebuildRelationTargets } from "../code-intelligence/relation-targets.js
 import { deleteItemNgrams, rebuildNgramIndexIfNeeded, replaceItemNgrams } from "../search/ngram-index.js";
 import { ProjectContextError } from "../shared/errors.js";
 import { createRunLogger } from "./run-log.js";
-import { saveContentProtection, safeReportPath, type ContentProtectionReport } from "./content-protection.js";
+import { readContentProtection, saveContentProtection, safeReportPath, type ContentProtectionReport } from "./content-protection.js";
 
 const MAX_FILE_SIZE = 1_000_000;
 const CHUNK_CHAR_LIMIT = 4_000;
@@ -31,6 +32,14 @@ const FTS_REMOVAL_BATCH_SIZE = 500;
 // overwrites the mark with the real outcome.
 const STALE_RUNNING_RUN_MS = 24 * 60 * 60 * 1000;
 const ANALYZER_VERSIONS_KEY = "code_analyzer_versions";
+// Unchanged size and modification time let a run skip reading a file. Every file is still
+// re-read when the content rules change or the last full read is older than this interval.
+const CONTENT_VERIFICATION_KEY = "content_verification";
+const CONTENT_VERIFICATION_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CONTENT_FINGERPRINT = sha256(`${CONTENT_RULES_FINGERPRINT}:${CHUNK_CHAR_LIMIT}`);
+// Like Git's racy-entry check: a file modified this close to its last read may have changed
+// again within the same timestamp, so it is re-read until a later read settles it.
+const RACY_WINDOW_MS = 2_000;
 
 export interface IndexResult {
   runId: string;
@@ -62,6 +71,14 @@ interface SourceRow {
   id: string;
   path: string;
   content_hash: string;
+  size_bytes: number;
+  modified_ms: number;
+  indexed_at: string;
+}
+
+function unchangedOnDisk(row: SourceRow, info: { size: number; mtimeMs: number }): boolean {
+  return row.size_bytes === info.size && row.modified_ms === info.mtimeMs
+    && info.mtimeMs < Date.parse(row.indexed_at) - RACY_WINDOW_MS;
 }
 
 function sourceNeedsTierRefresh(db: SqliteDatabase, sourceId: string, fullIndex: boolean): boolean {
@@ -97,7 +114,11 @@ export async function indexProject(
     const staleLanguages = staleAnalysisLanguages(db);
     const matcher = projectIgnoreMatcher(project.rootPath);
 
-    const existingRows = db.prepare("SELECT id, path, content_hash FROM sources").all() as SourceRow[];
+    const verifyContent = contentVerificationDue(db, startedAt);
+    if (verifyContent) log.record("本次读取全部文件核对内容：内容规则已变化，或距上次全量核对超过 24 小时。");
+    // Re-read files whose redactions the protection report lists, so the rebuilt report stays complete.
+    const redactedPaths = new Set(readContentProtection(db)?.redacted.map((item) => item.path));
+    const existingRows = db.prepare("SELECT id, path, content_hash, size_bytes, modified_ms, indexed_at FROM sources").all() as SourceRow[];
     const existingByPath = new Map(existingRows.map((row) => [row.path, row]));
     const seen = new Set<string>();
 
@@ -121,6 +142,16 @@ export async function indexProject(
           result.skipped += 1;
           log.record("文件超过大小限制，跳过。", relativePath);
           contentProtection.skipped.push({ path: safeReportPath(relativePath), reason: "file-too-large" });
+          continue;
+        }
+        const existing = existingByPath.get(relativePath);
+        const fullIndex = !isLowRelevanceSourcePath(relativePath);
+        const language = fullIndex ? analysisLanguage(relativePath) : null;
+        const refreshAnalysis = language !== null && staleLanguages.has(language);
+        if (existing && !verifyContent && !refreshAnalysis && unchangedOnDisk(existing, info)
+          && !redactedPaths.has(safeReportPath(relativePath))) {
+          result.skipped += 1;
+          log.record("文件未修改，复用已有索引。", relativePath);
           continue;
         }
         const buffer = await readFile(absolutePath);
@@ -152,18 +183,17 @@ export async function indexProject(
           continue;
         }
         const contentHash = sha256(content);
-        const existing = existingByPath.get(relativePath);
-        const fullIndex = !isLowRelevanceSourcePath(relativePath);
         const tierChanged = existing ? sourceNeedsTierRefresh(db, existing.id, fullIndex) : false;
         if (existing?.content_hash === contentHash && !tierChanged) {
-          const language = fullIndex ? analysisLanguage(relativePath) : null;
-          if (language && staleLanguages.has(language)) {
+          if (refreshAnalysis) {
             // Text indexes still match the content; only extraction rules changed.
-            replaceCodeAnalysis(db, existing.id, relativePath, analyzeCode(relativePath, content));
+            replaceCodeAnalysis(db, existing.id, relativePath, info, analyzeCode(relativePath, content));
             result.indexed += 1;
             log.record("解析规则已更新，重新提取代码结构。", relativePath);
             await reportProgress(options, result, "indexing", relativePath);
           } else {
+            // Touched or racy files: remember the confirmed state so later runs can skip reading them.
+            if (!unchangedOnDisk(existing, info)) recordFileState(db, existing.id, info);
             result.skipped += 1;
             log.record("内容未变化，复用已有索引。", relativePath);
           }
@@ -222,6 +252,10 @@ export async function indexProject(
         .run(CODE_ANALYSIS_VERSION);
       db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)")
         .run(ANALYZER_VERSIONS_KEY, JSON.stringify(ANALYZER_VERSIONS));
+      if (verifyContent) {
+        db.prepare("INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)")
+          .run(CONTENT_VERIFICATION_KEY, JSON.stringify({ fingerprint: CONTENT_FINGERPRINT, verifiedAt: startedAt }));
+      }
     }
 
     contentProtection.completed = result.errors.length === 0;
@@ -366,13 +400,36 @@ function replaceSource(db: SqliteDatabase, input: {
   transaction.immediate();
 }
 
-function replaceCodeAnalysis(db: SqliteDatabase, sourceId: string, sourcePath: string, analysis: CodeAnalysis | null): void {
+function replaceCodeAnalysis(
+  db: SqliteDatabase,
+  sourceId: string,
+  sourcePath: string,
+  info: { size: number; mtimeMs: number },
+  analysis: CodeAnalysis | null,
+): void {
   db.transaction(() => {
     db.prepare("DELETE FROM metadata WHERE key = 'relation_targets_version'").run();
     deleteCodeAnalysis(db, sourceId);
-    db.prepare("UPDATE sources SET indexed_at = ? WHERE id = ?").run(nowIso(), sourceId);
+    recordFileState(db, sourceId, info);
     if (analysis) insertCodeAnalysis(db, sourceId, sourcePath, analysis);
   }).immediate();
+}
+
+function recordFileState(db: SqliteDatabase, sourceId: string, info: { size: number; mtimeMs: number }): void {
+  db.prepare("UPDATE sources SET size_bytes = ?, modified_ms = ?, indexed_at = ? WHERE id = ?")
+    .run(info.size, info.mtimeMs, nowIso(), sourceId);
+}
+
+/** True when this run must read every file rather than trust unchanged size and modification time. */
+function contentVerificationDue(db: SqliteDatabase, now: string): boolean {
+  const stored = db.prepare("SELECT value FROM metadata WHERE key = ?").pluck().get(CONTENT_VERIFICATION_KEY) as string | undefined;
+  try {
+    const { fingerprint, verifiedAt } = JSON.parse(stored ?? "null") as { fingerprint: string; verifiedAt: string };
+    const elapsed = Date.parse(now) - Date.parse(verifiedAt);
+    return fingerprint !== CONTENT_FINGERPRINT || !(elapsed >= 0 && elapsed < CONTENT_VERIFICATION_INTERVAL_MS);
+  } catch {
+    return true;
+  }
 }
 
 function deleteCodeAnalysis(db: SqliteDatabase, sourceId: string): void {

@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { extname, basename, join } from "node:path";
 import ignore, { type Ignore } from "ignore";
+import { sha256 } from "../shared/ids.js";
 
 export const DEFAULT_IGNORE_PATTERNS = [
   ".git/",
@@ -128,17 +129,23 @@ export function isCandidateTextFile(relativePath: string): boolean {
   return !binaryExtensions.has(extension) && !generatedArtifactExtensions.has(extension);
 }
 
+// GCC/Clang dependency files normally begin with one or more object targets.
+const DEPENDENCY_FILE_TARGET = /(?:^|\n)[^\r\n:]*\.(?:o|obj)\s*:\s*\S/im;
+const DOCUMENT_EXTENSIONS = [".md", ".mdx", ".rst", ".txt"];
+const CONFIG_EXTENSIONS = [".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".xml"];
+const LOW_RELEVANCE_SEGMENTS = ["vendor", "vendors", "plugin", "plugins", "static", "dist", "assets", "build"];
+const LOW_RELEVANCE_FILE = /\.(svg|eot|ttf|otf|woff2?|map|min\.(?:js|css))$/u;
+
 export function isGeneratedTextArtifact(relativePath: string, content: string): boolean {
   if (extname(relativePath).toLowerCase() !== ".d") return false;
-  // GCC/Clang dependency files normally begin with one or more object targets.
   // Content inspection preserves real D-language source files that share the extension.
-  return /(?:^|\n)[^\r\n:]*\.(?:o|obj)\s*:\s*\S/im.test(content.slice(0, 16_384));
+  return DEPENDENCY_FILE_TARGET.test(content.slice(0, 16_384));
 }
 
 export function detectKind(relativePath: string): string {
   const extension = extname(relativePath).toLowerCase();
-  if ([".md", ".mdx", ".rst", ".txt"].includes(extension)) return "document";
-  if ([".json", ".jsonc", ".yaml", ".yml", ".toml", ".ini", ".xml"].includes(extension)) return "config";
+  if (DOCUMENT_EXTENSIONS.includes(extension)) return "document";
+  if (CONFIG_EXTENSIONS.includes(extension)) return "config";
   return "code";
 }
 
@@ -146,13 +153,12 @@ export function detectKind(relativePath: string): string {
 export function isLowRelevanceSourcePath(relativePath: string): boolean {
   const normalized = relativePath.replaceAll("\\", "/").toLowerCase();
   const segments = normalized.split("/");
-  if (["vendor", "vendors", "plugin", "plugins", "static", "dist", "assets", "build"].some((segment) => segments.includes(segment))) {
-    return true;
-  }
-  return /\.(svg|eot|ttf|otf|woff2?|map|min\.(?:js|css))$/u.test(normalized);
+  if (LOW_RELEVANCE_SEGMENTS.some((segment) => segments.includes(segment))) return true;
+  return LOW_RELEVANCE_FILE.test(normalized);
 }
 
 const PRIVATE_KEY_BEGIN = /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----/;
+const PRIVATE_KEY_BLOCK = "-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\\s\\S]*?(?:-----END (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|$)";
 const CREDENTIAL_ASSIGNMENT = /(?:api[_-]?key|access[_-]?token|client[_-]?secret|private[_-]?key|password)\s*[:=]\s*["']?[A-Za-z0-9_\-/.+=]{16,}/i;
 
 export function containsLikelySecret(content: string): boolean {
@@ -163,7 +169,7 @@ export function containsLikelySecret(content: string): boolean {
 export function redactLikelySecretLines(content: string): { content: string; redactedLines: number[] } {
   const ranges: Array<{ start: number; end: number }> = [];
   const credentials = new RegExp(CREDENTIAL_ASSIGNMENT.source, "gi");
-  const privateKeys = /-----BEGIN (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:RSA |EC |OPENSSH |ENCRYPTED )?PRIVATE KEY-----|$)/g;
+  const privateKeys = new RegExp(PRIVATE_KEY_BLOCK, "g");
   for (const pattern of [credentials, privateKeys]) {
     for (const match of content.matchAll(pattern)) {
       ranges.push({ start: match.index, end: match.index + match[0].length });
@@ -184,3 +190,12 @@ export function redactLikelySecretLines(content: string): { content: string; red
   });
   return { content: lines.join("\n"), redactedLines };
 }
+
+// Bump when the logic (not only the patterns) of redaction, tiering, artifact or kind detection changes.
+const CONTENT_RULES_REVISION = 1;
+
+/** Identifies the rules that shape stored text and its tier; a change makes the indexer re-read unchanged files. */
+export const CONTENT_RULES_FINGERPRINT = sha256(JSON.stringify([
+  CONTENT_RULES_REVISION, PRIVATE_KEY_BEGIN.source, PRIVATE_KEY_BLOCK, CREDENTIAL_ASSIGNMENT.source,
+  LOW_RELEVANCE_SEGMENTS, LOW_RELEVANCE_FILE.source, DEPENDENCY_FILE_TARGET.source, DOCUMENT_EXTENSIONS, CONFIG_EXTENSIONS,
+]));

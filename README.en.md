@@ -85,6 +85,7 @@ After updating a source checkout, run `git pull --ff-only`, rebuild with `npm ru
 - SQLite WAL databases with hybrid FTS5, Unicode n-gram, and code-relationship search
 - Coverage-normalized n-gram ranking merged with FTS results and exact symbol-name boosts
 - Directory-pruned `.gitignore` and `.project-context-ignore` aware incremental indexing
+- Files with unchanged size and modification time are not read; a content-rule change or a full check older than 24 hours re-reads every file, and recently written or redacted files are always re-read
 - Per-project index locking, MCP cancellation, and progress notifications
 - Deferred legacy n-gram migrations with cancellable, bounded-transaction rebuilds during `project_index`
 - Root-aware pruning of Codex runtime sessions, caches, logs, attachments, and local secret stores

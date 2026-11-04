@@ -80,6 +80,7 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 使用 SQLite WAL，并结合 FTS5、Unicode n-gram 与代码关系搜索
 - 将覆盖率归一化的 n-gram 排名、FTS 结果和精确符号名加权合并
 - 增量索引支持 `.gitignore` 和 `.project-context-ignore`，并在目录层提前剪枝
+- 文件大小与修改时间均未变化时不读取文件；内容规则变化或距上次全量核对超过 24 小时会重新读取全部文件，刚写入不久或含遮蔽行的文件每次都重新读取
 - 每项目索引锁、MCP 取消操作和进度通知
 - 旧版 n-gram 迁移延迟到 `project_index`，采用可取消、有界事务的批量重建
 - 根据项目根目录识别并排除 Codex 运行会话、缓存、日志、附件和本地密钥存储

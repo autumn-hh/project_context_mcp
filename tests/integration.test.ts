@@ -736,7 +736,11 @@ describe("Project Context core", () => {
       app.acceptCandidate(project.id, candidate.id);
       const db = app.projects.projectDatabase(project.id);
       const tables = ["sources", "chunks", "chunks_fts", "symbols", "symbols_fts", "relations", "memories", "memories_fts", "memory_sources", "tasks", "memory_candidates", "search_ngrams"];
-      const snapshots = tables.map((table) => db.prepare(`SELECT * FROM ${table}`).all());
+      // sources.indexed_at records the latest content check, which later index runs may refresh.
+      const snapshot = (database: typeof db, table: string) => database.prepare(table === "sources"
+        ? "SELECT id, path, kind, content_hash, size_bytes, modified_ms FROM sources"
+        : `SELECT * FROM ${table}`).all();
+      const snapshots = tables.map((table) => snapshot(db, table));
       for (let i = 0; i < 25; i++) db.prepare("INSERT INTO index_runs (id, started_at, completed_at, status) VALUES (?, ?, ?, 'completed')")
         .run(`old-${i}`, "2000-01-01T00:00:00.000Z", "2000-01-01T00:01:00.000Z");
       db.close();
@@ -748,7 +752,7 @@ describe("Project Context core", () => {
       expect(app.maintenanceSettings(project.id).lastRun).toMatchObject({ deletedIndexRuns: 18, warnings: [] });
       const verified = app.projects.projectDatabase(project.id);
       try {
-        for (let i = 0; i < tables.length; i++) expect(verified.prepare(`SELECT * FROM ${tables[i]}`).all()).toEqual(snapshots[i]);
+        for (let i = 0; i < tables.length; i++) expect(snapshot(verified, tables[i]!)).toEqual(snapshots[i]);
       } finally { verified.close(); }
     } finally { app.close(); }
   });
