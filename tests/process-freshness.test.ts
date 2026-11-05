@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { ProjectContextApp } from "../src/core/app.js";
 import { createMcpServer } from "../src/mcp/server.js";
-import { processFreshness, selectOutdatedServers, type RunningProcess } from "../src/shared/process-freshness.js";
+import { fileStamp, parsePsOutput, processFreshness, selectOutdatedServers, type RunningProcess } from "../src/shared/process-freshness.js";
 import { PROJECT_SCHEMA_VERSION } from "../src/storage/schema.js";
 
 describe("outdated processes", () => {
@@ -97,5 +97,30 @@ describe("outdated processes", () => {
       { pid: 17, startedAt: before, commandLine: "node D:/project/project-context-mcp/dist/mcp/server.js" },
     ];
     expect(selectOutdatedServers(processes, "D:\\project\\project-context-mcp", build, 17).map((item) => item.pid)).toEqual([11, 12, 13]);
+  });
+
+  it("reads Node processes from ps output on Linux and macOS", () => {
+    const processes = parsePsOutput([
+      "  101 Wed Nov  4 19:28:13 2026 /usr/bin/node /home/me/project-context-mcp/dist/mcp/server.js",
+      "  102 Thu Nov 14 08:01:02 2026 /usr/sbin/sshd -D",
+      "10003 Thu Nov 14 08:01:03 2026 node /home/me/project-context-mcp/dist/cli.js ui --no-open",
+      "not a process line",
+      "",
+    ].join("\n"));
+    expect(processes).toEqual([
+      { pid: 101, startedAt: new Date(2026, 10, 4, 19, 28, 13).getTime(), commandLine: "/usr/bin/node /home/me/project-context-mcp/dist/mcp/server.js" },
+      { pid: 10003, startedAt: new Date(2026, 10, 14, 8, 1, 3).getTime(), commandLine: "node /home/me/project-context-mcp/dist/cli.js ui --no-open" },
+    ]);
+    const build = new Date(2026, 10, 20).getTime();
+    expect(selectOutdatedServers(processes, "/home/me/project-context-mcp", build, 999).map((item) => item.pid)).toEqual([101, 10003]);
+  });
+
+  it("stamps a file by when it was written here, which npm's fixed 1985 modification time cannot hide", async () => {
+    const file = join(tempRoot, "version.js");
+    await writeFile(file, "export {};\n", "utf8");
+    const normalized = new Date("1985-10-26T08:15:00Z");
+    await utimes(file, normalized, normalized);
+    expect(fileStamp(file)).toBeGreaterThan(Date.now() - 60_000);
+    expect(fileStamp(join(tempRoot, "missing.js"))).toBeNull();
   });
 });

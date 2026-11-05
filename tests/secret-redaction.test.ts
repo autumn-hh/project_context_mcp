@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { ProjectContextApp } from "../src/core/app.js";
 import { redactLikelySecretLines } from "../src/indexing/file-policy.js";
-import { readContentProtection } from "../src/indexing/content-protection.js";
+import { briefContentProtection, readContentProtection, withBriefProtection, type ContentProtectionReport } from "../src/indexing/content-protection.js";
 import { indexProject } from "../src/indexing/indexer.js";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject } from "../src/storage/schema.js";
@@ -116,5 +116,34 @@ describe("index secret line redaction", () => {
     });
     expect(app.health(project.id)).toMatchObject({ contentProtection: report });
     expect(await app.doctor(project.id)).toMatchObject({ ok: true, contentProtection: report });
+  });
+
+  it("bounds the report for MCP and the workbench, listing protective skips before routine ones", () => {
+    const report: ContentProtectionReport = {
+      runId: "idx_1", completed: true, checkedAt: "2026-11-05T00:00:00.000Z",
+      skipped: [
+        ...Array.from({ length: 3_000 }, (_, i) => ({ path: `assets/image-${i}.png`, reason: "unsupported-file" })),
+        ...Array.from({ length: 200 }, (_, i) => ({ path: `bin/tool-${i}.exe`, reason: "binary-content" })),
+        { path: ".env", reason: "sensitive-path" }, { path: "big.sql", reason: "file-too-large" },
+      ],
+      redacted: Array.from({ length: 120 }, (_, i) => ({ path: `src/file-${i}.ts`, lines: [i + 1] })),
+    };
+    const brief = briefContentProtection(report)!;
+    expect(brief.skipped).toHaveLength(50);
+    expect(brief.skipped.slice(0, 2)).toEqual([{ path: ".env", reason: "sensitive-path" }, { path: "big.sql", reason: "file-too-large" }]);
+    expect(brief.skipped[2]).toEqual({ path: "assets/image-0.png", reason: "unsupported-file" });
+    expect(brief).toMatchObject({
+      skippedTotal: 3_202, redactedTotal: 120, runId: "idx_1", completed: true, checkedAt: report.checkedAt,
+      skippedByReason: { "unsupported-file": 3_000, "binary-content": 200, "sensitive-path": 1, "file-too-large": 1 },
+    });
+    expect(brief.redacted).toEqual(report.redacted.slice(0, 50));
+    expect(JSON.stringify(brief).length).toBeLessThan(15_000);
+    expect(JSON.stringify(report).length).toBeGreaterThan(150_000);
+    // A small report keeps every entry, and a database never indexed has none.
+    const small = { ...report, skipped: [{ path: ".env", reason: "sensitive-path" }], redacted: [] };
+    expect(briefContentProtection(small)).toMatchObject({ skipped: small.skipped, skippedTotal: 1, redacted: [], redactedTotal: 0 });
+    expect(briefContentProtection(null)).toBeNull();
+    expect(withBriefProtection({ ok: true, contentProtection: report })).toMatchObject({ ok: true, contentProtection: { skippedTotal: 3_202 } });
+    expect(report.skipped).toHaveLength(3_202);
   });
 });

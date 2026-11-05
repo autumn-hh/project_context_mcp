@@ -13,6 +13,7 @@ import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/use
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
 import { briefCleanupResult, maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
+import { withBriefProtection } from "../indexing/content-protection.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
 import { taskWorkflowShape } from '../tasks/task-workflow.js';
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
@@ -513,14 +514,14 @@ export function createMcpServer(): McpServer {
     outputSchema,
     inputSchema: { projectId: z.string().min(1) },
     annotations: { readOnlyHint: true, idempotentHint: true },
-  }, ({ projectId }) => withApp((app) => app.health(projectId)));
+  }, ({ projectId }) => withApp((app) => app.healthOverview(projectId)));
 
   server.registerTool("project_doctor", {
     description: "Check database integrity, derived search indexes, source presence, stale memory, and pending candidates.",
     outputSchema,
     inputSchema: { projectId: z.string().min(1), repair: z.boolean().default(false) },
     annotations: { idempotentHint: true },
-  }, ({ projectId, repair }) => withApp((app) => app.doctor(projectId, repair)));
+  }, ({ projectId, repair }) => withApp(async (app) => withBriefProtection(await app.doctor(projectId, repair))));
 
   server.registerTool("project_storage", {
     description: "Inspect project database, WAL, free-page space, row counts, and automatic maintenance settings. Recent cleanups and index runs are short summaries; saved process logs and error text are in the Web workbench.",
@@ -627,7 +628,7 @@ function registerResources(server: McpServer): void {
     "project-health",
     new ResourceTemplate("project-context://projects/{projectId}/health", { list: undefined }),
     { title: "Project health", description: "Project index and memory health", mimeType: "application/json" },
-    (uri, variables) => resourceValue(uri, (app) => app.health(variable(variables, "projectId"))),
+    (uri, variables) => resourceValue(uri, (app) => app.healthOverview(variable(variables, "projectId"))),
   );
   server.registerResource(
     "project-memory",

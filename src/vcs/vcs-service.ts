@@ -24,6 +24,16 @@ export interface VersionControlSnapshot {
   capturedAt: string;
 }
 
+const BRIEF_CHANGES = 50;
+
+/** The stored state for responses that must stay small: the first changes only, with their total. */
+export function briefVcsState(state: Record<string, string>): Record<string, string> {
+  let changes: unknown;
+  try { changes = JSON.parse(state.status ?? "[]"); } catch { return state; }
+  if (!Array.isArray(changes) || changes.length <= BRIEF_CHANGES) return state;
+  return { ...state, status: JSON.stringify(changes.slice(0, BRIEF_CHANGES)), changeCount: String(changes.length), statusTruncated: "true" };
+}
+
 export type VersionControlCommandRunner = (
   command: VersionControlKind,
   args: string[],

@@ -179,8 +179,12 @@ describe("Project Context MCP", () => {
       const cancelled = await call(client, "task_start", { projectId, goal: "Cancel obsolete MCP work" });
       await call(client, "task_cancel", { projectId, taskId: object(cancelled).id });
       await call(client, "project_watch_stop", { projectId });
-      await call(client, "project_health", { projectId });
-      await call(client, "project_doctor", { projectId, repair: false });
+      const healthReport = object(await call(client, "project_health", { projectId }));
+      expect(object(healthReport.contentProtection)).toMatchObject({ skippedTotal: expect.any(Number), redactedTotal: expect.any(Number), skippedByReason: expect.any(Object) });
+      expect(object(healthReport.lastIndexRun)).toMatchObject({ status: "completed", errorCount: 0 });
+      expect(object(healthReport.lastIndexRun)).not.toHaveProperty("log_json");
+      const doctor = object(await call(client, "project_doctor", { projectId, repair: false }));
+      expect(object(doctor.contentProtection)).toMatchObject({ skippedTotal: expect.any(Number), redactedTotal: expect.any(Number) });
       const backup = join(tempRoot, "backup", "project.db");
       await call(client, "project_backup", { projectId, destination: backup });
       const restoredRoot = join(tempRoot, "restored");

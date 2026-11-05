@@ -8,7 +8,7 @@ import {
   automaticCompaction, briefCleanupResult, briefHistory, briefRun, cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, databaseUsage, maintenanceSettings, runAutomaticMaintenance, setMaintenancePolicy,
   storageSummary,
 } from "../src/maintenance/storage-maintenance.js";
-import { createRunLogger } from "../src/indexing/run-log.js";
+import { briefIndexRun, createRunLogger } from "../src/indexing/run-log.js";
 import { remember } from "../src/memory/memory-service.js";
 import { startTask } from "../src/tasks/task-service.js";
 import { searchProject } from "../src/search/search-service.js";
@@ -275,6 +275,28 @@ describe("database maintenance", () => {
     // The full records stay available to the workbench.
     expect(cleanupHistory(db)[0]!.details).toHaveLength(22);
     expect(cleanupHistory(db)[0]!.details[0]!.processLog).not.toBeNull();
+  });
+
+  it("briefs a stored run for health: no process log, only the first few bounded errors, and a count", () => {
+    const db = fixture();
+    const logger = createRunLogger(db, "old-01");
+    for (let i = 0; i < 300; i++) logger.record("已更新文件索引", `src/${i}.ts`);
+    logger.record("索引完成", undefined, "info", true);
+    const errors = Array.from({ length: 8 }, (_, i) => ({ path: `src/bad-${i}.ts`, message: i === 0 ? "x".repeat(5_000) : "denied" }));
+    db.prepare("UPDATE index_runs SET errors_json = ? WHERE id = 'old-01'").run(JSON.stringify(errors));
+    const stored = db.prepare("SELECT * FROM index_runs WHERE id = 'old-01'").get() as Record<string, unknown>;
+    expect(String(stored.log_json).length).toBeGreaterThan(5_000);
+    const brief = briefIndexRun(stored)!;
+    expect(brief).not.toHaveProperty("log_json");
+    expect(brief).toMatchObject({ id: "old-01", status: "completed", errorCount: 8 });
+    const first = JSON.parse(brief.errors_json as string) as unknown[];
+    expect(first).toHaveLength(3);
+    expect(String(first[0]).length).toBeLessThanOrEqual(601);
+    expect(first[1]).toEqual(errors[1]);
+    expect(JSON.stringify(brief).length).toBeLessThan(2_000);
+    expect(briefIndexRun({ ...stored, errors_json: "not json" })).toMatchObject({ errors_json: "[]", errorCount: 0 });
+    expect(briefIndexRun(null)).toBeNull();
+    expect(stored.log_json).not.toBeNull();
   });
 
   it("rolls back deletion if its audit record cannot be saved", () => {

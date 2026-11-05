@@ -14,18 +14,29 @@ import { ProjectContextError } from "./errors.js";
  * their clients reconnect to the current build.
  */
 const executeFile = promisify(execFile);
-// Every build rewrites this file, so its modification time identifies the build on disk.
+// Every build rewrites this file, so its stamp identifies the build on disk.
 const BUILD_MARKER = fileURLToPath(new URL("./version.js", import.meta.url));
 const INSTALLATION_ROOT = dirname(dirname(dirname(BUILD_MARKER)));
 const STARTED_BUILD = buildStamp();
 
-function buildStamp(): number | null {
+/**
+ * When a file was last written on this machine. The change time counts as well as the
+ * modification time: npm packages carry a fixed 1985 modification time, so an npm install or
+ * upgrade only moves the change time. (An attribute change moves it too, which at worst costs
+ * one restart.)
+ */
+export function fileStamp(path: string): number | null {
   try {
-    return statSync(BUILD_MARKER).mtimeMs;
+    const { mtimeMs, ctimeMs } = statSync(path);
+    return Math.max(mtimeMs, ctimeMs);
   } catch {
-    // Running from source (tsx, tests) has no build to compare.
     return null;
   }
+}
+
+// Running from source (tsx, tests) has no build marker, hence no build to compare.
+function buildStamp(): number | null {
+  return fileStamp(BUILD_MARKER);
 }
 
 /** Replaceable in tests; production reads the build marker. */
@@ -80,8 +91,12 @@ export async function runningNodeProcesses(): Promise<RunningProcess[]> {
     return (Array.isArray(parsed) ? parsed : [parsed]).map((item) => ({ pid: item.pid, startedAt: Date.parse(item.started), commandLine: item.command ?? "" }));
   }
   const { stdout } = await executeFile("ps", ["-eo", "pid=,lstart=,args="], { timeout: 15_000, maxBuffer: 4 * 1024 * 1024 });
+  return parsePsOutput(stdout);
+}
+
+/** Node processes from `ps -eo pid=,lstart=,args=`: pid, a five-field start time such as "Wed Nov  4 19:28:13 2026", then the command line. */
+export function parsePsOutput(stdout: string): RunningProcess[] {
   return stdout.split("\n").flatMap((line) => {
-    // pid, then a five-field start time such as "Wed Nov  4 19:28:13 2026", then the command line.
     const match = line.trim().match(/^(\d+)\s+(\S+\s+\S+\s+\d+\s+[\d:]+\s+\d{4})\s+(.*)$/u);
     return match && /node/iu.test(match[3]!) ? [{ pid: Number(match[1]), startedAt: Date.parse(match[2]!), commandLine: match[3]! }] : [];
   });

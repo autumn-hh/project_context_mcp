@@ -86,7 +86,7 @@ node dist/cli.js task history <project-id> <task-id> --limit 10 --offset 0
 - 根据项目根目录识别并排除 Codex 运行会话、缓存、日志、附件和本地密钥存储
 - 为已索引文本块建立外键索引，保证大型数据库中的来源清理行为可预期
 - 默认排除 `.env`、凭据、私钥、数据库、二进制文件、生成目录和大文件
-- 普通文本和源码中的疑似敏感内容只遮蔽命中物理行，PEM 私钥遮蔽完整块；保留其他片段及原行号，源文件不修改。`project_health`、项目画像健康数据和 `project_doctor` 的 `contentProtection` 返回最近检查的遮蔽行号与跳过路径，未完成检查有明确标记；忽略目录不在覆盖范围内。
+- 普通文本和源码中的疑似敏感内容只遮蔽命中物理行，PEM 私钥遮蔽完整块；保留其他片段及原行号，源文件不修改。`project_health`、项目画像健康数据和 `project_doctor` 的 `contentProtection` 返回最近检查的遮蔽行号与跳过路径，未完成检查有明确标记；忽略目录不在覆盖范围内。MCP 与工作台返回的是有界摘要：`skipped`、`redacted` 各最多 50 条（图片、二进制等常规跳过排在最后），并附 `skippedTotal`、`skippedByReason`、`redactedTotal`；`project_health` 的最近索引记录只含统计和前 3 条错误，工作区变化列表最多 50 条并附 `changeCount`。命令行 `health`、`doctor` 仍输出完整列表。
 - 升级前显示数据库连接占用 PID、角色、版本及重启建议。新版连接使用项目外临时登记；Windows 查询数据库/WAL/SHM 文件句柄，也能发现未登记旧进程。其他平台或系统探测失败时明确提示覆盖不足；不会强制断开连接。
 - 本机真实大库邻居查询测量与消歧抽查见 [图查询验证](docs/graph-query-benchmark-2026-10-12.md)，结果仅代表邻居扩展成本。
 - 默认排除 `.d` 依赖文件、`.o/.obj` 目标文件、`.a/.lib` 静态库、字节码、编译缓存和覆盖率/性能分析产物

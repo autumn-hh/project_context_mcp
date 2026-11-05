@@ -15,6 +15,24 @@ export interface RunLog {
   truncated: boolean;
 }
 
+const BRIEF_RUN_ERRORS = 3;
+
+/** An index_runs row for responses that must stay small: no process log, and only the first few errors. */
+export function briefIndexRun(run: Record<string, unknown> | null) {
+  if (!run) return null;
+  const { log_json: _log, errors_json: stored, ...rest } = run;
+  let errors: unknown[] = [];
+  try {
+    const parsed: unknown = JSON.parse(String(stored ?? "[]"));
+    if (Array.isArray(parsed)) errors = parsed;
+  } catch { /* an unreadable list counts as no errors */ }
+  const first = errors.slice(0, BRIEF_RUN_ERRORS).map((error) => {
+    const text = JSON.stringify(error);
+    return text.length > 600 ? `${text.slice(0, 600)}…` : error;
+  });
+  return { ...rest, errors_json: JSON.stringify(first), errorCount: errors.length };
+}
+
 // Retain a bounded beginning plus the final outcome, without source contents or terminal output.
 export function createRunLogger(db: SqliteDatabase, runId: string) {
   const log: RunLog = { entries: [], totalEvents: 0, truncated: false };

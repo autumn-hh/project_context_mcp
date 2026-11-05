@@ -13,8 +13,9 @@ import { loadGlobalConfig } from "../config/paths.js";
 import { normalizeTaskSummaryTitles, previewTaskSummaryTitles } from "../memory/title-normalization.js";
 import { ProjectService, type ProjectRecord } from "../projects/project-service.js";
 import { indexProject, type IndexOptions, type IndexResult } from "../indexing/indexer.js";
-import { readContentProtection } from "../indexing/content-protection.js";
+import { briefContentProtection, readContentProtection, withBriefProtection } from "../indexing/content-protection.js";
 import { waitForOtherIndexer, withIndexLease } from "../indexing/index-lease.js";
+import { briefIndexRun } from "../indexing/run-log.js";
 import { isOutdatedProcessError, outdatedProcessError, processFreshness } from "../shared/process-freshness.js";
 import { PROJECT_SCHEMA_VERSION } from "../storage/schema.js";
 import { searchProject, type SearchHit } from "../search/search-service.js";
@@ -42,6 +43,7 @@ import {
 } from "../memory/candidate-service.js";
 import type { GitSnapshot } from "../git/git-service.js";
 import {
+  briefVcsState,
   captureVersionControlState,
   type VersionControlSnapshot,
 } from "../vcs/vcs-service.js";
@@ -558,6 +560,16 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => buildProjectContext(db, project, task, budgetTokens, userMemories));
   }
 
+  /** health with bounded lists (protected files, changes, the last run), small enough for an MCP response. */
+  healthOverview(projectId: string): Record<string, unknown> {
+    const health = this.health(projectId);
+    const vcsState = briefVcsState(health.vcsState as Record<string, string>);
+    return {
+      ...withBriefProtection(health), vcsState, gitState: vcsState,
+      lastIndexRun: briefIndexRun(health.lastIndexRun as Record<string, unknown> | null),
+    };
+  }
+
   health(projectId: string): Record<string, unknown> {
     return this.withDb(projectId, (db) => {
       const vcsState = readVersionControlState(db);
@@ -605,7 +617,8 @@ export class ProjectContextApp {
           symbols: scalar(db, "SELECT COUNT(*) FROM symbols"),
           relations: scalar(db, "SELECT COUNT(*) FROM relations"),
           schemaVersion: db.pragma("user_version", { simple: true }),
-          contentProtection: readContentProtection(db),
+          // The workbench polls the portrait every 1.5 s and does not show the skipped-file list.
+          contentProtection: briefContentProtection(readContentProtection(db)),
           lastIndexRun: db.prepare("SELECT * FROM index_runs ORDER BY started_at DESC LIMIT 1").get() ?? null,
         },
         storage: storageSummary(db),

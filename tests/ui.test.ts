@@ -182,7 +182,7 @@ describe("localhost rule manager", () => {
     expect(portrait.response.status).toBe(200);
     expect(portrait.body).toMatchObject({
       project: { id: project.id, name: "project" },
-      health: { sources: 3, schemaVersion: PROJECT_SCHEMA_VERSION },
+      health: { sources: 3, schemaVersion: PROJECT_SCHEMA_VERSION, contentProtection: expect.objectContaining({ skippedTotal: expect.any(Number), redactedTotal: expect.any(Number) }) },
       statuses: {
         memories: { active: 1, stale: 1 }, candidates: { pending: 2 },
         tasks: { completed: 1, in_progress: 2 },

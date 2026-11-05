@@ -6,6 +6,7 @@ import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject } from "../src/storage/schema.js";
 import { generateVersionControlCandidates } from "../src/memory/candidate-service.js";
 import {
+  briefVcsState,
   captureVersionControlState,
   detectVersionControlRemote,
   parseVersionControlStatus,
@@ -94,6 +95,21 @@ describe("version control service", () => {
 
     expect(snapshot).toMatchObject({ available: false, kind: null, changes: [] });
     expect(state(db)).toMatchObject({ available: "false", provider: "", revision: "", status: "[]" });
+  });
+
+  it("briefs a large change list for responses, keeping the total and small states unchanged", () => {
+    const changes = Array.from({ length: 5_000 }, (_, i) => ({ status: "M", path: `src/generated/file-${i}.ts` }));
+    const state = { head: "abc", branch: "main", status: JSON.stringify(changes), available: "true" };
+    const brief = briefVcsState(state);
+    expect(JSON.parse(brief.status!)).toEqual(changes.slice(0, 50));
+    expect(brief).toMatchObject({ head: "abc", branch: "main", changeCount: "5000", statusTruncated: "true" });
+    expect(JSON.stringify(brief).length).toBeLessThan(6_000);
+    const small = { ...state, status: JSON.stringify(changes.slice(0, 50)) };
+    expect(briefVcsState(small)).toBe(small);
+    expect(briefVcsState({ head: "abc" })).toEqual({ head: "abc" });
+    const unreadable = { status: "not json" };
+    expect(briefVcsState(unreadable)).toBe(unreadable);
+    expect(state.status).toBe(JSON.stringify(changes));
   });
 
   it("parses Git, Mercurial, and Subversion status formats", () => {
