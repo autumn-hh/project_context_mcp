@@ -217,7 +217,7 @@ node dist/cli.js cleanup <project-id> --apply --confirm <project-id>
 node dist/cli.js maintenance <project-id> --enabled true --retention-days 30 --interval-hours 24
 ```
 
-对应 MCP 工具为 `project_storage`、`project_cleanup`（默认 `dryRun: true`，执行时须传入匹配的 `confirmProjectId`）和 `project_maintenance_configure`。有效索引本身占用的空间不会被清理；如数据库主要由有效索引构成，可通过工作台的忽略规则缩小索引范围，然后再回收空闲空间。
+对应 MCP 工具为 `project_storage`、`project_cleanup`（默认 `dryRun: true`，执行时须传入匹配的 `confirmProjectId`）和 `project_maintenance_configure`。这些 MCP 工具返回的运行记录和清理历史是摘要，不含过程日志、错误全文和逐条明细（真实项目上 `project_storage` 从约 30.6 万字符降到约 5.7 千字符），完整内容在工作台查看。有效索引本身占用的空间不会被清理；如数据库主要由有效索引构成，可通过工作台的忽略规则缩小索引范围，然后再回收空闲空间。
 
 ```powershell
 # 注册项目并保存返回的项目 ID

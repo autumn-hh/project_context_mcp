@@ -48,7 +48,7 @@ import {
 import { backupProjectDatabase, doctorProject, exportProject } from "../maintenance/maintenance-service.js";
 import {
   cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, indexLogQuerySchema, databaseUsage, maintenanceSettings, setMaintenancePolicy, runAutomaticMaintenance, storageSummary,
-  type CleanupOptions, maintenancePolicySchema,
+  briefHistory, briefRun, type CleanupOptions, maintenancePolicySchema,
 } from "../maintenance/storage-maintenance.js";
 import {
   checkpointTask,
@@ -673,6 +673,14 @@ export class ProjectContextApp {
     return this.withDb(projectId, (db) => ({
       ...databaseUsage(db), policy: maintenanceSettings(db),
       cleanupHistory: cleanupHistory(db), recentIndexRuns: recentIndexRuns(db),
+    }));
+  }
+
+  /** storageUsage without saved logs and details, small enough for an MCP response. */
+  storageOverview(projectId: string) {
+    return this.withDb(projectId, (db) => ({
+      ...databaseUsage(db), policy: maintenanceSettings(db),
+      cleanupHistory: briefHistory(cleanupHistory(db)), recentIndexRuns: recentIndexRuns(db).map(briefRun),
     }));
   }
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openDatabase, type SqliteDatabase } from "../src/storage/database.js";
 import { migrateProject } from "../src/storage/schema.js";
 import {
-  automaticCompaction, cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, databaseUsage, maintenanceSettings, runAutomaticMaintenance, setMaintenancePolicy,
+  automaticCompaction, briefCleanupResult, briefHistory, briefRun, cleanupDatabase, cleanupHistory, recentIndexRuns, listIndexRuns, databaseUsage, maintenanceSettings, runAutomaticMaintenance, setMaintenancePolicy,
   storageSummary,
 } from "../src/maintenance/storage-maintenance.js";
 import { createRunLogger } from "../src/indexing/run-log.js";
@@ -243,6 +243,38 @@ describe("database maintenance", () => {
     expect(preview.details.find((row) => row.id === "old-02")?.logNote).toContain("could not be parsed");
     const applied = cleanupDatabase(db, { dryRun: false, vacuum: false }, now);
     expect(applied.history?.[0]?.details.find((row) => row.id === "old-01")).toEqual(detail);
+  });
+
+  it("briefs MCP output: totals stay, process logs, error text and per-run details go", () => {
+    const db = fixture();
+    for (const id of ["old-01", "old-02", "old-03"]) {
+      const logger = createRunLogger(db, id);
+      for (let i = 0; i < 300; i++) logger.record("已更新文件索引", `src/${i}-${"文".repeat(150)}.ts`);
+      logger.record("索引完成", undefined, "info", true);
+    }
+    const preview = cleanupDatabase(db, {}, now);
+    const brief = briefCleanupResult(preview);
+    expect(JSON.stringify(preview).length).toBeGreaterThan(50_000);
+    expect(JSON.stringify(brief).length).toBeLessThan(10_000);
+    expect(brief).toMatchObject({ eligibleIndexRuns: 22, deletedIndexRuns: 0, detailsTruncated: false });
+    expect(brief.details).toHaveLength(22);
+    expect(brief.details[0]).toEqual({
+      id: "old-01", startedAt: expect.any(String), completedAt: expect.any(String), status: "completed",
+      scanned: 0, indexed: 0, skipped: 0, removed: 0, errorCount: 1,
+    });
+    expect(JSON.stringify(brief)).not.toMatch(/processLog|"errors"|logNote/);
+
+    const applied = briefCleanupResult(cleanupDatabase(db, { dryRun: false, vacuum: false }, now));
+    expect(JSON.stringify(applied).length).toBeLessThan(12_000);
+    expect(applied.history).toHaveLength(1);
+    expect(applied.history![0]).toMatchObject({ trigger: "manual", deletedIndexRuns: 22, detailCount: 22 });
+    expect(applied.history![0]).not.toHaveProperty("details");
+    expect(applied.history).toEqual(briefHistory(cleanupHistory(db)));
+    expect(applied.recentIndexRuns!.length).toBeGreaterThan(0);
+    for (const run of applied.recentIndexRuns!) expect(run).toEqual(briefRun(recentIndexRuns(db).find((item) => item.id === run.id)!));
+    // The full records stay available to the workbench.
+    expect(cleanupHistory(db)[0]!.details).toHaveLength(22);
+    expect(cleanupHistory(db)[0]!.details[0]!.processLog).not.toBeNull();
   });
 
   it("rolls back deletion if its audit record cannot be saved", () => {

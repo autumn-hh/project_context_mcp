@@ -88,6 +88,26 @@ export function recentIndexRuns(db: SqliteDatabase): CleanupDetail[] {
   return listIndexRuns(db).items;
 }
 
+// Compact views for MCP responses. Saved process logs, error text and per-run details add up to
+// hundreds of thousands of characters (project_storage reached 306,000), more than a client
+// accepts; the workbench shows them in full.
+export function briefRun({ id, startedAt, completedAt, status, scanned, indexed, skipped, removed, errorCount }: CleanupDetail) {
+  return { id, startedAt, completedAt, status, scanned, indexed, skipped, removed, errorCount };
+}
+
+export function briefHistory(history: CleanupHistoryEntry[]) {
+  return history.map(({ details, ...entry }) => ({ ...entry, detailCount: details.length }));
+}
+
+export function briefCleanupResult(result: ReturnType<typeof cleanupDatabase>) {
+  const { details, history, recentIndexRuns: recent, ...rest } = result;
+  return {
+    ...rest, details: details.map(briefRun),
+    ...(history ? { history: briefHistory(history) } : {}),
+    ...(recent ? { recentIndexRuns: recent.map(briefRun) } : {}),
+  };
+}
+
 export const retentionDaysSchema = z.number().int().min(1).max(3650);
 export const maintenancePolicySchema = z.object({
   enabled: z.boolean(),

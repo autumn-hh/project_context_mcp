@@ -544,7 +544,7 @@ node dist/cli.js cleanup <project-id> --apply --confirm <project-id>
 node dist/cli.js maintenance <project-id> --enabled true --retention-days 30 --interval-hours 24
 ```
 
-Use `--no-vacuum` to prune logs without compaction, or `--enabled false` to disable automation. MCP equivalents are `project_storage`, `project_cleanup` (defaults to `dryRun: true`; execution requires matching `confirmProjectId`), and `project_maintenance_configure`. Current indexes can legitimately dominate database size; reduce indexed scope with ignore rules before reclaiming space if needed.
+Use `--no-vacuum` to prune logs without compaction, or `--enabled false` to disable automation. MCP equivalents are `project_storage`, `project_cleanup` (defaults to `dryRun: true`; execution requires matching `confirmProjectId`), and `project_maintenance_configure`. These MCP tools return run records and cleanup history as summaries without process logs, error text, or per-run details (on a real project `project_storage` dropped from about 306,000 to about 5,700 characters); the workbench shows the full content. Current indexes can legitimately dominate database size; reduce indexed scope with ignore rules before reclaiming space if needed.
 
 ## Storage Layout
 

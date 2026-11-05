@@ -12,7 +12,7 @@ import { PACKAGE_VERSION } from "../shared/version.js";
 import { userMemoryScopeSchema, userMemorySourceKindSchema } from "../memory/user-memory-service.js";
 import { DEFAULT_WATCH_DEBOUNCE_MS } from "../indexing/watch-service.js";
 import { DEFAULT_CONTEXT_BUDGET_TOKENS } from "../context/context-service.js";
-import { maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
+import { briefCleanupResult, maintenancePolicySchema, retentionDaysSchema } from "../maintenance/storage-maintenance.js";
 import { taskQuerySchema } from "../tasks/task-query.js";
 import { taskWorkflowShape } from '../tasks/task-workflow.js';
 import { SYNC_TABLES } from "../storage/sync/event-store.js";
@@ -523,14 +523,14 @@ export function createMcpServer(): McpServer {
   }, ({ projectId, repair }) => withApp((app) => app.doctor(projectId, repair)));
 
   server.registerTool("project_storage", {
-    description: "Inspect project database, WAL, free-page space, row counts, and automatic maintenance settings.",
+    description: "Inspect project database, WAL, free-page space, row counts, and automatic maintenance settings. Recent cleanups and index runs are short summaries; saved process logs and error text are in the Web workbench.",
     outputSchema,
     inputSchema: { projectId: z.string() },
     annotations: { readOnlyHint: true, idempotentHint: true },
-  }, ({ projectId }) => withApp((app) => app.storageUsage(projectId)));
+  }, ({ projectId }) => withApp((app) => app.storageOverview(projectId)));
 
   server.registerTool("project_cleanup", {
-    description: "Preview by default; explicitly confirm to prune old index logs and compact SQLite. Preserves all memories, tasks, candidates and current indexes. The first compaction rewrites the file and may take time on large databases; afterwards free pages are reclaimed in short steps.",
+    description: "Preview by default; explicitly confirm to prune old index logs and compact SQLite. Preserves all memories, tasks, candidates and current indexes. The first compaction rewrites the file and may take time on large databases; afterwards free pages are reclaimed in short steps. Listed runs are short summaries without process logs or error text.",
     outputSchema,
     inputSchema: {
       projectId: z.string(), dryRun: z.boolean().default(true),
@@ -538,9 +538,9 @@ export function createMcpServer(): McpServer {
       confirmProjectId: z.string().optional(),
     },
     annotations: { destructiveHint: true },
-  }, ({ projectId, confirmProjectId, ...options }) => withApp((app) => app.cleanupProject(projectId, {
+  }, ({ projectId, confirmProjectId, ...options }) => withApp((app) => briefCleanupResult(app.cleanupProject(projectId, {
     ...options, ...(confirmProjectId ? { confirmProjectId } : {}),
-  })));
+  }))));
 
   server.registerTool("project_maintenance_configure", {
     description: "Enable or disable per-project automatic database cleanup after indexing. Enabled by default; preserves memories, tasks, candidates and current indexes.",

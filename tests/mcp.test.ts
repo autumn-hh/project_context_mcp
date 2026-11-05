@@ -100,6 +100,13 @@ describe("Project Context MCP", () => {
       const unconfirmed = await client.callTool({ name: "project_cleanup", arguments: { projectId, dryRun: false } });
       expect(unconfirmed.isError).toBe(true);
       expect(object(await call(client, "project_cleanup", { projectId, dryRun: false, confirmProjectId: projectId })).vacuumCompleted).toBe(true);
+      // Saved process logs, error text and per-run details stay out of MCP responses.
+      const cleaned = object(await call(client, "project_storage", { projectId }));
+      expect(array(cleaned.cleanupHistory)[0]).toMatchObject({ trigger: "manual", detailCount: expect.any(Number) });
+      expect(array(cleaned.cleanupHistory)[0]).not.toHaveProperty("details");
+      expect(array(cleaned.recentIndexRuns).length).toBeGreaterThan(0);
+      for (const run of array(cleaned.recentIndexRuns)) expect(run).not.toHaveProperty("processLog");
+      expect(JSON.stringify(cleaned).length).toBeLessThan(15_000);
       expect(object(await call(client, "project_maintenance_configure", { projectId, enabled: false })).enabled).toBe(false);
       const indexed = await call(client, "project_index", { projectId });
       expect(object(indexed).errors).toHaveLength(0);
